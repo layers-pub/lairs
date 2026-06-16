@@ -15,6 +15,7 @@ from lairs.atproto.pds import (
     decode,
     decode_all,
 )
+from lairs.records._generated.expression import Expression
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -87,11 +88,31 @@ def test_decode_all_collects_failures() -> None:
     ]
     records, failures = decode_all(envelopes, _Toy)
     assert len(records) == 2
-    assert all(isinstance(record, _Toy) for record in records)
     assert len(failures) == 1
+    assert all(isinstance(record, _Toy) for record in records)
     assert failures[0].uri == "at://2"
     assert failures[0].cid == "c2"
     assert failures[0].error
+
+
+def test_decode_coerces_datetime_fields() -> None:
+    # regression: dict-path model_validate raises a bare AssertionError on
+    # datetime strings; the json path coerces them, so records carrying a
+    # createdAt (every pub.layers record does) decode cleanly.
+    envelope = RecordEnvelope(
+        uri="at://x",
+        cid="bafy",
+        value={
+            "id": "00000000-0000-0000-0000-000000000000",
+            "text": "hi",
+            "kind": "sentence",
+            "createdAt": "2026-06-16T00:00:00Z",
+        },
+    )
+    assert decode(envelope, Expression).text == "hi"
+    records, failures = decode_all([envelope], Expression)
+    assert len(records) == 1
+    assert not failures
 
 
 def test_list_records_paginates_lazily() -> None:

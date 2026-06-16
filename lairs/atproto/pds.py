@@ -13,6 +13,7 @@ clearly-marked deferred stub. Public reads need no auth.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Self
 
 import didactic.api as dx
@@ -117,7 +118,7 @@ def decode[T: dx.Model](envelope: RecordEnvelope, model: type[T]) -> T:
     didactic.api.ValidationError
         If the envelope's value does not validate against ``model``.
     """
-    return model.model_validate(_record_object(envelope))
+    return model.model_validate_json(json.dumps(_record_object(envelope)))
 
 
 def _record_object(envelope: RecordEnvelope) -> dict[str, JsonValue]:
@@ -178,7 +179,9 @@ def decode_all[T: dx.Model](
     failures: list[RecordDecodeFailure] = []
     for envelope in envelopes:
         try:
-            records.append(model.model_validate(_record_object(envelope)))
+            records.append(
+                model.model_validate_json(json.dumps(_record_object(envelope)))
+            )
         except dx.ValidationError as exc:
             failures.append(
                 RecordDecodeFailure(
