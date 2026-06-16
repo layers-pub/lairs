@@ -142,8 +142,9 @@ def test_with_media_resolves_ref() -> None:
     rows = list(c.with_media())
     assert all(isinstance(row, ExpressionWithMedia) for row in rows)
     by_uri = {row.uri: row for row in rows}
-    assert by_uri[_E1].media is not None
-    assert by_uri[_E1].media.kind == "audio"
+    media = by_uri[_E1].media
+    assert media is not None
+    assert media.kind == "audio"
     # an expression without a media ref resolves to None.
     assert by_uri[_E2].media is None
 
@@ -224,7 +225,7 @@ def test_load_corpus_from_pds_dispatch() -> None:
             ],
         },
     )
-    loaded = load_corpus(_C1, source="pds", pds_client=fake)  # type: ignore[arg-type]
+    loaded = load_corpus(_C1, source="pds", pds_client=fake)  # ty: ignore[invalid-argument-type]
     assert len(loaded.expressions) == 1
     assert loaded.expressions[0].id == "d1"
     assert len(loaded.annotation_layers()) == 1
@@ -239,7 +240,7 @@ def test_load_corpus_auto_uses_pds_client() -> None:
             "pub.layers.expression.expression": [_envelope(_E1, _expr("d1"))],
         },
     )
-    loaded = load_corpus(_C1, source="auto", pds_client=fake)  # type: ignore[arg-type]
+    loaded = load_corpus(_C1, source="auto", pds_client=fake)  # ty: ignore[invalid-argument-type]
     assert len(loaded.expressions) == 1
 
 
@@ -250,7 +251,7 @@ def test_load_corpus_skips_undecodable_records() -> None:
         value={"kind": "document"},  # missing required id and createdAt
     )
     fake = _FakePds({"pub.layers.expression.expression": [bad]})
-    loaded = load_corpus(_C1, source="pds", pds_client=fake)  # type: ignore[arg-type]
+    loaded = load_corpus(_C1, source="pds", pds_client=fake)  # ty: ignore[invalid-argument-type]
     assert len(loaded.expressions) == 0
 
 
