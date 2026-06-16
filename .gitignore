@@ -1,0 +1,36 @@
+# virtual environments
+.venv/
+venv/
+
+# python bytecode and caches
+__pycache__/
+*.pyc
+*.pyo
+
+# tool caches
+.ruff_cache/
+.ty_cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# build artifacts
+build/
+dist/
+*.egg-info/
+
+# data and cache directories
+data/
+.lairs/
+*.parquet
+blobs/
+
+# dev notes and local-only design doc
+notes/
+PLAN.md
+CLAUDE.md
+
+# OS cruft
+.DS_Store

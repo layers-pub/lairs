@@ -1,0 +1,126 @@
+[project]
+name = "lairs"
+version = "0.0.0"
+description = "A read/write dataset client for the Layers format, built on didactic."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+authors = [{ name = "Aaron Steven White", email = "aaronstevenwhite@gmail.com" }]
+dependencies = [
+    "didactic>=0.7.6",
+    "httpx",
+    "pyarrow",
+]
+
+[project.optional-dependencies]
+hf = ["datasets", "huggingface_hub"]
+torch = ["torch"]
+# tensorflow ships no cp314 wheel yet; the marker keeps resolution clean on
+# the development floor while leaving the extra declared.
+tf = ['tensorflow; python_version < "3.14"']
+webdataset = ["webdataset"]
+polars = ["polars"]
+duckdb = ["duckdb"]
+fsspec = ["fsspec"]
+conllu = ["conllu"]
+brat = ["brat"]
+elan = ["pympi-ling"]
+textgrid = ["textgrid"]
+amr = ["penman"]
+spacy = ["spacy"]
+labelstudio = ["label-studio-sdk"]
+wikidata = ["qwikidata", "SPARQLWrapper"]
+lexical = ["glazing>=0.2"]
+reconciliation = ["httpx"]
+scholarly = ["pyalex", "habanero"]
+geo = ["shapely", "geopandas"]
+bio = ["obonet"]
+audio = ["soundfile", "librosa"]
+# decord ships no cp314 wheel yet; av carries the floor, decord is gated.
+video = ['av', 'decord; python_version < "3.14"']
+neural = ["mne", "xarray"]
+tracking = ["wandb", "mlflow"]
+appview = ["httpx"]
+ml = ["lairs[hf]", "lairs[torch]", "lairs[fsspec]"]
+
+[project.scripts]
+lairs = "lairs.cli:main"
+
+[project.entry-points."lairs.codecs"]
+conllu = "lairs.integrations.codecs.conllu:ConlluCodec"
+brat = "lairs.integrations.codecs.brat:BratCodec"
+
+[project.entry-points."lairs.exporters"]
+hf = "lairs.integrations.hf.datasets:HuggingFaceExporter"
+torch = "lairs.integrations.torch:TorchExporter"
+tfdata = "lairs.integrations.tfdata:TfDataExporter"
+webdataset = "lairs.integrations.webdataset:WebDatasetExporter"
+
+[project.entry-points."lairs.knowledge_bases"]
+wikidata = "lairs.integrations.kb.wikidata:WikidataKB"
+glazing = "lairs.integrations.kb.glazing:GlazingKB"
+reconciliation = "lairs.integrations.kb.reconciliation:ReconciliationKB"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["lairs"]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "ty",
+    "pytest",
+    "pytest-cov",
+    "hypothesis",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["ALL"]
+# minimal ignore list: only formatter-conflicting / self-conflicting rules.
+ignore = ["D203", "D213", "COM812", "ISC001"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+# tests may assert, use magic numbers, carry fewer docstrings, live without an
+# __init__.py, and reach into private members. ANN401 stays on everywhere.
+"tests/**" = [
+    "S101",
+    "PLR2004",
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+    "INP001",
+    "SLF001",
+]
+
+[tool.ty.environment]
+python-version = "3.14"
+
+[tool.ty.rules]
+# strictest posture: every ty rule is an error. didactic and panproto resolve
+# from PyPI, so unresolved imports of the core deps are genuine failures.
+# heavy optional-extra libraries are only referenced under TYPE_CHECKING, so
+# those import sites are not type-checked unless the extra is installed.
+division-by-zero = "error"
+possibly-unresolved-reference = "error"
+unresolved-import = "error"
+unresolved-reference = "error"
+unused-ignore-comment = "error"
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+testpaths = ["tests"]
+markers = [
+    "integration: marks tests as integration tests (deselected unless --run-integration is given)",
+]
