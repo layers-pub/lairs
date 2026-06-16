@@ -22,7 +22,7 @@ dist/
 *.egg-info/
 
 # data and cache directories
-data/
+/data/
 .lairs/
 *.parquet
 blobs/
