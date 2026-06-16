@@ -6,4 +6,26 @@ views, and the content-addressed blob cache.
 
 from __future__ import annotations
 
-__all__: list[str] = []
+from lairs.store.arrow import (
+    annotations_table,
+    expressions_table,
+    flatten_anchor,
+    materialize,
+    records_to_table,
+)
+from lairs.store.blobcache import BlobCache
+from lairs.store.pool import ModelPool
+from lairs.store.repository import RecordDiff, Repository, Workspace
+
+__all__ = [
+    "BlobCache",
+    "ModelPool",
+    "RecordDiff",
+    "Repository",
+    "Workspace",
+    "annotations_table",
+    "expressions_table",
+    "flatten_anchor",
+    "materialize",
+    "records_to_table",
+]
