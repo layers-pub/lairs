@@ -6,23 +6,21 @@ giving reproducibility, provenance, and cheap diffing.
 
 Two facts about the upstream surface shape this wrapper.
 
-First, didactic's Repository is a *schema* VCS: ``add`` stages a Model class (or
-a ``panproto.Schema``) and a commit records the structural schema, not record
-instances. lairs therefore persists each fetched record's *value* as
-content-addressed JSON inside the repository working tree (under ``records/``),
-registers the record-type's Model schema with the underlying VCS, and commits
-both together. A corpus snapshot is a single commit over that working tree; the
-record set at any revision is read back from the committed working tree, so a
-tag pins an exact, byte-reproducible set of record values.
+First, ``add`` stages a Model class (or a ``panproto.Schema``) and records the
+structural schema, while ``add_data`` stages a record's value as committed data
+associated with that schema. lairs writes each record's value as JSON under
+``records/``, stages it as committed data, and stages the record type's Model
+schema alongside it, so one commit captures both. A corpus snapshot is a single
+commit; the record values committed at a revision are read back through
+``data_at``, so a tag pins an exact, byte-reproducible set of values.
 
-Second, the didactic wrapper does not expose tag creation or revision diffing on
-its public surface (only ``list_tags`` and ``resolve_ref``). The underlying
-``panproto.Repository`` *does* expose ``create_tag`` / ``create_annotated_tag``
-/ ``delete_tag`` and ``schema_at``, so this wrapper reaches the inner handle for
-tag creation and uses :func:`didactic.api.diff` over the schemas loaded at two
-revisions for structural diffs, plus a record-value diff computed from the
-stored working-tree JSON. There is no native revision-to-revision data diff on
-either surface; lairs computes the record diff itself from the committed values.
+Second, didactic 0.7.8 exposes tag creation (``create_tag`` and friends) and the
+committed-data read (``data_at``) on the public Repository surface, which this
+wrapper uses directly. It does not expose the committed-data write (``add_data``)
+publicly, so the producing side in :meth:`save` reaches the inner panproto handle
+for it, as didactic's own tests do. A record-value diff between two index
+snapshots is computed here from the AT-URI index, because ``CommittedDataset``
+carries a record's content and schema id but not its AT-URI.
 """
 
 from __future__ import annotations
@@ -32,6 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import didactic.api as dx
+import panproto
 
 if TYPE_CHECKING:
     from lairs._types import JsonValue
@@ -203,8 +202,9 @@ class Repository:
         """Stage a record value and its schema for the next commit.
 
         The record value is written as JSON into the working tree, indexed by its
-        AT-URI, and the record type's Model schema is staged with the underlying
-        didactic VCS so the commit captures both the data and its structure.
+        AT-URI, and staged as committed data so a revision pins the exact value.
+        The record type's Model schema is staged alongside it, so the commit
+        captures both the data and its structure.
 
         Parameters
         ----------
@@ -219,7 +219,18 @@ class Repository:
         index = self._read_index()
         index[uri] = stem
         self._write_index(index)
-        self.inner.add(type(model))
+        try:
+            self.inner.add(type(model))
+        except panproto.VcsError as exc:
+            # re-staging a record type whose schema is already committed and
+            # unchanged is a no-op for the schema VCS. the staged record value is
+            # the real change the commit captures.
+            if "no changes detected" not in str(exc):
+                raise
+        # stage the value as committed data, readable later through data_at.
+        # didactic exposes the committed-data read publicly but not the write,
+        # so the producing side uses the inner panproto handle.
+        self.inner._inner.add_data(str(record_path))  # noqa: SLF001
 
     def staged_uris(self) -> list[str]:
         """Return the AT-URIs currently present in the working tree.
@@ -320,10 +331,8 @@ class Repository:
     def tag(self, name: str, *, revision: str | None = None) -> None:
         """Tag a revision as a named dataset version.
 
-        Tag creation is not exposed on didactic's public Repository surface, so
-        this reaches the underlying ``panproto.Repository`` handle. A tag pins
-        the exact record values committed at the revision, giving a reproducible
-        named version.
+        A tag pins the exact record values committed at the revision, giving a
+        reproducible named version.
 
         Parameters
         ----------
@@ -341,7 +350,7 @@ class Repository:
         if target is None:
             msg = "cannot tag an empty repository with no head revision"
             raise ValueError(msg)
-        self.inner._inner.create_tag(name, target)  # noqa: SLF001
+        self.inner.create_tag(name, target)
 
     def tags(self) -> list[tuple[str, str]]:
         """Return the list of tags.

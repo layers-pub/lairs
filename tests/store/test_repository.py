@@ -123,3 +123,23 @@ def test_diff_resolves_both_refs(tmp_path: Path) -> None:
     repo.tag("v1")
     diff = repo.diff("v1", revision)
     assert isinstance(diff, RecordDiff)
+
+
+def test_committed_values_are_readable_at_revision(tmp_path: Path) -> None:
+    # save stages the record value as committed data, so data_at returns it at
+    # the revision. this backs the reproducibility guarantee.
+    repo = Repository.init(tmp_path / "repo")
+    repo.save(_EXPR_URI, _Expr(text="hello"))
+    revision = repo.commit("snapshot")
+    datasets = repo.inner.data_at(revision)
+    assert len(datasets) == 1
+    assert datasets[0].record_count == 1
+    assert b"hello" in datasets[0].data
+
+
+def test_tag_uses_public_create_tag(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    repo.save(_EXPR_URI, _Expr(text="hello"))
+    revision = repo.commit("snapshot")
+    repo.tag("v0.1")
+    assert ("v0.1", revision) in repo.tags()
