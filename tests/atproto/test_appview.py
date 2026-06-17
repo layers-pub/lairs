@@ -13,6 +13,11 @@ from lairs.atproto.pds import RecordEnvelope
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from contextlib import AbstractContextManager
+
+    from conftest import RouteHandler
+
+    from lairs._types import JsonValue
 
 _ENDPOINT = "https://appview.example"
 
@@ -104,3 +109,41 @@ def test_query_live() -> None:
         pytest.skip("network unavailable for live appview query")
     finally:
         client.close()
+
+
+def _appview_routes(path: str, params: dict[str, str]) -> tuple[int, JsonValue]:
+    """Serve a minimal Layers appview: one get method and one paged list."""
+    if path == "/xrpc/pub.layers.corpus.getCorpus":
+        return 200, {
+            "uri": "at://did:plc:demo/pub.layers.corpus.corpus/abc",
+            "cid": "bafycorpus",
+            "value": {"name": "demo corpus"},
+        }
+    if path == "/xrpc/pub.layers.corpus.listCorpora":
+        if params.get("cursor") is None:
+            return 200, {
+                "records": [{"uri": "at://1", "cid": "c1", "value": {}}],
+                "cursor": "page2",
+            }
+        if params.get("cursor") == "page2":
+            return 200, {"records": [{"uri": "at://2", "cid": "c2", "value": {}}]}
+    return 404, {"error": "MethodNotImplemented"}
+
+
+@pytest.mark.integration
+def test_appview_queries_against_live_server(
+    route_server: Callable[[RouteHandler], AbstractContextManager[str]],
+) -> None:
+    # drive the real httpx transport against a loopback appview: nsid prefixing,
+    # get-envelope decoding, cursor pagination, and error propagation.
+    with (
+        route_server(_appview_routes) as base_url,
+        AppviewClient(base_url) as client,
+    ):
+        envelope = client.get("corpus.getCorpus", {"uri": "at://x"})
+        assert envelope.value == {"name": "demo corpus"}
+        assert envelope.uri == "at://did:plc:demo/pub.layers.corpus.corpus/abc"
+        listed = list(client.list("corpus.listCorpora", {}))
+        assert [env.uri for env in listed] == ["at://1", "at://2"]
+        with pytest.raises(httpx.HTTPStatusError):
+            client.query("corpus.unknownMethod", {})

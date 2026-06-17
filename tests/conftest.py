@@ -7,20 +7,28 @@ fast, dependency-free unit tests; passing ``--run-integration`` opts in.
 
 from __future__ import annotations
 
+import contextlib
+import json
 import os
 import secrets
 import shutil
 import subprocess
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import parse_qs, urlsplit
 
 import didactic.api as dx
 import httpx
 import pytest
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
+    from contextlib import AbstractContextManager
+
+    from lairs._types import JsonValue
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -230,3 +238,85 @@ def pds_server() -> Iterator[PdsServer]:
         yield server
     finally:
         _compose(["down", "-v"], env)
+
+
+type RouteHandler = Callable[[str, dict[str, str]], tuple[int, JsonValue]]
+"""A loopback route callable mapping a request path and query to a response.
+
+Given the request path and parsed query parameters, the callable returns an
+HTTP status code and a JSON-serialisable response body.
+"""
+
+
+def _handler_class(routes: RouteHandler) -> type[BaseHTTPRequestHandler]:
+    """Build a request-handler class that dispatches GET requests to ``routes``.
+
+    Parameters
+    ----------
+    routes : RouteHandler
+        The route callable to dispatch each GET request to.
+
+    Returns
+    -------
+    type[http.server.BaseHTTPRequestHandler]
+        A handler class bound to ``routes`` over a closure.
+    """
+
+    class _Handler(BaseHTTPRequestHandler):
+        """A GET-only handler that serialises route results as JSON."""
+
+        def do_GET(self) -> None:  # the stdlib dispatches GET to this name
+            """Dispatch a GET request and write the JSON response."""
+            split = urlsplit(self.path)
+            query = {key: values[0] for key, values in parse_qs(split.query).items()}
+            status, body = routes(split.path, query)
+            payload = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: str) -> None:  # noqa: A002
+            """Discard per-request logging to keep test output quiet."""
+            _ = (format, args)
+
+    return _Handler
+
+
+@contextlib.contextmanager
+def _serve_routes(routes: RouteHandler) -> Iterator[str]:
+    """Serve GET routes on a loopback HTTP server for the block's duration.
+
+    Parameters
+    ----------
+    routes : RouteHandler
+        The route callable backing the server.
+
+    Yields
+    ------
+    str
+        The base URL of the running server.
+    """
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _handler_class(routes))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5.0)
+
+
+@pytest.fixture
+def route_server() -> Callable[[RouteHandler], AbstractContextManager[str]]:
+    """Return a factory that serves GET routes on a loopback HTTP server.
+
+    Returns
+    -------
+    collections.abc.Callable
+        A context-manager factory; calling it with a route callable yields the
+        base URL of a running loopback server.
+    """
+    return _serve_routes

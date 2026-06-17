@@ -12,12 +12,17 @@ from lairs.atproto.identity import IdentityError, IdentityResolution, IdentityRe
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from contextlib import AbstractContextManager
+
+    from conftest import PdsServer, RouteHandler
+
+    from lairs._types import JsonValue
 
 _DID = "did:plc:abc123"
 _HANDLE = "alice.test"
 _PDS = "https://pds.example"
 
-_PLC_DOCUMENT = {
+_PLC_DOCUMENT: JsonValue = {
     "id": _DID,
     "service": [
         {
@@ -175,3 +180,56 @@ def test_resolve_handle_live() -> None:
     except IdentityError:
         pytest.skip("network unavailable for live identity resolution")
     assert did.startswith("did:")
+
+
+def _plc_routes(path: str, _params: dict[str, str]) -> tuple[int, JsonValue]:
+    """Serve the PLC directory contract: GET /{did} returns the document."""
+    if path == f"/{_DID}":
+        return 200, _PLC_DOCUMENT
+    return 404, {"message": "did not registered"}
+
+
+@pytest.mark.integration
+def test_resolve_against_local_plc_server(
+    route_server: Callable[[RouteHandler], AbstractContextManager[str]],
+) -> None:
+    # resolve a did to its document and pds through a loopback PLC directory,
+    # over the real httpx transport rather than a mock.
+    with route_server(_plc_routes) as plc, httpx.Client() as client:
+        resolver = IdentityResolver(client, plc_directory=plc)
+        document = resolver.resolve_did(_DID)
+        assert document["id"] == _DID
+        assert resolver.resolve_pds(_DID) == _PDS
+        resolution = resolver.resolve(_DID)
+    assert resolution.did == _DID
+    assert resolution.pds_endpoint == _PDS
+    assert resolution.handle is None
+
+
+@pytest.mark.integration
+def test_resolve_against_real_did_document_live(
+    pds_server: PdsServer,
+    route_server: Callable[[RouteHandler], AbstractContextManager[str]],
+) -> None:
+    # serve the real did document the dev PDS published from a loopback PLC,
+    # then resolve the full chain through it; proves the resolver parses a real
+    # atproto did document and recovers the PDS endpoint it advertises.
+    described = httpx.get(
+        f"{pds_server.endpoint}/xrpc/com.atproto.repo.describeRepo",
+        params={"repo": pds_server.did},
+        timeout=30.0,
+    )
+    described.raise_for_status()
+    did_document = described.json()["didDoc"]
+
+    def routes(path: str, _params: dict[str, str]) -> tuple[int, JsonValue]:
+        if path == f"/{pds_server.did}":
+            return 200, did_document
+        return 404, {"message": "unknown did"}
+
+    with route_server(routes) as plc, httpx.Client() as client:
+        resolver = IdentityResolver(client, plc_directory=plc)
+        resolution = resolver.resolve(pds_server.did)
+    assert resolution.did == pds_server.did
+    assert resolution.handle is None
+    assert resolution.pds_endpoint == pds_server.endpoint
