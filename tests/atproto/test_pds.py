@@ -2,18 +2,28 @@
 
 from __future__ import annotations
 
+import base64
+import secrets
 from typing import TYPE_CHECKING
 
 import didactic.api as dx
 import httpx
+import libipld
 import pytest
+from multiformats import CID, multihash
 
 from lairs.atproto import pds
 from lairs.atproto.pds import (
+    IpldValue,
     PdsClient,
     RecordEnvelope,
+    _cid_link,
+    _envelopes_from_blocks,
+    _ipld_to_json,
+    _walk_mst,
     decode,
     decode_all,
+    decode_repo_car,
 )
 from lairs.records._generated.expression import Expression
 
@@ -47,7 +57,9 @@ def test_exports() -> None:
         "RecordEnvelope",
         "decode",
         "decode_all",
+        "decode_repo_car",
         "get_record",
+        "get_repo",
         "list_records",
     }
 
@@ -208,12 +220,168 @@ def test_get_record_raises_on_error_status() -> None:
         client.get_record(_REPO, _COLLECTION, "rkey")
 
 
-def test_get_repo_car_is_deferred() -> None:
+_REPO_DID = "did:plc:repotest"
+
+
+def _cid_bytes(value: IpldValue) -> bytes:
+    """Compute the raw CIDv1 dag-cbor bytes for a block value."""
+    raw = libipld.encode_dag_cbor(value)
+    return bytes(CID("base32", 1, "dag-cbor", multihash.digest(raw, "sha2-256")))
+
+
+def _cid_str(value: IpldValue) -> str:
+    """Compute the base32 CID string for a block value."""
+    return CID.decode(_cid_bytes(value)).encode("base32")
+
+
+def _expression_record(text: str) -> dict[str, IpldValue]:
+    """Build an expression-shaped record value."""
+    return {
+        "$type": _COLLECTION,
+        "id": "00000000-0000-0000-0000-000000000000",
+        "text": text,
+        "kind": "sentence",
+        "createdAt": "2026-06-16T00:00:00Z",
+    }
+
+
+def _mst_entry(
+    previous: bytes,
+    key: bytes,
+    value_cid: bytes,
+    right: bytes | None = None,
+) -> dict[str, IpldValue]:
+    """Build a prefix-compressed MST entry relative to the previous key."""
+    shared = 0
+    for left, current in zip(previous, key, strict=False):
+        if left != current:
+            break
+        shared += 1
+    return {"p": shared, "k": key[shared:], "v": value_cid, "t": right}
+
+
+def test_get_repo_car_fetches_raw_bytes() -> None:
+    payload = b"\x00car-archive-bytes"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/xrpc/com.atproto.sync.getRepo"
+        assert request.url.params["did"] == _REPO
+        return httpx.Response(200, content=payload)
+
+    with _client(handler) as client:
+        assert client.get_repo_car(_REPO) == payload
+
+
+def test_get_repo_car_raises_on_error_status() -> None:
     with (
-        _client(lambda _r: httpx.Response(200)) as client,
-        pytest.raises(NotImplementedError),
+        _client(lambda _r: httpx.Response(404)) as client,
+        pytest.raises(httpx.HTTPStatusError),
     ):
         client.get_repo_car(_REPO)
+
+
+def test_cid_link_round_trips_a_real_cid() -> None:
+    raw = _cid_bytes({"text": "hi"})
+    assert _cid_link(raw) == {"$link": CID.decode(raw).encode("base32")}
+
+
+def test_cid_link_rejects_non_cid_bytes() -> None:
+    assert _cid_link(b"plain bytes, not a cid") is None
+
+
+def test_ipld_to_json_renders_byte_string_as_bytes_object() -> None:
+    rendered = _ipld_to_json(b"\x00\x01\x02")
+    assert rendered == {"$bytes": base64.standard_b64encode(b"\x00\x01\x02").decode()}
+
+
+def test_ipld_to_json_renders_cid_link() -> None:
+    raw = _cid_bytes({"k": "v"})
+    assert _ipld_to_json(raw) == {"$link": CID.decode(raw).encode("base32")}
+
+
+def test_ipld_to_json_recurses_into_containers() -> None:
+    value: IpldValue = {"a": [1, "two", None], "b": {"c": True}}
+    assert _ipld_to_json(value) == {"a": [1, "two", None], "b": {"c": True}}
+
+
+def test_walk_mst_reconstructs_keys_in_order() -> None:
+    # a three-node tree exercising prefix compression, a left subtree, and a
+    # right subtree, so the in-order walk must interleave all three.
+    cid_a0 = _cid_bytes(_expression_record("a0"))
+    cid_b0 = _cid_bytes(_expression_record("b0"))
+    cid_b0m = _cid_bytes(_expression_record("b0m"))
+    cid_b1 = _cid_bytes(_expression_record("b1"))
+    left_entries: list[IpldValue] = [_mst_entry(b"", b"col/a0", cid_a0)]
+    left_node: dict[str, IpldValue] = {"l": None, "e": left_entries}
+    mid_entries: list[IpldValue] = [_mst_entry(b"", b"col/b0m", cid_b0m)]
+    mid_node: dict[str, IpldValue] = {"l": None, "e": mid_entries}
+    left_cid = _cid_bytes(left_node)
+    mid_cid = _cid_bytes(mid_node)
+    root_entries: list[IpldValue] = [
+        _mst_entry(b"", b"col/b0", cid_b0, right=mid_cid),
+        _mst_entry(b"col/b0", b"col/b1", cid_b1),
+    ]
+    root_node: dict[str, IpldValue] = {"l": left_cid, "e": root_entries}
+    root_cid = _cid_bytes(root_node)
+    blocks: dict[bytes, IpldValue] = {
+        left_cid: left_node,
+        mid_cid: mid_node,
+        root_cid: root_node,
+    }
+    walked = list(_walk_mst(blocks, root_cid))
+    keys = [key.decode() for key, _ in walked]
+    assert keys == ["col/a0", "col/b0", "col/b0m", "col/b1"]
+    assert [cid for _, cid in walked] == [cid_a0, cid_b0, cid_b0m, cid_b1]
+
+
+def test_envelopes_from_blocks_builds_decodable_envelopes() -> None:
+    record_one = _expression_record("alpha")
+    record_two = _expression_record("beta")
+    cid_one = _cid_bytes(record_one)
+    cid_two = _cid_bytes(record_two)
+    entries: list[IpldValue] = [
+        _mst_entry(b"", f"{_COLLECTION}/aaaaa".encode(), cid_one),
+        _mst_entry(
+            f"{_COLLECTION}/aaaaa".encode(), f"{_COLLECTION}/aaaab".encode(), cid_two
+        ),
+    ]
+    node: dict[str, IpldValue] = {"l": None, "e": entries}
+    node_cid = _cid_bytes(node)
+    commit: dict[str, IpldValue] = {
+        "version": 3,
+        "did": _REPO_DID,
+        "data": node_cid,
+        "rev": "abc",
+        "prev": None,
+    }
+    commit_cid = _cid_bytes(commit)
+    roots: list[IpldValue] = [commit_cid]
+    header: dict[str, IpldValue] = {"roots": roots, "version": 1}
+    blocks: dict[bytes, IpldValue] = {
+        commit_cid: commit,
+        node_cid: node,
+        cid_one: record_one,
+        cid_two: record_two,
+    }
+    envelopes = _envelopes_from_blocks(header, blocks)
+    assert [env.uri for env in envelopes] == [
+        f"at://{_REPO_DID}/{_COLLECTION}/aaaaa",
+        f"at://{_REPO_DID}/{_COLLECTION}/aaaab",
+    ]
+    assert [env.cid for env in envelopes] == [
+        _cid_str(record_one),
+        _cid_str(record_two),
+    ]
+    decoded = [decode(env, Expression) for env in envelopes]
+    assert [record.text for record in decoded] == ["alpha", "beta"]
+
+
+def test_envelopes_from_blocks_returns_empty_without_roots() -> None:
+    assert _envelopes_from_blocks({"version": 1}, {}) == ()
+
+
+def test_envelopes_from_blocks_returns_empty_on_non_object_header() -> None:
+    assert _envelopes_from_blocks("not a header", {}) == ()
 
 
 def test_module_list_records_drains_pages() -> None:
@@ -335,3 +503,86 @@ def test_get_record_missing_raises_live(pds_server: PdsServer) -> None:
         client.get_record(
             pds_server.did, "pub.layers.expression.expression", "does-not-exist"
         )
+
+
+def _fresh_account(server: PdsServer) -> tuple[str, str]:
+    """Create another throwaway account on the same PDS, returning did and jwt."""
+    token = secrets.token_hex(8)
+    response = httpx.post(
+        f"{server.endpoint}/xrpc/com.atproto.server.createAccount",
+        json={
+            "handle": f"u{token}.test",
+            "email": f"{token}@example.test",
+            "password": secrets.token_hex(16),
+        },
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    body = response.json()
+    return str(body["did"]), str(body["accessJwt"])
+
+
+def _seed_account(
+    endpoint: str,
+    did: str,
+    jwt: str,
+    collection: str,
+    count: int,
+) -> list[str]:
+    """Create ``count`` records in ``collection`` for ``did``, returning the uris."""
+    headers = {"Authorization": f"Bearer {jwt}"}
+    uris: list[str] = []
+    with httpx.Client(headers=headers) as authed:
+        for index in range(count):
+            response = authed.post(
+                f"{endpoint}/xrpc/com.atproto.repo.createRecord",
+                json={
+                    "repo": did,
+                    "collection": collection,
+                    "record": {
+                        "$type": collection,
+                        "id": f"00000000-0000-0000-0000-{index:012d}",
+                        "text": f"record {index}",
+                        "kind": "sentence",
+                        "createdAt": "2026-06-16T00:00:00Z",
+                    },
+                },
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            uris.append(str(response.json()["uri"]))
+    return uris
+
+
+@pytest.mark.integration
+def test_get_repo_decodes_full_repository_live(pds_server: PdsServer) -> None:
+    # get_repo recovers every record across collections in a single CAR fetch,
+    # with CIDs identical to those the XRPC record endpoints report.
+    did, jwt = _fresh_account(pds_server)
+    seeded = [
+        *_seed_account(pds_server.endpoint, did, jwt, _COLLECTION, 3),
+        *_seed_account(pds_server.endpoint, did, jwt, "pub.layers.test.other", 2),
+    ]
+    client = PdsClient(pds_server.endpoint)
+    envelopes = client.get_repo(did)
+    assert {env.uri for env in envelopes} == set(seeded)
+    listed = [
+        *client.list_records(did, _COLLECTION),
+        *client.list_records(did, "pub.layers.test.other"),
+    ]
+    assert {env.uri: env.cid for env in envelopes} == {
+        env.uri: env.cid for env in listed
+    }
+    expressions = [env for env in envelopes if _COLLECTION in env.uri]
+    records, failures = decode_all(expressions, Expression)
+    assert not failures
+    assert {record.text for record in records} == {f"record {i}" for i in range(3)}
+
+
+@pytest.mark.integration
+def test_decode_repo_car_matches_get_repo_live(pds_server: PdsServer) -> None:
+    did, jwt = _fresh_account(pds_server)
+    _seed_account(pds_server.endpoint, did, jwt, _COLLECTION, 4)
+    client = PdsClient(pds_server.endpoint)
+    car = client.get_repo_car(did)
+    assert decode_repo_car(car) == client.get_repo(did)

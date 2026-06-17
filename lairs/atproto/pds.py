@@ -7,22 +7,26 @@ modelled here as ``RecordEnvelope``. A generic ``decode`` helper validates an
 envelope's ``value`` against any ``dx.Model`` target; ``decode_all`` decodes a
 batch and collects per-record validation failures instead of failing fast.
 
-The transport is ``httpx``; the bulk ``com.atproto.sync.getRepo`` CAR path is a
-clearly-marked deferred stub. Public reads need no auth.
+The transport is ``httpx``. The bulk ``com.atproto.sync.getRepo`` path fetches a
+CAR archive and decodes its Merkle search tree into record envelopes through
+``libipld``. Public reads need no auth.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 from typing import TYPE_CHECKING, Self
 
 import didactic.api as dx
 import httpx
+import libipld
+from multiformats import CID
 
 from lairs._types import JsonValue  # noqa: TC001  (runtime: didactic field sort)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
     from types import TracebackType
 
 __all__ = [
@@ -32,9 +36,21 @@ __all__ = [
     "RecordEnvelope",
     "decode",
     "decode_all",
+    "decode_repo_car",
     "get_record",
+    "get_repo",
     "list_records",
 ]
+
+type IpldValue = (
+    None | bool | int | float | str | bytes | list[IpldValue] | dict[str, IpldValue]
+)
+"""A recursive alias for a decoded IPLD value.
+
+This is ``JsonValue`` widened to admit raw ``bytes``, which is how ``libipld``
+represents both DAG-CBOR byte strings and CID links inside a decoded block. It
+is the value type of the block store returned by ``libipld.decode_car``.
+"""
 
 type QueryParams = dict[str, str | int | bool]
 """The scalar parameter mapping accepted by an XRPC query.
@@ -219,6 +235,193 @@ def _envelope_from_record(record: dict[str, JsonValue]) -> RecordEnvelope:
     )
 
 
+def _cid_link(value: bytes) -> dict[str, JsonValue] | None:
+    """Render a CID-link byte string as the DAG-JSON ``$link`` object.
+
+    ``libipld`` decodes both DAG-CBOR byte strings and CID links to Python
+    ``bytes``, so the two are distinguished here by attempting a CID round trip:
+    bytes that decode to a CID and re-encode to exactly the same bytes are
+    treated as a link. Genuine DAG-CBOR byte strings do not round-trip through
+    the CID decoder, so they fall through to a ``$bytes`` rendering. ATProto
+    record values carry binary payloads as blobs rather than inline byte
+    strings, so a misclassification is not expected in practice.
+
+    Parameters
+    ----------
+    value : bytes
+        The candidate CID-link bytes.
+
+    Returns
+    -------
+    dict of str to JsonValue or None
+        The ``{"$link": cid}`` object if ``value`` is a CID, else ``None``.
+    """
+    try:
+        cid = CID.decode(value)
+    except ValueError, KeyError:
+        return None
+    if bytes(cid) != value:
+        return None
+    return {"$link": cid.encode("base32")}
+
+
+def _ipld_to_json(value: IpldValue) -> JsonValue:
+    """Convert a decoded IPLD value to its DAG-JSON shape.
+
+    CID links become ``{"$link": cid}`` objects and other byte strings become
+    ``{"$bytes": base64}`` objects, matching the DAG-JSON encoding the XRPC
+    record endpoints emit. Containers are converted recursively and scalars
+    pass through unchanged.
+
+    Parameters
+    ----------
+    value : IpldValue
+        The decoded IPLD value.
+
+    Returns
+    -------
+    JsonValue
+        The JSON-shaped value.
+    """
+    if isinstance(value, bytes):
+        link = _cid_link(value)
+        if link is not None:
+            return link
+        return {"$bytes": base64.standard_b64encode(value).decode("ascii")}
+    if isinstance(value, dict):
+        return {key: _ipld_to_json(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_ipld_to_json(item) for item in value]
+    return value
+
+
+def _walk_mst(
+    blocks: Mapping[bytes, IpldValue],
+    cid: bytes,
+) -> Iterator[tuple[bytes, bytes]]:
+    """Walk a Merkle search tree in key order, yielding key and value links.
+
+    The walk is the standard in-order traversal of an ATProto MST: the left
+    subtree, then each entry followed by the subtree to its right. Entry keys
+    are prefix-compressed against the previous key in the same node, so the
+    full key is reconstructed by splicing the shared prefix onto each suffix.
+
+    Parameters
+    ----------
+    blocks : collections.abc.Mapping of bytes to IpldValue
+        The CAR block store, keyed by raw CID bytes.
+    cid : bytes
+        The raw CID of the node to walk.
+
+    Yields
+    ------
+    tuple of (bytes, bytes)
+        Each record's full key (``collection/rkey``) and value CID bytes.
+    """
+    node = blocks.get(cid)
+    if not isinstance(node, dict):
+        return
+    left = node.get("l")
+    if isinstance(left, bytes):
+        yield from _walk_mst(blocks, left)
+    entries = node.get("e")
+    if not isinstance(entries, list):
+        return
+    previous = b""
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        prefix = entry.get("p")
+        suffix = entry.get("k")
+        target = entry.get("v")
+        if (
+            not isinstance(prefix, int)
+            or not isinstance(suffix, bytes)
+            or not isinstance(target, bytes)
+        ):
+            continue
+        key = previous[:prefix] + suffix
+        previous = key
+        yield key, target
+        right = entry.get("t")
+        if isinstance(right, bytes):
+            yield from _walk_mst(blocks, right)
+
+
+def _envelopes_from_blocks(
+    header: IpldValue,
+    blocks: Mapping[bytes, IpldValue],
+) -> tuple[RecordEnvelope, ...]:
+    """Build record envelopes from a decoded CAR header and block store.
+
+    The header's first root is the signed commit; the commit's ``data`` link is
+    the MST root and its ``did`` is the repository identity. Each MST key is a
+    ``collection/rkey`` path whose value link resolves to a record block.
+
+    Parameters
+    ----------
+    header : IpldValue
+        The decoded CAR header, expected to carry a ``roots`` list.
+    blocks : collections.abc.Mapping of bytes to IpldValue
+        The CAR block store, keyed by raw CID bytes.
+
+    Returns
+    -------
+    tuple of RecordEnvelope
+        One envelope per record in the repository, in MST key order.
+    """
+    if not isinstance(header, dict):
+        return ()
+    roots = header.get("roots")
+    if not isinstance(roots, list) or not roots:
+        return ()
+    root = roots[0]
+    if not isinstance(root, bytes):
+        return ()
+    commit = blocks.get(root)
+    if not isinstance(commit, dict):
+        return ()
+    did = commit.get("did")
+    mst_root = commit.get("data")
+    if not isinstance(did, str) or not isinstance(mst_root, bytes):
+        return ()
+    envelopes: list[RecordEnvelope] = []
+    for key, target in _walk_mst(blocks, mst_root):
+        collection, _, rkey = key.decode("utf-8").partition("/")
+        envelopes.append(
+            RecordEnvelope(
+                uri=f"at://{did}/{collection}/{rkey}",
+                cid=CID.decode(target).encode("base32"),
+                value=_ipld_to_json(blocks.get(target)),
+            ),
+        )
+    return tuple(envelopes)
+
+
+def decode_repo_car(car: bytes) -> tuple[RecordEnvelope, ...]:
+    """Decode a CAR archive into record envelopes.
+
+    Parses the CAR block store with ``libipld``, then walks the repository's
+    Merkle search tree to recover every record as a ``{uri, cid, value}``
+    envelope. Record values are rendered in DAG-JSON shape so they decode
+    against the generated models exactly as the XRPC record endpoints do.
+
+    Parameters
+    ----------
+    car : bytes
+        The CAR archive bytes from ``com.atproto.sync.getRepo``.
+
+    Returns
+    -------
+    tuple of RecordEnvelope
+        One envelope per record in the repository, in MST key order.
+    """
+    header, blocks = libipld.decode_car(car)
+    if not isinstance(blocks, dict):
+        return ()
+    return _envelopes_from_blocks(header, blocks)
+
+
 class PdsClient:
     """An XRPC client over a single PDS, for read-only record access.
 
@@ -386,11 +589,10 @@ class PdsClient:
             next_cursor = returned_cursor
 
     def get_repo_car(self, repo: str) -> bytes:
-        """Fetch a whole repository as a CAR archive.
+        """Fetch a whole repository as a raw CAR archive.
 
-        This is the bulk ``com.atproto.sync.getRepo`` path. CAR and DAG-CBOR
-        block decoding is deferred; the raw archive bytes are returned for a
-        future decoder.
+        This is the bulk ``com.atproto.sync.getRepo`` path. The archive is read
+        fully into memory; use ``get_repo`` to decode it into envelopes.
 
         Parameters
         ----------
@@ -404,15 +606,39 @@ class PdsClient:
 
         Raises
         ------
-        NotImplementedError
-            Always, until CAR / DAG-CBOR decoding lands.
+        httpx.HTTPStatusError
+            If the PDS returns a non-success status.
         """
-        # deferred: fetching is trivial but decoding the car block store to
-        # record envelopes requires a dag-cbor codec that is out of scope for
-        # the read milestone; see plan section 6.2.
-        _ = (self._endpoint, _GET_REPO_NSID, repo)
-        msg = "bulk getRepo CAR decode is deferred"
-        raise NotImplementedError(msg)
+        response = self._client.get(
+            self._xrpc_url(_GET_REPO_NSID),
+            params={"did": repo},
+        )
+        response.raise_for_status()
+        return response.content
+
+    def get_repo(self, repo: str) -> tuple[RecordEnvelope, ...]:
+        """Fetch a whole repository and decode it into record envelopes.
+
+        Fetches the repository CAR in a single request and walks its Merkle
+        search tree, yielding one envelope per record. This recovers the same
+        records as listing every collection, in one round trip.
+
+        Parameters
+        ----------
+        repo : str
+            The repository DID.
+
+        Returns
+        -------
+        tuple of RecordEnvelope
+            One envelope per record in the repository, in MST key order.
+
+        Raises
+        ------
+        httpx.HTTPStatusError
+            If the PDS returns a non-success status.
+        """
+        return decode_repo_car(self.get_repo_car(repo))
 
 
 def get_record(
@@ -488,3 +714,27 @@ def list_records(
         return list(
             client.list_records(repo, collection, limit=limit, cursor=cursor),
         )
+
+
+def get_repo(endpoint: str, repo: str) -> tuple[RecordEnvelope, ...]:
+    """Fetch and decode a whole repository using a throwaway client.
+
+    Parameters
+    ----------
+    endpoint : str
+        The base URL of the PDS.
+    repo : str
+        The repository DID.
+
+    Returns
+    -------
+    tuple of RecordEnvelope
+        One envelope per record in the repository, in MST key order.
+
+    Raises
+    ------
+    httpx.HTTPStatusError
+        If the PDS returns a non-success status.
+    """
+    with PdsClient(endpoint) as client:
+        return client.get_repo(repo)
