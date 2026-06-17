@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING, Self
 
 import didactic.api as dx
 import httpx
+import libipld
+from multiformats import CID, multihash
 
 from lairs._types import JsonValue  # noqa: TC001  (runtime: didactic field sort)
 from lairs.atproto.pds import PdsClient
@@ -903,12 +905,34 @@ def _value_with_type(value: JsonValue, collection: str) -> JsonValue:
     return typed
 
 
+def _record_cid(value: JsonValue) -> str:
+    """Return the ATProto record CID for a value.
+
+    The CID is a CIDv1 over the DAG-CBOR encoding of the value with a sha-256
+    multihash and the dag-cbor codec, computed the way a PDS computes the CID it
+    reports for a stored record. Computing it the same way lets the publish diff
+    detect an unchanged record by CID equality.
+
+    Parameters
+    ----------
+    value : JsonValue
+        The record value, including its ``$type``.
+
+    Returns
+    -------
+    str
+        The record's CIDv1 string.
+    """
+    digest = multihash.digest(libipld.encode_dag_cbor(value), "sha2-256")
+    return str(CID("base32", 1, "dag-cbor", digest))
+
+
 def _pds_state(repo: Repository, revision: str) -> dict[str, str]:
     """Return the local AT-URI to CID map at a revision.
 
-    The CID stands in for the record value's content identity: lairs computes a
-    deterministic content hash of each stored value so the publish diff can be
-    computed offline against the PDS's reported CIDs.
+    Each value's CID is computed the way a PDS computes it, so the publish diff
+    detects an unchanged record by CID equality against the PDS's reported CIDs,
+    and a re-publish of an unchanged revision is a no-op.
 
     Parameters
     ----------
@@ -920,7 +944,7 @@ def _pds_state(repo: Repository, revision: str) -> dict[str, str]:
     Returns
     -------
     dict of str to str
-        A mapping from AT-URI to a content hash of the stored value.
+        A mapping from AT-URI to the record CID.
     """
     # resolve the ref so an unknown revision fails loudly; the working-tree
     # store is single-checkout, so the staged values are the revision values.
@@ -929,7 +953,7 @@ def _pds_state(repo: Repository, revision: str) -> dict[str, str]:
     for uri in repo.staged_uris():
         raw = repo.load_raw(uri)
         if isinstance(raw, dict):
-            state[uri] = deterministic_rkey(raw)
+            state[uri] = _record_cid(_value_with_type(raw, collection_of(uri)))
     return state
 
 
