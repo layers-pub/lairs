@@ -1,0 +1,108 @@
+site_name: lairs
+site_description: A read/write dataset client for the Layers format, built on didactic.
+site_url: https://layers-pub.github.io/lairs/
+site_author: layers-pub contributors
+repo_url: https://github.com/layers-pub/lairs
+repo_name: layers-pub/lairs
+edit_uri: edit/main/docs/
+
+theme:
+  name: cinder
+  highlightjs: false
+
+extra_css:
+  - css/pygments.css
+  - css/custom.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - pymdownx.details
+  - pymdownx.highlight:
+      use_pygments: true
+      guess_lang: false
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - autorefs
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths:
+            - .
+          options:
+            docstring_style: numpy
+            docstring_section_style: spacy
+            show_root_heading: true
+            show_source: false
+            show_signature_annotations: true
+            separate_signature: true
+            signature_crossrefs: true
+            merge_init_into_class: true
+            inherited_members: false
+            members_order: source
+            heading_level: 2
+            filters:
+              - "!^_"
+              - "^__init__$"
+
+nav:
+  - Home: index.md
+  - Tutorial:
+    - tutorial/index.md
+    - Reading a corpus: tutorial/01-reading-a-corpus.md
+    - Materialising views: tutorial/02-materialising-views.md
+    - Authoring and publishing: tutorial/03-authoring-and-publishing.md
+  - Guides:
+    - guide/index.md
+    - Vendoring and codegen: guide/codegen.md
+    - Reading from a PDS: guide/reading-pds.md
+    - The store: guide/store.md
+    - Media and anchors: guide/media.md
+    - Authoring and publishing: guide/authoring.md
+    - The dataset API: guide/dataset-api.md
+    - Format codecs: guide/codecs.md
+    - Knowledge bases: guide/knowledge-bases.md
+    - Exporters: guide/exporters.md
+    - Experiment tracking: guide/tracking.md
+    - The CLI: guide/cli.md
+  - Concepts:
+    - concepts/index.md
+    - Architecture: concepts/architecture.md
+    - Generated models: concepts/generated-models.md
+    - The Layers data model: concepts/layers-data-model.md
+    - Anchors and modality: concepts/anchors-and-modality.md
+    - Reproducibility: concepts/reproducibility.md
+    - Integrations and ports: concepts/integrations.md
+  - API reference:
+    - reference/index.md
+    - Records: reference/records.md
+    - ATProto access: reference/atproto.md
+    - Store: reference/store.md
+    - Media: reference/media.md
+    - Code generation: reference/codegen.md
+    - Shared types: reference/types.md
+    - Authoring: reference/author.md
+    - Dataset API: reference/data.md
+    - Integration ports: reference/ports.md
+    - Adapter registry: reference/registry.md
+    - Format codecs: reference/codecs.md
+    - Knowledge bases: reference/kb.md
+    - Exporters: reference/exporters.md
+    - Experiment tracking: reference/tracking.md
+    - CLI: reference/cli.md
+  - Project:
+    - project/stability.md
