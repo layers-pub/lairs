@@ -44,3 +44,23 @@ jobs:
             exit 1
           fi
           echo "no Any or bare object in annotations"
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python 3.14
+        run: uv python install 3.14
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      # the pds_server fixture starts a local PDS via docker compose (docker is
+      # preinstalled on the runner) and skips cleanly if it cannot. integration
+      # tests needing optional extras or external network skip cleanly too.
+      - name: Integration tests (local PDS in Docker)
+        run: uv run pytest --run-integration -m integration
