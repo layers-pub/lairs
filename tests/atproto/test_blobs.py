@@ -121,3 +121,41 @@ def test_blob_round_trip_live(pds_server: PdsServer) -> None:
     fetched = BlobClient(pds_server.endpoint).get_blob(pds_server.did, cid)
     assert fetched.cid == cid
     assert fetched.data == payload
+
+
+@pytest.mark.integration
+def test_large_blob_round_trip_live(pds_server: PdsServer) -> None:
+    # a multi-megabyte blob round-trips by CID, and the streamed read
+    # reassembles to the same bytes as the buffered read.
+    payload = bytes(range(256)) * 12000  # ~3 MiB of varied bytes
+    auth = {"Authorization": f"Bearer {pds_server.access_jwt}"}
+    with httpx.Client(headers=auth) as authed:
+        uploaded = authed.post(
+            f"{pds_server.endpoint}/xrpc/com.atproto.repo.uploadBlob",
+            content=payload,
+            headers={"Content-Type": "application/octet-stream"},
+            timeout=60.0,
+        )
+        uploaded.raise_for_status()
+        blob_ref = uploaded.json()["blob"]
+        cid = str(blob_ref["ref"]["$link"])
+        bound = authed.post(
+            f"{pds_server.endpoint}/xrpc/com.atproto.repo.createRecord",
+            json={
+                "repo": pds_server.did,
+                "collection": "pub.layers.media.media",
+                "record": {
+                    "$type": "pub.layers.media.media",
+                    "kind": "audio",
+                    "blob": blob_ref,
+                    "createdAt": "2026-06-16T00:00:00Z",
+                },
+            },
+            timeout=30.0,
+        )
+        bound.raise_for_status()
+    client = BlobClient(pds_server.endpoint)
+    fetched = client.get_blob(pds_server.did, cid)
+    assert fetched.data == payload
+    streamed = b"".join(client.iter_blob(pds_server.did, cid))
+    assert streamed == payload

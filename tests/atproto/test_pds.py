@@ -276,3 +276,62 @@ def test_pds_round_trip_live(pds_server: PdsServer) -> None:
         client.list_records(pds_server.did, "pub.layers.expression.expression"),
     )
     assert any(env.uri == uri for env in listed)
+
+
+def _seed_records(server: PdsServer, collection: str, count: int) -> None:
+    """Create ``count`` records in ``collection`` on the live PDS."""
+    headers = {"Authorization": f"Bearer {server.access_jwt}"}
+    with httpx.Client(headers=headers) as authed:
+        for index in range(count):
+            response = authed.post(
+                f"{server.endpoint}/xrpc/com.atproto.repo.createRecord",
+                json={
+                    "repo": server.did,
+                    "collection": collection,
+                    "record": {
+                        "$type": collection,
+                        "id": f"00000000-0000-0000-0000-{index:012d}",
+                        "text": f"record {index}",
+                        "kind": "sentence",
+                        "createdAt": "2026-06-16T00:00:00Z",
+                    },
+                },
+                timeout=30.0,
+            )
+            response.raise_for_status()
+
+
+@pytest.mark.integration
+def test_list_records_paginates_live(pds_server: PdsServer) -> None:
+    # listRecords drains every page via cursor pagination, returning each
+    # record exactly once across a page size smaller than the record count.
+    collection = "pub.layers.test.page"
+    count = 25
+    _seed_records(pds_server, collection, count)
+    client = PdsClient(pds_server.endpoint)
+    seen = list(client.list_records(pds_server.did, collection, limit=10))
+    assert len(seen) == count
+    assert len({envelope.uri for envelope in seen}) == count
+
+
+@pytest.mark.integration
+def test_decode_all_over_real_records_live(pds_server: PdsServer) -> None:
+    # every fetched record carries a $type; decode_all strips it and validates
+    # all of them against the generated model with no failures.
+    collection = "pub.layers.test.decode"
+    _seed_records(pds_server, collection, 5)
+    client = PdsClient(pds_server.endpoint)
+    envelopes = list(client.list_records(pds_server.did, collection))
+    records, failures = decode_all(envelopes, Expression)
+    assert len(records) == 5
+    assert not failures
+    assert {record.text for record in records} == {f"record {i}" for i in range(5)}
+
+
+@pytest.mark.integration
+def test_get_record_missing_raises_live(pds_server: PdsServer) -> None:
+    client = PdsClient(pds_server.endpoint)
+    with pytest.raises(httpx.HTTPStatusError):
+        client.get_record(
+            pds_server.did, "pub.layers.expression.expression", "does-not-exist"
+        )

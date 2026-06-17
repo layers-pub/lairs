@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import httpx
 import pytest
 
+from lairs.atproto.pds import PdsClient, decode
 from lairs.author import publish
 from lairs.records._generated.expression import Expression
 from lairs.records._generated.media import Media
@@ -579,3 +580,176 @@ def test_write_round_trip_live(pds_server: PdsServer) -> None:
         )
         read_back.raise_for_status()
     assert read_back.json()["value"]["text"] == "round trip"
+
+
+def _authed(server: PdsServer) -> httpx.Client:
+    """Return an httpx client carrying the test account's bearer token."""
+    return httpx.Client(headers={"Authorization": f"Bearer {server.access_jwt}"})
+
+
+@pytest.mark.integration
+def test_apply_writes_creates_all_records_live(pds_server: PdsServer) -> None:
+    # a bulk applyWrites of several record types lands every record, and each
+    # stored record carries the $type discriminator the write path must inject.
+    token = pds_server.handle.split(".", 1)[0]
+    expr_uri = f"at://{pds_server.did}/pub.layers.expression.expression/{token}e"
+    media_uri = f"at://{pds_server.did}/pub.layers.media.media/{token}m"
+    layer_uri = f"at://{pds_server.did}/pub.layers.annotation.annotationLayer/{token}l"
+    writes = [
+        # deliberately out of dependency order: the layer is listed first.
+        publish.WriteOp(
+            action="create",
+            collection="pub.layers.annotation.annotationLayer",
+            rkey=f"{token}l",
+            uri=layer_uri,
+            value={"kind": "span", "createdAt": "2026-06-16T00:00:00Z"},
+        ),
+        publish.WriteOp(
+            action="create",
+            collection="pub.layers.media.media",
+            rkey=f"{token}m",
+            uri=media_uri,
+            value={"kind": "audio", "createdAt": "2026-06-16T00:00:00Z"},
+        ),
+        publish.WriteOp(
+            action="create",
+            collection="pub.layers.expression.expression",
+            rkey=f"{token}e",
+            uri=expr_uri,
+            value={
+                "id": "11111111-1111-1111-1111-111111111111",
+                "text": "round trip",
+                "kind": "sentence",
+                "createdAt": "2026-06-16T00:00:00Z",
+            },
+        ),
+    ]
+    with _authed(pds_server) as client:
+        writer = publish.WriteClient(pds_server.endpoint, pds_server.did, client)
+        results = writer.apply_writes(writes)
+        assert {r.status for r in results} == {"created"}
+        reader = PdsClient(pds_server.endpoint, client)
+        # every record is readable and carries $type == its collection.
+        for collection, rkey in [
+            ("pub.layers.expression.expression", f"{token}e"),
+            ("pub.layers.media.media", f"{token}m"),
+            ("pub.layers.annotation.annotationLayer", f"{token}l"),
+        ]:
+            envelope = reader.get_record(pds_server.did, collection, rkey)
+            assert isinstance(envelope.value, dict)
+            assert envelope.value["$type"] == collection
+        # the expression decodes through the generated model.
+        env = reader.get_record(
+            pds_server.did, "pub.layers.expression.expression", f"{token}e"
+        )
+        assert decode(env, Expression).text == "round trip"
+
+
+@pytest.mark.integration
+def test_put_record_idempotent_live(pds_server: PdsServer) -> None:
+    # putRecord on a deterministic rkey upserts rather than duplicating.
+    collection = "pub.layers.expression.expression"
+    rkey = pds_server.handle.split(".", 1)[0] + "idem"
+    with _authed(pds_server) as client:
+        writer = publish.WriteClient(pds_server.endpoint, pds_server.did, client)
+        base = {
+            "id": "22222222-2222-2222-2222-222222222222",
+            "kind": "sentence",
+            "createdAt": "2026-06-16T00:00:00Z",
+        }
+        writer.put_record(collection, rkey, {**base, "text": "first"})
+        result = writer.put_record(collection, rkey, {**base, "text": "second"})
+        assert result.status == "updated"
+        reader = PdsClient(pds_server.endpoint, client)
+        env = reader.get_record(pds_server.did, collection, rkey)
+        assert isinstance(env.value, dict)
+        assert env.value["text"] == "second"
+
+
+@pytest.mark.integration
+def test_delete_record_live(pds_server: PdsServer) -> None:
+    collection = "pub.layers.expression.expression"
+    rkey = pds_server.handle.split(".", 1)[0] + "del"
+    with _authed(pds_server) as client:
+        writer = publish.WriteClient(pds_server.endpoint, pds_server.did, client)
+        writer.put_record(
+            collection,
+            rkey,
+            {
+                "id": "33333333-3333-3333-3333-333333333333",
+                "text": "doomed",
+                "kind": "sentence",
+                "createdAt": "2026-06-16T00:00:00Z",
+            },
+        )
+        result = writer.delete_record(collection, rkey)
+        assert result.status == "deleted"
+        reader = PdsClient(pds_server.endpoint, client)
+        with pytest.raises(httpx.HTTPStatusError):
+            reader.get_record(pds_server.did, collection, rkey)
+
+
+@pytest.mark.integration
+def test_write_requires_auth_live(pds_server: PdsServer) -> None:
+    # an unauthenticated write is rejected by the PDS and surfaces as WriteError.
+    with httpx.Client() as anon:
+        writer = publish.WriteClient(pds_server.endpoint, pds_server.did, anon)
+        with pytest.raises(publish.WriteError):
+            writer.create_record(
+                "pub.layers.expression.expression",
+                {
+                    "id": "55555555-5555-5555-5555-555555555555",
+                    "text": "no auth",
+                    "kind": "sentence",
+                    "createdAt": "2026-06-16T00:00:00Z",
+                },
+            )
+
+
+@pytest.mark.integration
+def test_apply_writes_partial_failure_resumes_live(pds_server: PdsServer) -> None:
+    # one op names an invalid collection, failing the batch. the retry path
+    # upserts the valid ops idempotently and reports the bad one as failed.
+    token = pds_server.handle.split(".", 1)[0]
+    good = "pub.layers.expression.expression"
+    base = {
+        "id": "44444444-4444-4444-4444-444444444444",
+        "kind": "sentence",
+        "createdAt": "2026-06-16T00:00:00Z",
+    }
+    ok1 = f"at://{pds_server.did}/{good}/{token}ok1"
+    ok2 = f"at://{pds_server.did}/{good}/{token}ok2"
+    bad = "at://bad"
+    writes = [
+        publish.WriteOp(
+            action="create",
+            collection=good,
+            rkey=f"{token}ok1",
+            uri=ok1,
+            value={**base, "text": "ok1"},
+        ),
+        publish.WriteOp(
+            action="create",
+            collection="not a valid nsid",
+            rkey=f"{token}bad",
+            uri=bad,
+            value={**base, "text": "bad"},
+        ),
+        publish.WriteOp(
+            action="create",
+            collection=good,
+            rkey=f"{token}ok2",
+            uri=ok2,
+            value={**base, "text": "ok2"},
+        ),
+    ]
+    with _authed(pds_server) as client:
+        writer = publish.WriteClient(pds_server.endpoint, pds_server.did, client)
+        results = {result.uri: result for result in writer.apply_writes(writes)}
+        assert results[ok1].status in {"created", "updated"}
+        assert results[ok2].status in {"created", "updated"}
+        assert results[bad].status == "failed"
+        assert results[bad].reason
+        reader = PdsClient(pds_server.endpoint, client)
+        assert reader.get_record(pds_server.did, good, f"{token}ok1").value
+        assert reader.get_record(pds_server.did, good, f"{token}ok2").value
