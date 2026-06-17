@@ -187,3 +187,17 @@ def test_materialize_derives_views_from_repo(tmp_path: Path) -> None:
     assert reloaded.num_rows == 1
     assert reloaded.column("anchor_kind").to_pylist() == ["span"]
     assert reloaded.column("uri").to_pylist() == [_EXPR_URI]
+
+
+def test_flatten_anchor_wrapper_selects_populated_variant() -> None:
+    # the dumped anchor object carries every variant field with one populated.
+    # the null siblings must not be mistaken for the active variant.
+    import json  # noqa: PLC0415
+
+    from lairs.records._generated.defs import Anchor, Span  # noqa: PLC0415
+
+    anchor = Anchor(textSpan=Span(byteStart=3, byteEnd=8))
+    columns = arrow.flatten_anchor(json.loads(anchor.model_dump_json()))
+    assert columns["anchor_kind"] == "span"
+    assert columns["byte_start"] == 3
+    assert columns["byte_end"] == 8

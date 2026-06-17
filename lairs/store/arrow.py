@@ -108,6 +108,49 @@ def _coerce_int(value: JsonValue) -> int | None:
     return None
 
 
+_ANCHOR_VARIANT_FIELDS = (
+    "textSpan",
+    "tokenRef",
+    "tokenRefSequence",
+    "temporalSpan",
+    "spatioTemporalAnchor",
+    "pageAnchor",
+    "externalTarget",
+)
+"""The optional variant fields of the ``anchor`` object, in dispatch order."""
+
+
+def _anchor_body(anchor: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
+    """Return the populated variant of an anchor wrapper, or the anchor itself.
+
+    The ``anchor`` object dumps all of its optional variant fields with exactly
+    one populated. When the mapping is that wrapper, the populated variant
+    sub-object is returned. A bare variant object, or a single-key wrapper, is
+    returned unchanged for the caller to classify by the fields it carries.
+
+    Parameters
+    ----------
+    anchor : collections.abc.Mapping
+        A dumped anchor value.
+
+    Returns
+    -------
+    collections.abc.Mapping
+        The variant sub-object to classify into typed columns.
+    """
+    if set(anchor) <= set(_ANCHOR_VARIANT_FIELDS):
+        for name in _ANCHOR_VARIANT_FIELDS:
+            value = anchor.get(name)
+            if isinstance(value, dict):
+                return value
+        return anchor
+    if len(anchor) == 1:
+        (only_value,) = anchor.values()
+        if isinstance(only_value, dict):
+            return only_value
+    return anchor
+
+
 def flatten_anchor(anchor: Mapping[str, JsonValue] | None) -> dict[str, JsonValue]:
     """Flatten a polymorphic anchor mapping into typed columns.
 
@@ -130,14 +173,7 @@ def flatten_anchor(anchor: Mapping[str, JsonValue] | None) -> dict[str, JsonValu
     columns = _empty_anchor()
     if anchor is None:
         return columns
-    # a tagged-union anchor may be dumped as {"<variant>": {...}} or as a flat
-    # object carrying the variant's fields directly; handle both by unwrapping a
-    # single-key wrapper that nests a mapping.
-    body: Mapping[str, JsonValue] = anchor
-    if len(anchor) == 1:
-        (only_value,) = anchor.values()
-        if isinstance(only_value, dict):
-            body = only_value
+    body = _anchor_body(anchor)
 
     if "byteStart" in body or "byteEnd" in body:
         columns["anchor_kind"] = "span"
