@@ -152,7 +152,10 @@ def test_canonical_standoff_is_idempotent() -> None:
 def _standoffs(draw: st.DrawFn) -> _Standoff:
     """Draw a canonical, round-trippable brat standoff."""
     labels = st.text(alphabet="ABCDEFvalue", min_size=1, max_size=6)
-    texts = st.text(min_size=0, max_size=20)
+    # exclude the exact string "null": didactic serialises an optional str|None
+    # field holding "null" as JSON null, so it cannot round-trip. tracked as
+    # didactic issue #57; remove this filter once that lands.
+    texts = st.text(min_size=0, max_size=20).filter(lambda value: value != "null")
     count = draw(st.integers(min_value=0, max_value=4))
     entities = tuple(
         _Entity(
