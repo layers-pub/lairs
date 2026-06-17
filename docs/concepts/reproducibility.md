@@ -19,30 +19,26 @@ re-pulls).
 
 One fact about the upstream surface shapes the wrapper, and it is worth
 stating plainly because it differs from the obvious mental model.
-didactic's Repository is a *schema* VCS: staging adds a Model *class* (or
-a panproto `Schema`), and a commit records the structural schema, not
-record instances. lairs needs to version record *values*, so it does two
-things on every save. It writes each record's value as
-content-addressed JSON into the repository working tree, indexed by
-AT-URI, and it stages the record type's Model schema with the underlying
-VCS. A commit then captures both together: the data, in the working tree,
-and its structure, in the schema history. The record set at any revision
-is read back from the committed working tree, so a tag pins an exact,
+didactic's Repository is a schema VCS first. `add` stages a Model class
+(or a panproto `Schema`) and records the structural schema. From 0.7.8 it
+also versions record values. `add_data` stages a record's value as
+committed data associated with that schema. lairs uses both on every
+save. It writes each record's value as JSON under `records/`, stages that
+value as committed data, and stages the record type's Model schema
+alongside it. A commit captures both: the values, as committed data, and
+their structure, in the schema history. The values committed at a
+revision are read back through `data_at`, so a tag pins an exact,
 byte-reproducible set of record values.
 
-This split (schema in the VCS, values in the working tree) also
-explains where lairs does work the upstream surface does not. Tag
-creation is not exposed on didactic's public Repository, so the wrapper
-reaches the inner panproto handle to create tags. And there is no native
-revision-to-revision *data* diff on either surface, so lairs computes the
-record diff itself from the stored AT-URI index: a `RecordDiff` reports
-the added, removed, and changed AT-URIs between two index snapshots.
-Structural diffs across two record-type schemas (for example a Layers
-version bump) do go through didactic's schema diff. Both gaps are tracked
-upstream as didactic issues #49 (tag creation) and #50 (revision-to-revision
-data diff). The point is that the reproducibility and diffing the data
-needs are constructed by lairs on top of a schema VCS, not inherited from
-it.
+didactic 0.7.8 exposes tag creation and the committed-data read on the
+public Repository surface, which the wrapper uses directly. It does not
+yet expose the committed-data write, so `save` reaches the inner panproto
+handle for it. A record-value diff is computed here from the AT-URI index,
+because the committed-data read returns a record's content and schema id
+but not its AT-URI. Structural diffs across two record-type schemas (a
+Layers version bump, say) go through didactic's schema diff. The point is
+that the reproducibility the data needs is now backed by committed data,
+read back at any revision, rather than reconstructed from loose files.
 
 ## Content addressing
 
