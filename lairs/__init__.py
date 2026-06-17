@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from lairs.data import Corpus, load_corpus
 from lairs.integrations.registry import (
     get_codec,
     get_exporter,
@@ -22,10 +23,12 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BlobRef",
+    "Corpus",
     "__version__",
     "codec",
     "exporter",
     "knowledge_base",
+    "load_corpus",
 ]
 
 __version__ = "0.0.0"

@@ -16,10 +16,12 @@ def test_version() -> None:
 def test_public_surface() -> None:
     assert set(lairs.__all__) == {
         "BlobRef",
+        "Corpus",
         "__version__",
         "codec",
         "exporter",
         "knowledge_base",
+        "load_corpus",
     }
 
 
