@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -753,3 +754,73 @@ def test_apply_writes_partial_failure_resumes_live(pds_server: PdsServer) -> Non
         reader = PdsClient(pds_server.endpoint, client)
         assert reader.get_record(pds_server.did, good, f"{token}ok1").value
         assert reader.get_record(pds_server.did, good, f"{token}ok2").value
+
+
+def _fresh_account(server: PdsServer) -> tuple[str, str]:
+    """Create a new empty account on the PDS, returning (did, access_jwt)."""
+    token = secrets.token_hex(6)
+    response = httpx.post(
+        f"{server.endpoint}/xrpc/com.atproto.server.createAccount",
+        json={
+            "handle": f"pub{token}.test",
+            "email": f"pub{token}@example.test",
+            "password": secrets.token_hex(12),
+        },
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    body = response.json()
+    return str(body["did"]), str(body["accessJwt"])
+
+
+@pytest.mark.integration
+def test_publish_creates_then_is_idempotent_live(
+    pds_server: PdsServer,
+    tmp_path: Path,
+) -> None:
+    # publish into a fresh empty account so the diff is isolated. the first
+    # publish creates the record; re-publishing the unchanged revision is a
+    # no-op because the locally computed CID matches the PDS's reported CID.
+    did, jwt = _fresh_account(pds_server)
+    repo = Repository.init(tmp_path / "pubrepo")
+    collection = "pub.layers.expression.expression"
+    uri = f"at://{did}/{collection}/rec1"
+    repo.save(
+        uri,
+        Expression.model_validate_json(
+            json.dumps(
+                {
+                    "id": "66666666-6666-6666-6666-666666666666",
+                    "text": "publish me",
+                    "kind": "sentence",
+                    "createdAt": "2026-06-16T00:00:00Z",
+                },
+            ),
+        ),
+    )
+    revision = repo.commit("initial", author="lairs <lairs@layers.pub>")
+    with httpx.Client(headers={"Authorization": f"Bearer {jwt}"}) as client:
+        first = publish.publish(
+            repo,
+            revision,
+            to=did,
+            endpoint=pds_server.endpoint,
+            client=client,
+            dry_run=False,
+        )
+        assert [op.uri for op in first.creates] == [uri]
+        assert not first.updates
+        assert not first.deletes
+        reader = PdsClient(pds_server.endpoint, client)
+        env = reader.get_record(did, collection, "rec1")
+        assert decode(env, Expression).text == "publish me"
+        # the unchanged revision re-publishes to an empty plan.
+        again = publish.publish(
+            repo,
+            revision,
+            to=did,
+            endpoint=pds_server.endpoint,
+            client=client,
+            dry_run=True,
+        )
+        assert again.is_empty()
