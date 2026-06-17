@@ -29,6 +29,9 @@ services:
       PDS_PLC_ROTATION_KEY_K256_PRIVATE_KEY_HEX: ${PDS_PLC_ROTATION_KEY_K256_PRIVATE_KEY_HEX:-0000000000000000000000000000000000000000000000000000000000000001}
       PDS_INVITE_REQUIRED: "false"
       PDS_SERVICE_HANDLE_DOMAINS: .test
+      # dev mode relaxes the OAuth resource-URL https requirement so the server
+      # starts on a plain http://localhost endpoint for local testing.
+      PDS_DEV_MODE: "true"
       LOG_ENABLED: "false"
     # an ephemeral data directory; nothing survives `docker compose down`.
     tmpfs:
