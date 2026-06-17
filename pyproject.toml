@@ -11,6 +11,8 @@ dependencies = [
     "panproto>=0.56.0",
     "httpx",
     "pyarrow",
+    "libipld",
+    "multiformats",
 ]
 
 [project.optional-dependencies]
