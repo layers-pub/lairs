@@ -35,17 +35,6 @@ def test_record_diff_defaults_are_empty() -> None:
     assert diff.changed == ()
 
 
-def test_diff_snapshots_classifies_changes(tmp_path: Path) -> None:
-    repo = Repository.init(tmp_path / "repo")
-    diff = repo.diff_snapshots(
-        {"keep": "h1", "drop": "h2", "edit": "h3"},
-        {"keep": "h1", "edit": "h3x", "new": "h4"},
-    )
-    assert diff.added == ("new",)
-    assert diff.removed == ("drop",)
-    assert diff.changed == ("edit",)
-
-
 def test_save_load_round_trip(tmp_path: Path) -> None:
     repo = Repository.init(tmp_path / "repo")
     repo.save(_EXPR_URI, _Expr(text="hello"))
@@ -143,3 +132,20 @@ def test_tag_uses_public_create_tag(tmp_path: Path) -> None:
     revision = repo.commit("snapshot")
     repo.tag("v0.1")
     assert ("v0.1", revision) in repo.tags()
+
+
+def test_diff_across_revisions_reads_committed_data(tmp_path: Path) -> None:
+    # diff folds data_at over each revision's ancestry, keyed by AT-URI, so a
+    # changed value and an added record are both detected across two commits.
+    repo = Repository.init(tmp_path / "repo")
+    repo.save(_EXPR_URI, _Expr(text="one"))
+    repo.save(_MEDIA_URI, _Expr(text="keep"))
+    base = repo.commit("base snapshot")
+    other = "at://did:plc:abc/pub.layers.expression.expression/e2"
+    repo.save(_EXPR_URI, _Expr(text="one-changed"))
+    repo.save(other, _Expr(text="new"))
+    head = repo.commit("head snapshot")
+    diff = repo.diff(base, head)
+    assert diff.added == (other,)
+    assert diff.changed == (_EXPR_URI,)
+    assert diff.removed == ()

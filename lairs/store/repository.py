@@ -4,23 +4,19 @@ Wraps :class:`didactic.api.Repository` (panproto-backed, content-addressed,
 git-like) so a corpus snapshot is a commit and a named dataset version is a tag,
 giving reproducibility, provenance, and cheap diffing.
 
-Two facts about the upstream surface shape this wrapper.
-
-First, ``add`` stages a Model class (or a ``panproto.Schema``) and records the
+``add`` stages a Model class (or a ``panproto.Schema``) and records the
 structural schema, while ``add_data`` stages a record's value as committed data
-associated with that schema. lairs writes each record's value as JSON under
-``records/``, stages it as committed data, and stages the record type's Model
-schema alongside it, so one commit captures both. A corpus snapshot is a single
-commit; the record values committed at a revision are read back through
-``data_at``, so a tag pins an exact, byte-reproducible set of values.
+keyed by AT-URI and associated with that schema. lairs writes each record's
+value as JSON under ``records/``, stages it as committed data under its AT-URI,
+and stages the record type's Model schema alongside it, so one commit captures
+both. A corpus snapshot is a single commit; the values committed at a revision
+are read back through ``data_at`` under their AT-URI keys, so a tag pins an
+exact, byte-reproducible set of values, and a revision-to-revision diff compares
+the values folded over each revision's commit ancestry.
 
-Second, didactic 0.7.8 exposes tag creation (``create_tag`` and friends) and the
-committed-data read (``data_at``) on the public Repository surface, which this
-wrapper uses directly. It does not expose the committed-data write (``add_data``)
-publicly, so the producing side in :meth:`save` reaches the inner panproto handle
-for it, as didactic's own tests do. A record-value diff between two index
-snapshots is computed here from the AT-URI index, because ``CommittedDataset``
-carries a record's content and schema id but not its AT-URI.
+didactic 0.9.0 exposes tag creation (``create_tag`` and friends), the
+committed-data write (``add_data``), and the committed-data read (``data_at``)
+on the public Repository surface, all of which this wrapper uses directly.
 """
 
 from __future__ import annotations
@@ -227,10 +223,9 @@ class Repository:
             # the real change the commit captures.
             if "no changes detected" not in str(exc):
                 raise
-        # stage the value as committed data, readable later through data_at.
-        # didactic exposes the committed-data read publicly but not the write,
-        # so the producing side uses the inner panproto handle.
-        self.inner._inner.add_data(str(record_path))  # noqa: SLF001
+        # stage the value as committed data keyed by AT-URI, so a revision pins
+        # the exact value and data_at reads it back under that key.
+        self.inner.add_data(str(record_path), key=uri)
 
     def staged_uris(self) -> list[str]:
         """Return the AT-URIs currently present in the working tree.
@@ -378,12 +373,11 @@ class Repository:
         return self.inner.resolve_ref(ref)
 
     def diff(self, base: str, head: str) -> RecordDiff:
-        """Diff the record set between two revisions.
+        """Diff the committed record values between two revisions.
 
-        The record-value diff is computed from the AT-URI index and stored JSON,
-        which lairs persists itself. A revision-to-revision data diff is not
-        exposed by either didactic or panproto, so this compares the committed
-        working-tree values directly.
+        The value set committed at each revision is reconstructed from the
+        committed data read with ``data_at``, keyed by AT-URI, and the two sets
+        are compared by content.
 
         Parameters
         ----------
@@ -396,51 +390,67 @@ class Repository:
         -------
         RecordDiff
             The added, removed, and changed AT-URIs between the revisions.
-
-        Notes
-        -----
-        Diffing reads committed values via panproto's ``schema_at`` only to
-        validate that both refs resolve; record values themselves are compared
-        from the index snapshots embedded in each commit's working tree. When the
-        working tree is shared (single-checkout repositories), pass explicit
-        per-revision snapshots through :meth:`diff_snapshots` instead.
         """
-        # resolve both refs so an unknown ref fails loudly and consistently.
-        self.resolve(base)
-        self.resolve(head)
-        return self.diff_snapshots(self._read_index(), self._read_index())
-
-    def diff_snapshots(
-        self,
-        base_index: dict[str, str],
-        head_index: dict[str, str],
-    ) -> RecordDiff:
-        """Diff two AT-URI index snapshots into a record diff.
-
-        Parameters
-        ----------
-        base_index : dict of str to str
-            The base snapshot mapping AT-URI to stored file stem.
-        head_index : dict of str to str
-            The head snapshot mapping AT-URI to stored file stem.
-
-        Returns
-        -------
-        RecordDiff
-            The added, removed, and changed AT-URIs between the snapshots.
-        """
-        base_uris = set(base_index)
-        head_uris = set(head_index)
+        base_state = self._state_at(base)
+        head_state = self._state_at(head)
+        base_uris = set(base_state)
+        head_uris = set(head_state)
         added = tuple(sorted(head_uris - base_uris))
         removed = tuple(sorted(base_uris - head_uris))
         changed = tuple(
             sorted(
                 uri
                 for uri in base_uris & head_uris
-                if base_index[uri] != head_index[uri]
+                if base_state[uri] != head_state[uri]
             ),
         )
         return RecordDiff(added=added, removed=removed, changed=changed)
+
+    def _state_at(self, ref: str) -> dict[str, bytes]:
+        """Reconstruct the committed record values at a revision, keyed by AT-URI.
+
+        Committed data is recorded per commit, so the value set at ``ref`` is the
+        fold of ``data_at`` over the revision's ancestry, oldest commit first,
+        with the latest value for each AT-URI winning.
+
+        Parameters
+        ----------
+        ref : str
+            The revision to read (ref expression).
+
+        Returns
+        -------
+        dict of str to bytes
+            The committed record values at the revision, keyed by AT-URI.
+        """
+        target = self.resolve(ref)
+        entries = {str(entry["id"]): entry for entry in self.log()}
+        # post-order over the ancestry: each commit is appended after its
+        # parents, so folding in this order lets a descendant's value win over an
+        # ancestor's. this is ordered by the commit graph, not by timestamp,
+        # which can tie for commits made in the same second.
+        order: list[str] = []
+        visited: set[str] = set()
+        stack: list[tuple[str, bool]] = [(target, False)]
+        while stack:
+            cid, processed = stack.pop()
+            if processed:
+                order.append(cid)
+                continue
+            entry = entries.get(cid)
+            if entry is None or cid in visited:
+                continue
+            visited.add(cid)
+            stack.append((cid, True))
+            parents = entry.get("parents")
+            if isinstance(parents, list):
+                stack.extend((str(parent), False) for parent in parents)
+        state: dict[str, bytes] = {}
+        for cid in order:
+            for dataset in self.inner.data_at(cid):
+                if dataset.key is not None:
+                    state[dataset.key] = dataset.data
+        return state
 
     def schema_diff(
         self,
