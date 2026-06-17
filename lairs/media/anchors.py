@@ -194,11 +194,11 @@ def _resolve_spatio_temporal(
     variant: dx.Model,
     target: AnchorTarget,
 ) -> BoundingBox | VideoFrame:
-    """Resolve a spatio-temporal anchor to a per-frame box or a cropped frame.
+    """Resolve a spatio-temporal anchor to a cropped frame.
 
-    Keyframes are interpolated to the target frame's timestamp. With a plain
-    frame target the interpolated box is returned; the same box can then be fed
-    to :func:`lairs.media.video.crop_to_bbox`.
+    Keyframes are interpolated against the target frame's index, which stands in
+    for its temporal position. The interpolated box then crops the frame through
+    :func:`lairs.media.video.crop_to_bbox`.
     """
     interpolation = getattr(variant, "interpolation", None) or "linear"
     if interpolation not in {"linear", "step", "cubic"}:
