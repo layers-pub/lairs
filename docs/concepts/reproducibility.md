@@ -20,25 +20,25 @@ re-pulls).
 One fact about the upstream surface shapes the wrapper, and it is worth
 stating plainly because it differs from the obvious mental model.
 didactic's Repository is a schema VCS first. `add` stages a Model class
-(or a panproto `Schema`) and records the structural schema. From 0.7.8 it
-also versions record values. `add_data` stages a record's value as
-committed data associated with that schema. lairs uses both on every
-save. It writes each record's value as JSON under `records/`, stages that
-value as committed data, and stages the record type's Model schema
-alongside it. A commit captures both: the values, as committed data, and
-their structure, in the schema history. The values committed at a
-revision are read back through `data_at`, so a tag pins an exact,
-byte-reproducible set of record values.
+(or a panproto `Schema`) and records the structural schema. It also
+versions record values. `add_data` stages a record's value as committed
+data, keyed by AT-URI and associated with that schema. lairs uses both on
+every save. It writes each record's value as JSON under `records/`, stages
+that value as committed data under its AT-URI, and stages the record
+type's Model schema alongside it. A commit captures both: the values, as
+committed data, and their structure, in the schema history. The values
+committed at a revision are read back through `data_at` under their AT-URI
+keys, so a tag pins an exact, byte-reproducible set of record values.
 
-didactic 0.7.8 exposes tag creation and the committed-data read on the
-public Repository surface, which the wrapper uses directly. It does not
-yet expose the committed-data write, so `save` reaches the inner panproto
-handle for it. A record-value diff is computed here from the AT-URI index,
-because the committed-data read returns a record's content and schema id
-but not its AT-URI. Structural diffs across two record-type schemas (a
-Layers version bump, say) go through didactic's schema diff. The point is
-that the reproducibility the data needs is now backed by committed data,
-read back at any revision, rather than reconstructed from loose files.
+didactic 0.9.0 exposes tag creation, the committed-data write, and the
+committed-data read on the public Repository surface, all of which the
+wrapper uses directly. A revision-to-revision diff reconstructs the value
+set at each revision by folding `data_at` over the revision's commit
+ancestry, keyed by AT-URI, then compares the two sets by content.
+Structural diffs across two record-type schemas (a Layers version bump,
+say) go through didactic's schema diff. The reproducibility the data needs
+is backed by committed data, read back at any revision, rather than
+reconstructed from loose files.
 
 ## Content addressing
 
