@@ -117,6 +117,16 @@ def test_decode_coerces_datetime_fields() -> None:
     assert not failures
 
 
+def test_decode_strips_type_discriminator() -> None:
+    # real PDS records carry a $type the generated models do not declare.
+    envelope = RecordEnvelope(
+        uri="at://x",
+        cid="bafy",
+        value={"$type": "pub.layers.x", "text": "hi"},
+    )
+    assert decode(envelope, _Toy).text == "hi"
+
+
 def test_list_records_paginates_lazily() -> None:
     pages = {
         None: {

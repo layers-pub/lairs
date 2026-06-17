@@ -124,6 +124,10 @@ def decode[T: dx.Model](envelope: RecordEnvelope, model: type[T]) -> T:
 def _record_object(envelope: RecordEnvelope) -> dict[str, JsonValue]:
     """Narrow an envelope's value to a JSON object for validation.
 
+    The ATProto record-type discriminator ``$type`` is dropped: it is protocol
+    metadata that records carry on the wire but the generated models do not
+    declare, so leaving it in would fail validation against every real record.
+
     Parameters
     ----------
     envelope : RecordEnvelope
@@ -132,7 +136,7 @@ def _record_object(envelope: RecordEnvelope) -> dict[str, JsonValue]:
     Returns
     -------
     dict
-        The record value as a JSON object.
+        The record value as a JSON object, without the ``$type`` key.
 
     Raises
     ------
@@ -141,7 +145,7 @@ def _record_object(envelope: RecordEnvelope) -> dict[str, JsonValue]:
     """
     value = envelope.value
     if isinstance(value, dict):
-        return value
+        return {key: item for key, item in value.items() if key != "$type"}
     entry = dx.ValidationErrorEntry(
         loc=("value",),
         type="type_error",
