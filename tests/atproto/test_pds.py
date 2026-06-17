@@ -20,6 +20,8 @@ from lairs.records._generated.expression import Expression
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from conftest import PdsServer
+
 _ENDPOINT = "https://pds.example"
 _REPO = "did:plc:abc"
 _COLLECTION = "pub.layers.expression.expression"
@@ -229,3 +231,38 @@ def test_get_record_live() -> None:
         )
     except httpx.HTTPError:
         pytest.skip("network unavailable for live pds getRecord")
+
+
+@pytest.mark.integration
+def test_pds_round_trip_live(pds_server: PdsServer) -> None:
+    """Seed a record on a real PDS and read it back through the client."""
+    value = {
+        "$type": "pub.layers.expression.expression",
+        "id": "11111111-1111-1111-1111-111111111111",
+        "text": "the cat sat",
+        "kind": "sentence",
+        "createdAt": "2026-06-16T00:00:00Z",
+    }
+    headers = {"Authorization": f"Bearer {pds_server.access_jwt}"}
+    with httpx.Client(headers=headers) as authed:
+        created = authed.post(
+            f"{pds_server.endpoint}/xrpc/com.atproto.repo.createRecord",
+            json={
+                "repo": pds_server.did,
+                "collection": "pub.layers.expression.expression",
+                "record": value,
+            },
+            timeout=30.0,
+        )
+        created.raise_for_status()
+        uri = str(created.json()["uri"])
+    rkey = uri.rsplit("/", 1)[-1]
+    client = PdsClient(pds_server.endpoint)
+    envelope = client.get_record(
+        pds_server.did, "pub.layers.expression.expression", rkey
+    )
+    assert decode(envelope, Expression).text == "the cat sat"
+    listed = list(
+        client.list_records(pds_server.did, "pub.layers.expression.expression"),
+    )
+    assert any(env.uri == uri for env in listed)

@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from conftest import PdsServer
+
 
 def _mock_client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
     """Return an httpx client backed by a mock transport."""
@@ -545,3 +547,35 @@ def test_apply_writes_module_function() -> None:
 def test_publish_dry_run_live() -> None:
     # exercises a real publish dry-run when opted in; skips otherwise.
     pytest.skip("publish requires a Repository and credentials")
+
+
+@pytest.mark.integration
+def test_write_round_trip_live(pds_server: PdsServer) -> None:
+    """Create a record through the write client and read it back from the PDS."""
+    auth = {"Authorization": f"Bearer {pds_server.access_jwt}"}
+    with httpx.Client(headers=auth) as authed:
+        writer = publish.WriteClient(pds_server.endpoint, pds_server.did, authed)
+        result = writer.create_record(
+            "pub.layers.expression.expression",
+            {
+                "$type": "pub.layers.expression.expression",
+                "id": "22222222-2222-2222-2222-222222222222",
+                "text": "round trip",
+                "kind": "sentence",
+                "createdAt": "2026-06-16T00:00:00Z",
+            },
+        )
+        assert result.status == "created"
+        assert result.uri.startswith("at://")
+        rkey = result.uri.rsplit("/", 1)[-1]
+        read_back = authed.get(
+            f"{pds_server.endpoint}/xrpc/com.atproto.repo.getRecord",
+            params={
+                "repo": pds_server.did,
+                "collection": "pub.layers.expression.expression",
+                "rkey": rkey,
+            },
+            timeout=30.0,
+        )
+        read_back.raise_for_status()
+    assert read_back.json()["value"]["text"] == "round trip"

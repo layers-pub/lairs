@@ -7,12 +7,20 @@ fast, dependency-free unit tests; passing ``--run-integration`` opts in.
 
 from __future__ import annotations
 
+import os
+import secrets
+import shutil
+import subprocess
+import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+import didactic.api as dx
+import httpx
 import pytest
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -46,3 +54,179 @@ def pytest_collection_modifyitems(
     for item in items:
         if "integration" in item.keywords:
             item.add_marker(skip)
+
+
+_PDS_COMPOSE = Path(__file__).parent / "pds" / "docker-compose.yml"
+_PDS_PORT = int(os.environ.get("LAIRS_PDS_PORT", "3000"))
+_PDS_ENDPOINT = f"http://localhost:{_PDS_PORT}"
+_PDS_HEALTH_TIMEOUT_S = 90.0
+
+
+class PdsServer(dx.Model):
+    """Connection details for a running local PDS test instance.
+
+    Parameters
+    ----------
+    endpoint : str
+        The base URL of the running PDS.
+    did : str
+        The DID of the throwaway account created for the test session.
+    handle : str
+        The account handle.
+    password : str
+        The account password.
+    access_jwt : str
+        The access token authorising writes to the account's repository.
+    admin_password : str
+        The PDS admin password generated for this session.
+    """
+
+    endpoint: str = dx.field(description="base URL of the running PDS")
+    did: str = dx.field(description="DID of the throwaway test account")
+    handle: str = dx.field(description="account handle")
+    password: str = dx.field(description="account password")
+    access_jwt: str = dx.field(description="access token authorising writes")
+    admin_password: str = dx.field(description="PDS admin password for the session")
+
+
+def _docker_available() -> bool:
+    """Return whether a docker CLI with a reachable daemon is present."""
+    if shutil.which("docker") is None:
+        return False
+    probe = subprocess.run(
+        ["docker", "info"],  # noqa: S607
+        capture_output=True,
+        check=False,
+    )
+    return probe.returncode == 0
+
+
+def _compose(
+    args: Iterable[str],
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[bytes]:
+    """Run a docker compose subcommand against the PDS compose file.
+
+    Parameters
+    ----------
+    args : collections.abc.Iterable of str
+        The compose subcommand and its arguments.
+    env : dict of str to str
+        The environment to run the subcommand under.
+
+    Returns
+    -------
+    subprocess.CompletedProcess
+        The completed process, with output captured.
+    """
+    return subprocess.run(  # noqa: S603
+        ["docker", "compose", "-f", str(_PDS_COMPOSE), *args],  # noqa: S607
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+
+def _wait_healthy(endpoint: str, timeout: float) -> bool:
+    """Poll the PDS health endpoint until it responds or the timeout elapses.
+
+    Parameters
+    ----------
+    endpoint : str
+        The PDS base URL.
+    timeout : float
+        The maximum number of seconds to wait.
+
+    Returns
+    -------
+    bool
+        ``True`` if the health endpoint returned 200 within the timeout.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            response = httpx.get(f"{endpoint}/xrpc/_health", timeout=5.0)
+        except httpx.HTTPError:
+            response = None
+        if response is not None and response.status_code == httpx.codes.OK:
+            return True
+        time.sleep(2.0)
+    return False
+
+
+def _create_account(endpoint: str, admin_password: str) -> PdsServer:
+    """Create a throwaway account on the PDS and return its connection details.
+
+    Parameters
+    ----------
+    endpoint : str
+        The PDS base URL.
+    admin_password : str
+        The PDS admin password generated for this session.
+
+    Returns
+    -------
+    PdsServer
+        The connection details, including the account DID and access token.
+    """
+    token = secrets.token_hex(8)
+    handle = f"u{token}.test"
+    password = secrets.token_hex(16)
+    response = httpx.post(
+        f"{endpoint}/xrpc/com.atproto.server.createAccount",
+        json={
+            "handle": handle,
+            "email": f"{token}@example.test",
+            "password": password,
+        },
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    body = response.json()
+    return PdsServer(
+        endpoint=endpoint,
+        did=str(body["did"]),
+        handle=str(body.get("handle", handle)),
+        password=password,
+        access_jwt=str(body["accessJwt"]),
+        admin_password=admin_password,
+    )
+
+
+@pytest.fixture(scope="session")
+def pds_server() -> Iterator[PdsServer]:
+    """Yield a running local PDS with a throwaway account, or skip cleanly.
+
+    The fixture starts the PDS container defined in ``tests/pds``, waits for it
+    to become healthy, and creates a throwaway account. It skips, rather than
+    fails, when docker, the image, or the health check are unavailable, so the
+    integration tests degrade cleanly in environments without docker.
+
+    Yields
+    ------
+    PdsServer
+        The connection details for the running PDS.
+    """
+    if not _docker_available():
+        pytest.skip("docker is not available")
+    admin_password = secrets.token_hex(16)
+    env = {
+        **os.environ,
+        "PDS_JWT_SECRET": secrets.token_hex(16),
+        "PDS_ADMIN_PASSWORD": admin_password,
+        "PDS_PLC_ROTATION_KEY_K256_PRIVATE_KEY_HEX": secrets.token_hex(32),
+    }
+    started = _compose(["up", "-d"], env)
+    if started.returncode != 0:
+        detail = started.stderr.decode()[:300]
+        pytest.skip(f"could not start the pds container: {detail}")
+    try:
+        if not _wait_healthy(_PDS_ENDPOINT, _PDS_HEALTH_TIMEOUT_S):
+            pytest.skip("the pds container did not become healthy in time")
+        try:
+            server = _create_account(_PDS_ENDPOINT, admin_password)
+        except httpx.HTTPError as exc:
+            pytest.skip(f"could not create a test account: {exc}")
+        yield server
+    finally:
+        _compose(["down", "-v"], env)

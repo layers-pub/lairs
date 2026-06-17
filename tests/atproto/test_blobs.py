@@ -13,6 +13,8 @@ from lairs.atproto.blobs import BlobBytes, BlobClient
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from conftest import PdsServer
+
 _ENDPOINT = "https://pds.example"
 _DID = "did:plc:abc"
 _CID = "bafyblob"
@@ -83,3 +85,39 @@ def test_get_blob_live() -> None:
         blobs.get_blob(_ENDPOINT, _DID, _CID)
     except httpx.HTTPError:
         pytest.skip("network unavailable for live getBlob")
+
+
+@pytest.mark.integration
+def test_blob_round_trip_live(pds_server: PdsServer) -> None:
+    """Upload a blob, bind it to a record, and fetch it back by CID."""
+    payload = b"the audio bytes" * 64
+    auth = {"Authorization": f"Bearer {pds_server.access_jwt}"}
+    with httpx.Client(headers=auth) as authed:
+        uploaded = authed.post(
+            f"{pds_server.endpoint}/xrpc/com.atproto.repo.uploadBlob",
+            content=payload,
+            headers={"Content-Type": "application/octet-stream"},
+            timeout=30.0,
+        )
+        uploaded.raise_for_status()
+        blob_ref = uploaded.json()["blob"]
+        cid = str(blob_ref["ref"]["$link"])
+        # an unreferenced blob is not retained, so bind it to a media record.
+        bound = authed.post(
+            f"{pds_server.endpoint}/xrpc/com.atproto.repo.createRecord",
+            json={
+                "repo": pds_server.did,
+                "collection": "pub.layers.media.media",
+                "record": {
+                    "$type": "pub.layers.media.media",
+                    "kind": "audio",
+                    "blob": blob_ref,
+                    "createdAt": "2026-06-16T00:00:00Z",
+                },
+            },
+            timeout=30.0,
+        )
+        bound.raise_for_status()
+    fetched = BlobClient(pds_server.endpoint).get_blob(pds_server.did, cid)
+    assert fetched.cid == cid
+    assert fetched.data == payload
