@@ -44,6 +44,7 @@ video = ['av', 'decord; python_version < "3.14"']
 neural = ["mne", "xarray"]
 tracking = ["wandb", "mlflow"]
 appview = ["httpx"]
+firehose = ["websockets>=13"]
 ml = ["lairs[hf]", "lairs[torch]", "lairs[fsspec]"]
 
 [project.scripts]
@@ -78,6 +79,7 @@ dev = [
     "pytest",
     "pytest-cov",
     "hypothesis",
+    "websockets>=13",
 ]
 docs = [
     "mkdocs>=1.6",
