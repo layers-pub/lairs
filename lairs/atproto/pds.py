@@ -14,20 +14,21 @@ CAR archive and decodes its Merkle search tree into record envelopes through
 
 from __future__ import annotations
 
-import base64
 import json
 from typing import TYPE_CHECKING, Self
 
 import didactic.api as dx
 import httpx
 import libipld
-from multiformats import CID
 
 from lairs._types import JsonValue  # noqa: TC001  (runtime: didactic field sort)
+from lairs.atproto._car import cid_to_base32, ipld_to_json
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
     from types import TracebackType
+
+    from lairs.atproto._car import IpldValue
 
 __all__ = [
     "PdsClient",
@@ -41,16 +42,6 @@ __all__ = [
     "get_repo",
     "list_records",
 ]
-
-type IpldValue = (
-    None | bool | int | float | str | bytes | list[IpldValue] | dict[str, IpldValue]
-)
-"""A recursive alias for a decoded IPLD value.
-
-This is ``JsonValue`` widened to admit raw ``bytes``, which is how ``libipld``
-represents both DAG-CBOR byte strings and CID links inside a decoded block. It
-is the value type of the block store returned by ``libipld.decode_car``.
-"""
 
 type QueryParams = dict[str, str | int | bool]
 """The scalar parameter mapping accepted by an XRPC query.
@@ -235,66 +226,6 @@ def _envelope_from_record(record: dict[str, JsonValue]) -> RecordEnvelope:
     )
 
 
-def _cid_link(value: bytes) -> dict[str, JsonValue] | None:
-    """Render a CID-link byte string as the DAG-JSON ``$link`` object.
-
-    ``libipld`` decodes both DAG-CBOR byte strings and CID links to Python
-    ``bytes``, so the two are distinguished here by attempting a CID round trip:
-    bytes that decode to a CID and re-encode to exactly the same bytes are
-    treated as a link. Genuine DAG-CBOR byte strings do not round-trip through
-    the CID decoder, so they fall through to a ``$bytes`` rendering. ATProto
-    record values carry binary payloads as blobs rather than inline byte
-    strings, so a misclassification is not expected in practice.
-
-    Parameters
-    ----------
-    value : bytes
-        The candidate CID-link bytes.
-
-    Returns
-    -------
-    dict of str to JsonValue or None
-        The ``{"$link": cid}`` object if ``value`` is a CID, else ``None``.
-    """
-    try:
-        cid = CID.decode(value)
-    except ValueError, KeyError:
-        return None
-    if bytes(cid) != value:
-        return None
-    return {"$link": cid.encode("base32")}
-
-
-def _ipld_to_json(value: IpldValue) -> JsonValue:
-    """Convert a decoded IPLD value to its DAG-JSON shape.
-
-    CID links become ``{"$link": cid}`` objects and other byte strings become
-    ``{"$bytes": base64}`` objects, matching the DAG-JSON encoding the XRPC
-    record endpoints emit. Containers are converted recursively and scalars
-    pass through unchanged.
-
-    Parameters
-    ----------
-    value : IpldValue
-        The decoded IPLD value.
-
-    Returns
-    -------
-    JsonValue
-        The JSON-shaped value.
-    """
-    if isinstance(value, bytes):
-        link = _cid_link(value)
-        if link is not None:
-            return link
-        return {"$bytes": base64.standard_b64encode(value).decode("ascii")}
-    if isinstance(value, dict):
-        return {key: _ipld_to_json(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_ipld_to_json(item) for item in value]
-    return value
-
-
 def _walk_mst(
     blocks: Mapping[bytes, IpldValue],
     cid: bytes,
@@ -391,8 +322,8 @@ def _envelopes_from_blocks(
         envelopes.append(
             RecordEnvelope(
                 uri=f"at://{did}/{collection}/{rkey}",
-                cid=CID.decode(target).encode("base32"),
-                value=_ipld_to_json(blocks.get(target)),
+                cid=cid_to_base32(target),
+                value=ipld_to_json(blocks.get(target)),
             ),
         )
     return tuple(envelopes)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import secrets
 from typing import TYPE_CHECKING
 
@@ -14,12 +13,9 @@ from multiformats import CID, multihash
 
 from lairs.atproto import pds
 from lairs.atproto.pds import (
-    IpldValue,
     PdsClient,
     RecordEnvelope,
-    _cid_link,
     _envelopes_from_blocks,
-    _ipld_to_json,
     _walk_mst,
     decode,
     decode_all,
@@ -31,6 +27,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from conftest import PdsServer
+
+    from lairs.atproto._car import IpldValue
 
 _ENDPOINT = "https://pds.example"
 _REPO = "did:plc:abc"
@@ -278,30 +276,6 @@ def test_get_repo_car_raises_on_error_status() -> None:
         pytest.raises(httpx.HTTPStatusError),
     ):
         client.get_repo_car(_REPO)
-
-
-def test_cid_link_round_trips_a_real_cid() -> None:
-    raw = _cid_bytes({"text": "hi"})
-    assert _cid_link(raw) == {"$link": CID.decode(raw).encode("base32")}
-
-
-def test_cid_link_rejects_non_cid_bytes() -> None:
-    assert _cid_link(b"plain bytes, not a cid") is None
-
-
-def test_ipld_to_json_renders_byte_string_as_bytes_object() -> None:
-    rendered = _ipld_to_json(b"\x00\x01\x02")
-    assert rendered == {"$bytes": base64.standard_b64encode(b"\x00\x01\x02").decode()}
-
-
-def test_ipld_to_json_renders_cid_link() -> None:
-    raw = _cid_bytes({"k": "v"})
-    assert _ipld_to_json(raw) == {"$link": CID.decode(raw).encode("base32")}
-
-
-def test_ipld_to_json_recurses_into_containers() -> None:
-    value: IpldValue = {"a": [1, "two", None], "b": {"c": True}}
-    assert _ipld_to_json(value) == {"a": [1, "two", None], "b": {"c": True}}
 
 
 def test_walk_mst_reconstructs_keys_in_order() -> None:
