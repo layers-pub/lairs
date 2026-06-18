@@ -10,6 +10,7 @@ import pytest
 from lairs.integrations import tracking
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -17,10 +18,11 @@ def test_exports() -> None:
     assert set(tracking.__all__) == {"log_revision", "ProvenanceBundle"}
 
 
-def test_importing_tracking_does_not_import_backends() -> None:
+def test_importing_tracking_does_not_import_backends(
+    assert_lazy_import: Callable[..., None],
+) -> None:
     # importing the module must not pull in the optional, heavy backends.
-    assert "wandb" not in sys.modules
-    assert "mlflow" not in sys.modules
+    assert_lazy_import("lairs.integrations.tracking", "wandb", "mlflow")
 
 
 def test_unknown_backend_raises_value_error(tmp_path: Path) -> None:
@@ -30,11 +32,16 @@ def test_unknown_backend_raises_value_error(tmp_path: Path) -> None:
         tracking.log_revision(repo, "v1", backend="tensorboard")
 
 
-def test_missing_backend_dependency_raises_import_error(tmp_path: Path) -> None:
+def test_missing_backend_dependency_raises_import_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # simulate the optional 'mlflow' backend being absent (find_spec returns
+    # None for a module mapped to None) so the clear error path runs even though
+    # the dev environment installs lairs[tracking].
+    monkeypatch.setitem(sys.modules, "mlflow", None)
     dx = pytest.importorskip("didactic.api")
     repo = dx.Repository.init(tmp_path)
-    if tracking.importlib.util.find_spec("mlflow") is not None:
-        pytest.skip("mlflow is installed; cannot exercise the missing-dep path")
     with pytest.raises(ImportError, match="lairs\\[tracking\\]"):
         tracking.log_revision(repo, "v1", backend="mlflow")
 
@@ -57,12 +64,18 @@ def test_manifest_provenance_reads_the_vendored_manifest() -> None:
 
 
 @pytest.mark.integration
-def test_log_revision_live_mlflow(tmp_path: Path) -> None:
+def test_log_revision_live_mlflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     pytest.importorskip("mlflow")
     pytest.importorskip("didactic.api")
     import didactic.api as dx  # noqa: PLC0415
-    import mlflow  # noqa: PLC0415  # ty: ignore[unresolved-import]
+    import mlflow  # noqa: PLC0415
 
+    # recent mlflow refuses a bare filesystem tracking store unless explicitly
+    # opted in; the test only needs a throwaway local store, so allow it.
+    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
     repo = dx.Repository.init(tmp_path)
     mlflow.set_tracking_uri(f"file://{tmp_path / 'mlruns'}")
     with mlflow.start_run():

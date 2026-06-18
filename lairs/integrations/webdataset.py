@@ -414,12 +414,14 @@ class WebDatasetExporter:
             When the optional ``webdataset`` library is not installed.
         """
         try:
-            import webdataset as wds  # noqa: PLC0415  # ty: ignore[unresolved-import]
+            import webdataset as wds  # noqa: PLC0415
         except ImportError as exc:
             msg = "the webdataset loader requires the optional 'webdataset' extra"
             raise ImportError(msg) from exc
         urls = [str(path) for path in shards]
-        return iter(wds.WebDataset(urls))
+        # webdataset ships no type information, so its top-level WebDataset
+        # factory is invisible to the checker.
+        return iter(wds.WebDataset(urls))  # ty: ignore[unresolved-attribute]
 
 
 class _MediaCell(dx.Model):

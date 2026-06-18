@@ -114,11 +114,13 @@ def decode_signal(handle: MediaHandle) -> SignalBuffer:
     try:
         import tempfile  # noqa: PLC0415
 
-        import mne  # noqa: PLC0415  # ty: ignore[unresolved-import]
+        import mne  # noqa: PLC0415
     except ModuleNotFoundError as exc:  # pragma: no cover - exercised via test patch
         msg = "signal decoding requires the lairs[neural] extra (mne)"
         raise ModuleNotFoundError(msg) from exc
-    with tempfile.NamedTemporaryFile(suffix=".fif") as tmp:
+    # use the canonical mne raw suffix so the reader does not warn about the
+    # temporary filename not matching its naming conventions.
+    with tempfile.NamedTemporaryFile(suffix="_raw.fif") as tmp:
         tmp.write(handle.data)
         tmp.flush()
         raw = mne.io.read_raw_fif(tmp.name, preload=True, verbose=False)

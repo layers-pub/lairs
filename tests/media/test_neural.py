@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 import pytest
 
 from lairs.media import neural
@@ -105,5 +108,25 @@ def test_decode_signal_rejects_empty_handle() -> None:
 
 @pytest.mark.integration
 def test_decode_signal_live() -> None:
-    pytest.importorskip("mne")
-    pytest.skip("requires a signal fixture")
+    # synthesize a tiny two-channel FIF recording so the mne decode path runs
+    # without depending on an external fixture file.
+    mne = pytest.importorskip("mne")
+    np = pytest.importorskip("numpy")
+    info = mne.create_info(ch_names=["eeg1", "eeg2"], sfreq=100.0, ch_types="eeg")
+    rng = np.random.default_rng(0)
+    raw = mne.io.RawArray(rng.standard_normal((2, 50)) * 1e-6, info, verbose=False)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "sample_raw.fif"
+        raw.save(path, overwrite=True, verbose=False)
+        fif_bytes = path.read_bytes()
+    handle = MediaHandle(
+        cid="bafy",
+        mime_type="application/octet-stream",
+        modality="audio",
+        data=fif_bytes,
+    )
+    decoded = decode_signal(handle)
+    assert decoded.channels == ("eeg1", "eeg2")
+    assert decoded.sample_rate == 100.0
+    assert len(decoded.samples) == 2
+    assert len(decoded.samples[0]) == 50

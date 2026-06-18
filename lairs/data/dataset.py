@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Sequence
 
     import didactic.api as dx
-    import pandas as pd  # ty: ignore[unresolved-import]
+    import pandas as pd
     import pyarrow as pa
 
 __all__ = ["Dataset"]
@@ -363,7 +363,7 @@ class Dataset[ModelT: "dx.Model"]:
             When pandas is not installed.
         """
         try:
-            import pandas as pd  # noqa: F401, PLC0415  # ty: ignore[unresolved-import]
+            import pandas as pd  # noqa: F401, PLC0415
         except ImportError as exc:
             msg = "to_pandas requires the optional 'pandas' dependency"
             raise ImportError(msg) from exc

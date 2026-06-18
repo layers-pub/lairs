@@ -86,8 +86,8 @@ def _require_conllu() -> None:
         When the ``conllu`` library is not installed.
     """
     try:
-        import conllu  # noqa: F401, PLC0415  # ty: ignore[unresolved-import]
-    except ModuleNotFoundError as error:
+        import conllu  # noqa: F401, PLC0415
+    except ImportError as error:
         message = (
             "the conllu codec requires the optional 'conllu' library; "
             "install it with `pip install lairs[conllu]`"

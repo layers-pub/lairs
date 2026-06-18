@@ -193,7 +193,7 @@ def frame_at_ms(handle: MediaHandle, time_ms: int) -> VideoFrame:
     try:
         import io  # noqa: PLC0415
 
-        import av  # noqa: PLC0415  # ty: ignore[unresolved-import]
+        import av  # noqa: PLC0415
     except ModuleNotFoundError as exc:  # pragma: no cover - exercised via test patch
         msg = "video decoding requires the lairs[video] extra (av)"
         raise ModuleNotFoundError(msg) from exc
@@ -204,7 +204,10 @@ def frame_at_ms(handle: MediaHandle, time_ms: int) -> VideoFrame:
     width = 0
     height = 0
     pixels = b""
-    for index, frame in enumerate(container.decode(stream)):
+    # av.open over a readable buffer yields an InputContainer, but its stubs
+    # type the result as the input/output union, which hides decode().
+    frames = container.decode(stream)  # ty: ignore[unresolved-attribute]
+    for index, frame in enumerate(frames):
         chosen_index = index
         width = frame.width
         height = frame.height

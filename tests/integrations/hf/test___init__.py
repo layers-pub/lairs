@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-import sys
+from typing import TYPE_CHECKING
 
 import lairs.integrations.hf as mod
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def test_public_surface() -> None:
@@ -28,14 +31,12 @@ def test_all_names_are_resolvable() -> None:
         assert hasattr(mod, name)
 
 
-def test_importing_package_does_not_import_optional_deps() -> None:
+def test_importing_package_does_not_import_optional_deps(
+    assert_lazy_import: Callable[..., None],
+) -> None:
     # importing the package must never pull in the optional lairs[hf] extras.
-    for name in list(sys.modules):
-        if name == "datasets" or name.startswith("datasets."):
-            sys.modules.pop(name, None)
-        if name == "huggingface_hub" or name.startswith("huggingface_hub."):
-            sys.modules.pop(name, None)
-    importlib_module = __import__("importlib")
-    importlib_module.reload(mod)
-    assert "datasets" not in sys.modules
-    assert "huggingface_hub" not in sys.modules
+    assert_lazy_import(
+        "lairs.integrations.hf",
+        "datasets",
+        "huggingface_hub",
+    )

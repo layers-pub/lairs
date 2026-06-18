@@ -8,6 +8,7 @@ tests that build a real ``tf.data.Dataset`` skip cleanly when the optional
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING
 
 import pyarrow as pa
 import pytest
@@ -21,6 +22,9 @@ from lairs.integrations.tfdata import (
     token_of,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 
 def test_name() -> None:
     """The exporter advertises the ``tfdata`` registry name."""
@@ -32,9 +36,11 @@ def test_binds_to_exporter_port() -> None:
     assert isinstance(TfDataExporter(), Exporter)
 
 
-def test_import_does_not_pull_in_tensorflow() -> None:
+def test_import_does_not_pull_in_tensorflow(
+    assert_lazy_import: Callable[..., None],
+) -> None:
     """Importing the module must not import tensorflow eagerly."""
-    assert "tensorflow" not in sys.modules
+    assert_lazy_import("lairs.integrations.tfdata", "tensorflow")
 
 
 def test_token_of_scalars() -> None:

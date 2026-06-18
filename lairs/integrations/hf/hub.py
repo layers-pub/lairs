@@ -23,7 +23,7 @@ import didactic.api as dx
 
 if TYPE_CHECKING:
     import pyarrow as pa
-    from datasets import Dataset  # ty: ignore[unresolved-import]
+    from datasets import Dataset
 
 __all__ = [
     "ProvenanceBundle",
@@ -314,14 +314,16 @@ def _import_datasets() -> _DatasetsModule:
         When the ``datasets`` package is not installed.
     """
     try:
-        import datasets  # noqa: PLC0415  # ty: ignore[unresolved-import]
+        import datasets  # noqa: PLC0415
     except ImportError as exc:
         msg = (
             "the HuggingFace Hub integration requires the optional 'lairs[hf]' "
             "extra (datasets)"
         )
         raise ImportError(msg) from exc
-    return datasets
+    # the live module supplies the protocol surface, but the checker cannot
+    # structurally match a runtime module object against the protocol.
+    return datasets  # ty: ignore[invalid-return-type]
 
 
 def _import_hub() -> _HubModule:
@@ -339,20 +341,22 @@ def _import_hub() -> _HubModule:
         When the ``huggingface_hub`` package is not installed.
     """
     try:
-        import huggingface_hub  # noqa: PLC0415  # ty: ignore[unresolved-import]
+        import huggingface_hub  # noqa: PLC0415
     except ImportError as exc:
         msg = (
             "the HuggingFace Hub integration requires the optional 'lairs[hf]' "
             "extra (huggingface_hub)"
         )
         raise ImportError(msg) from exc
-    return huggingface_hub
+    # the live module supplies the protocol surface, but the checker cannot
+    # structurally match a runtime module object against the protocol.
+    return huggingface_hub  # ty: ignore[invalid-return-type]
 
 
 if TYPE_CHECKING:
     from typing import Protocol
 
-    from huggingface_hub import HfApi  # ty: ignore[unresolved-import]
+    from huggingface_hub import HfApi
 
     class _DatasetsModule(Protocol):
         """The slice of the ``datasets`` module surface the Hub functions use."""

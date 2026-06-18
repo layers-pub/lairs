@@ -19,6 +19,7 @@ from lairs.integrations.webdataset import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 pa = pytest.importorskip("pyarrow")
@@ -46,9 +47,11 @@ def test_binds_to_exporter_port() -> None:
     assert isinstance(WebDatasetExporter(), Exporter)
 
 
-def test_importing_module_does_not_import_webdataset() -> None:
+def test_importing_module_does_not_import_webdataset(
+    assert_lazy_import: Callable[..., None],
+) -> None:
     # importing the module must never pull the optional library in.
-    assert "webdataset" not in sys.modules
+    assert_lazy_import("lairs.integrations.webdataset", "webdataset")
 
 
 def test_export_single_shard(tmp_path: Path) -> None:
@@ -213,9 +216,13 @@ def test_bytes_field_encodes_str() -> None:
     assert _bytes_field({}, "data") == b""
 
 
-def test_load_without_webdataset_raises(tmp_path: Path) -> None:
-    if "webdataset" in sys.modules:
-        pytest.skip("webdataset is installed; cannot test the missing-import path")
+def test_load_without_webdataset_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # simulate webdataset being absent so the error path runs regardless of
+    # whether the dev environment has it installed.
+    monkeypatch.setitem(sys.modules, "webdataset", None)
     table = pa.table({"id": ["a"]})
     spec = WebDatasetSpec(output_dir=str(tmp_path), key_column="id")
     shards = WebDatasetExporter().export(table, spec=spec)

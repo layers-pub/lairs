@@ -34,8 +34,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     import pyarrow as pa
-    from torch import Tensor  # ty: ignore[unresolved-import]
-    from torch.utils.data import (  # ty: ignore[unresolved-import]
+    from torch import Tensor
+    from torch.utils.data import (
         Dataset,
         IterableDataset,
     )
@@ -217,7 +217,7 @@ def _row_record(
 def collate_records(
     batch: list[dict[str, JsonValue]],
     tensor_columns: tuple[str, ...],
-) -> dict[str, JsonValue]:
+) -> dict[str, JsonValue | Tensor]:
     """Collate a batch of row mappings into a column-major batch mapping.
 
     Tensor columns are stacked into a single ``torch`` tensor; the remaining
@@ -238,7 +238,7 @@ def collate_records(
         A column-major mapping: each tensor column maps to a stacked tensor, and
         every other column maps to a list of its per-row values.
     """
-    columns: dict[str, JsonValue] = {}
+    columns: dict[str, JsonValue | Tensor] = {}
     names = list(batch[0].keys()) if batch else []
     tensor_set = set(tensor_columns)
     for name in names:
@@ -281,7 +281,7 @@ def _import_torch() -> ModuleType:
         When ``torch`` is not installed.
     """
     try:
-        import torch  # noqa: PLC0415  # ty: ignore[unresolved-import]
+        import torch  # noqa: PLC0415
     except ImportError as exc:  # pragma: no cover - exercised when torch absent
         msg = "the torch exporter requires the optional 'lairs[torch]' extra"
         raise ImportError(msg) from exc
@@ -326,7 +326,10 @@ class TorchExportResult(dx.Model):
         description="recorded media-resolution intent from the export spec",
     )
 
-    def collate(self, batch: list[dict[str, JsonValue]]) -> dict[str, JsonValue]:
+    def collate(
+        self,
+        batch: list[dict[str, JsonValue]],
+    ) -> dict[str, JsonValue | Tensor]:
         """Collate a batch of rows, stacking the tensor columns.
 
         Parameters

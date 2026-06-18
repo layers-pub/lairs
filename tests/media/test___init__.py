@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-import sys
+from typing import TYPE_CHECKING
 
 import lairs.media as mod
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def test_public_surface() -> None:
@@ -19,7 +22,15 @@ def test_public_surface() -> None:
     }
 
 
-def test_importing_media_does_not_import_heavy_decoders() -> None:
+def test_importing_media_does_not_import_heavy_decoders(
+    assert_lazy_import: Callable[..., None],
+) -> None:
     # importing the package must never pull in an optional decoder
-    for heavy in ("soundfile", "av", "mne", "librosa", "decord"):
-        assert heavy not in sys.modules
+    assert_lazy_import(
+        "lairs.media",
+        "soundfile",
+        "av",
+        "mne",
+        "librosa",
+        "decord",
+    )

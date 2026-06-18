@@ -13,6 +13,7 @@ import os
 import secrets
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,10 +26,50 @@ import httpx
 import pytest
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator, Sequence
     from contextlib import AbstractContextManager
 
     from lairs._types import JsonValue
+
+
+@pytest.fixture
+def assert_lazy_import() -> Callable[..., None]:
+    """Return a probe that verifies lazy-import discipline in a fresh interpreter.
+
+    The probe imports the named lairs module (or modules) in a clean subprocess
+    and fails if any of the named heavy libraries ended up in ``sys.modules``.
+    Running in a subprocess makes the assertion independent of whatever other
+    tests in this process have already imported, which matters now that the dev
+    environment installs every optional extra (a library pulled in transitively
+    by one adapter must not make another adapter's discipline test flaky).
+
+    Returns
+    -------
+    collections.abc.Callable
+        A callable ``probe(modules, *libraries)`` where ``modules`` is a module
+        name or sequence of names to import and ``libraries`` are the modules
+        that importing them must not pull into ``sys.modules``.
+    """
+
+    def probe(modules: str | Sequence[str], /, *libraries: str) -> None:
+        names = (modules,) if isinstance(modules, str) else tuple(modules)
+        imports = "\n".join(f"import {name}" for name in names)
+        code = (
+            f"{imports}\n"
+            "import sys\n"
+            f"_leaked = [lib for lib in {list(libraries)!r} if lib in sys.modules]\n"
+            "raise SystemExit('; '.join(_leaked) if _leaked else 0)"
+        )
+        completed = subprocess.run(  # noqa: S603  # test-controlled probe code
+            [sys.executable, "-c", code],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        detail = completed.stdout.strip() or completed.stderr.strip()
+        assert completed.returncode == 0, f"eagerly imported: {detail}"
+
+    return probe
 
 
 @pytest.fixture(autouse=True)

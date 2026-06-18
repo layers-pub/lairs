@@ -75,13 +75,44 @@ build-backend = "hatchling.build"
 packages = ["lairs"]
 
 [dependency-groups]
+# the dev environment installs every optional extra so the test suite exercises
+# every integration rather than skipping it. three are unavailable on the 3.14
+# floor and are deliberately omitted: tensorflow and decord ship no cp314 wheel
+# (markered out of their extras), and label-studio-sdk caps numpy below 2.3,
+# which has no cp314 wheel. their integrations stay unexercised until upstream
+# wheels land.
 dev = [
     "ruff",
     "ty",
     "pytest",
     "pytest-cov",
     "hypothesis",
-    "websockets>=13",
+    # numpy 2.3 is the first release with cp314 wheels; pin the floor so the
+    # combined optional set resolves to a wheel instead of a failing source build.
+    "numpy>=2.3",
+    "lairs[hf]",
+    "lairs[torch]",
+    "lairs[tf]",
+    "lairs[webdataset]",
+    "lairs[polars]",
+    "lairs[fsspec]",
+    "lairs[conllu]",
+    "lairs[brat]",
+    "lairs[elan]",
+    "lairs[textgrid]",
+    "lairs[amr]",
+    "lairs[spacy]",
+    "lairs[wikidata]",
+    "lairs[lexical]",
+    "lairs[reconciliation]",
+    "lairs[scholarly]",
+    "lairs[geo]",
+    "lairs[bio]",
+    "lairs[audio]",
+    "lairs[video]",
+    "lairs[neural]",
+    "lairs[tracking]",
+    "lairs[appview]",
 ]
 docs = [
     "mkdocs>=1.6",

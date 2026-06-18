@@ -142,7 +142,7 @@ def decode_audio(handle: MediaHandle) -> AudioBuffer:
     try:
         import io  # noqa: PLC0415
 
-        import soundfile  # noqa: PLC0415  # ty: ignore[unresolved-import]
+        import soundfile  # noqa: PLC0415
     except ModuleNotFoundError as exc:  # pragma: no cover - exercised via test patch
         msg = "audio decoding requires the lairs[audio] extra (soundfile)"
         raise ModuleNotFoundError(msg) from exc

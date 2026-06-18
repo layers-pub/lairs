@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+
 import pytest
 
 from lairs.media import video
@@ -113,5 +115,32 @@ def test_frame_at_ms_rejects_negative_time() -> None:
 
 @pytest.mark.integration
 def test_frame_at_ms_live() -> None:
-    pytest.importorskip("av")
-    pytest.skip("requires a video fixture")
+    # synthesize a tiny three-frame mp4 in memory so the av decode path runs
+    # without depending on an external fixture file.
+    av = pytest.importorskip("av")
+    np = pytest.importorskip("numpy")
+    buffer = io.BytesIO()
+    with av.open(buffer, mode="w", format="mp4") as out:
+        stream = out.add_stream("mpeg4", rate=10)
+        stream.width = 16
+        stream.height = 16
+        stream.pix_fmt = "yuv420p"
+        for index in range(3):
+            array = np.full((16, 16, 3), index * 60, dtype=np.uint8)
+            frame = av.VideoFrame.from_ndarray(array, format="rgb24")
+            for packet in stream.encode(frame):
+                out.mux(packet)
+        for packet in stream.encode():
+            out.mux(packet)
+    handle = MediaHandle(
+        cid="bafy",
+        mime_type="video/mp4",
+        modality="video",
+        data=buffer.getvalue(),
+    )
+    decoded = frame_at_ms(handle, 0)
+    assert decoded.index == 0
+    assert decoded.width == 16
+    assert decoded.height == 16
+    # row-major rgb24 payload for a 16x16 frame.
+    assert len(decoded.pixels) == 16 * 16 * 3

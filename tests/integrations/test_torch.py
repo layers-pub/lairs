@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import sys
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -16,6 +16,9 @@ from lairs.integrations.torch import (
     _tensor_columns,
     collate_records,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 pa = pytest.importorskip("pyarrow")
 
@@ -36,9 +39,11 @@ def test_name() -> None:
     assert TorchExporter.name == "torch"
 
 
-def test_importing_does_not_import_torch() -> None:
+def test_importing_does_not_import_torch(
+    assert_lazy_import: Callable[..., None],
+) -> None:
     # importing the exporter module must never pull the optional torch extra.
-    assert "torch" not in sys.modules
+    assert_lazy_import("lairs.integrations.torch", "torch")
 
 
 def test_spec_defaults() -> None:
@@ -115,11 +120,12 @@ def test_row_record_out_of_range() -> None:
 
 
 def test_collate_passthrough_without_tensor_columns() -> None:
-    # with no tensor columns, collation never imports torch.
+    # with no tensor columns, collation returns the per-column passthrough lists
+    # without ever touching torch (its lazy-import discipline is covered by
+    # test_importing_does_not_import_torch).
     batch = [{"text": "a", "id": 1}, {"text": "b", "id": 2}]
     collated = collate_records(batch, ())  # ty: ignore[invalid-argument-type]
     assert collated == {"text": ["a", "b"], "id": [1, 2]}
-    assert "torch" not in sys.modules
 
 
 def test_collate_empty_batch() -> None:
@@ -142,7 +148,9 @@ def test_export_map_dataset_indexing() -> None:
     pytest.importorskip("torch")
     table = _sample_table()
     result = TorchExporter().export(table)
-    assert len(result.dataset) == 3
+    # torch's base Dataset stub does not declare __len__ (map-style subclasses
+    # add it), so len() over the concrete dataset is invisible to the checker.
+    assert len(result.dataset) == 3  # ty: ignore[invalid-argument-type]
     assert result.dataset[0]["id"] == 1
     assert result.dataset[2]["text"] == "c"
 

@@ -24,13 +24,13 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     import pyarrow as pa
-    from datasets import (  # ty: ignore[unresolved-import]
+    from datasets import (
         Dataset,
         IterableDataset,
         Value,
     )
-    from datasets import Features as HfFeatures  # ty: ignore[unresolved-import]
-    from datasets import Sequence as HfSequence  # ty: ignore[unresolved-import]
+    from datasets import Features as HfFeatures
+    from datasets import Sequence as HfSequence
 
     from lairs._types import JsonValue
     from lairs.data.features import Features
@@ -444,14 +444,16 @@ def _import_datasets() -> _DatasetsModule:
         When the ``datasets`` package is not installed.
     """
     try:
-        import datasets  # noqa: PLC0415  # ty: ignore[unresolved-import]
+        import datasets  # noqa: PLC0415
     except ImportError as exc:
         msg = (
             "the HuggingFace exporter requires the optional 'lairs[hf]' extra "
             "(datasets)"
         )
         raise ImportError(msg) from exc
-    return datasets
+    # the live module supplies the protocol surface, but the checker cannot
+    # structurally match a runtime module object against the protocol.
+    return datasets  # ty: ignore[invalid-return-type]
 
 
 def _project(view: pa.Table, columns: tuple[str, ...] | None) -> pa.Table:

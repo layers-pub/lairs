@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import importlib.util
+import sys
 
 import didactic.api as dx
 import pytest
@@ -13,9 +13,6 @@ from lairs.integrations.hf.hub import (
     dataset_card,
     provenance_bundle,
 )
-
-_HAS_DATASETS = importlib.util.find_spec("datasets") is not None
-_HAS_HUB = importlib.util.find_spec("huggingface_hub") is not None
 
 
 def test_exports() -> None:
@@ -92,16 +89,22 @@ def test_dataset_card_default_heading() -> None:
     assert "# lairs corpus mirror" in card
 
 
-@pytest.mark.skipif(_HAS_DATASETS, reason="datasets is installed")
-def test_push_to_hub_without_datasets_raises_import_error() -> None:
+def test_push_to_hub_without_datasets_raises_import_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # simulate the optional 'datasets' library being absent so the clear error
+    # path runs even though the dev environment installs lairs[hf].
+    monkeypatch.setitem(sys.modules, "datasets", None)
     pa = pytest.importorskip("pyarrow")
     table = pa.table({"a": [1]})
     with pytest.raises(ImportError, match="lairs\\[hf\\]"):
         hub.push_to_hub(table, "org/corpus")
 
 
-@pytest.mark.skipif(_HAS_DATASETS, reason="datasets is installed")
-def test_load_from_hub_without_datasets_raises_import_error() -> None:
+def test_load_from_hub_without_datasets_raises_import_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "datasets", None)
     with pytest.raises(ImportError, match="lairs\\[hf\\]"):
         hub.load_from_hub("org/corpus")
 

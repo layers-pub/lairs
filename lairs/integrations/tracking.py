@@ -191,7 +191,7 @@ def _log_wandb(bundle: ProvenanceBundle) -> str:
     str
         The logged artifact name and revision, as ``"name:revision"``.
     """
-    import wandb  # noqa: PLC0415  # ty: ignore[unresolved-import]
+    import wandb  # noqa: PLC0415
 
     metadata: dict[str, JsonValue] = json.loads(bundle.model_dump_json())
     artifact = wandb.Artifact(_ARTIFACT_NAME, type="dataset", metadata=metadata)
@@ -214,7 +214,7 @@ def _log_mlflow(bundle: ProvenanceBundle) -> str:
     str
         The logged artifact name and revision, as ``"name:revision"``.
     """
-    import mlflow  # noqa: PLC0415  # ty: ignore[unresolved-import]
+    import mlflow  # noqa: PLC0415
 
     params: dict[str, JsonValue] = json.loads(bundle.model_dump_json())
     mlflow.log_params(params)

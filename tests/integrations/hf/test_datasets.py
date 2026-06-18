@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import importlib.util
+import sys
 from typing import TYPE_CHECKING
 
 import didactic.api as dx
@@ -23,8 +23,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     import pyarrow as pa
-
-_HAS_DATASETS = importlib.util.find_spec("datasets") is not None
 
 
 def test_name() -> None:
@@ -136,16 +134,22 @@ def test_is_sequence_token() -> None:
     assert not ds._is_sequence_token("string")
 
 
-@pytest.mark.skipif(_HAS_DATASETS, reason="datasets is installed")
-def test_export_without_datasets_raises_import_error() -> None:
+def test_export_without_datasets_raises_import_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # simulate the optional 'datasets' library being absent so the clear error
+    # path runs even though the dev environment installs lairs[hf].
+    monkeypatch.setitem(sys.modules, "datasets", None)
     pa = pytest.importorskip("pyarrow")
     table = pa.table({"a": [1, 2]})
     with pytest.raises(ImportError, match="lairs\\[hf\\]"):
         HuggingFaceExporter().export(table)
 
 
-@pytest.mark.skipif(_HAS_DATASETS, reason="datasets is installed")
-def test_hf_features_from_without_datasets_raises_import_error() -> None:
+def test_hf_features_from_without_datasets_raises_import_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "datasets", None)
     features = Features(specs=(FeatureSpec(name="a", dtype="string"),))
     with pytest.raises(ImportError, match="lairs\\[hf\\]"):
         hf_features_from(features)

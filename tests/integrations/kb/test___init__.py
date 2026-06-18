@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import importlib
-import sys
+from typing import TYPE_CHECKING
 
 from lairs.integrations import kb
 from lairs.integrations.kb import Candidate, Edge, Entity
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def test_exports() -> None:
@@ -30,12 +32,18 @@ def test_edge_roundtrip() -> None:
     assert back == edge
 
 
-def test_importing_kb_does_not_import_optional_libs() -> None:
+def test_importing_kb_does_not_import_optional_libs(
+    assert_lazy_import: Callable[..., None],
+) -> None:
     # importing the package or any connector module must never pull in the
     # optional heavy libraries; they are imported lazily on first use only.
-    importlib.import_module("lairs.integrations.kb.glazing")
-    importlib.import_module("lairs.integrations.kb.reconciliation")
-    importlib.import_module("lairs.integrations.kb.wikidata")
-    assert "glazing" not in sys.modules
-    assert "qwikidata" not in sys.modules
-    assert "SPARQLWrapper" not in sys.modules
+    assert_lazy_import(
+        (
+            "lairs.integrations.kb.glazing",
+            "lairs.integrations.kb.reconciliation",
+            "lairs.integrations.kb.wikidata",
+        ),
+        "glazing",
+        "qwikidata",
+        "SPARQLWrapper",
+    )

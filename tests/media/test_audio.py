@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+
 import pytest
 
 from lairs.media import audio
@@ -98,5 +100,24 @@ def test_decode_audio_rejects_empty_handle() -> None:
 
 @pytest.mark.integration
 def test_decode_audio_live() -> None:
-    pytest.importorskip("soundfile")
-    pytest.skip("requires an audio fixture")
+    # synthesize a tiny stereo WAV in memory so the soundfile decode path runs
+    # without depending on an external fixture file.
+    sf = pytest.importorskip("soundfile")
+    np = pytest.importorskip("numpy")
+    buffer = io.BytesIO()
+    frames = np.array(
+        [[0.0, 0.0], [0.25, -0.25], [0.5, -0.5], [0.75, -0.75]],
+        dtype="float32",
+    )
+    sf.write(buffer, frames, 16000, format="WAV")
+    handle = MediaHandle(
+        cid="bafy",
+        mime_type="audio/wav",
+        modality="audio",
+        data=buffer.getvalue(),
+    )
+    decoded = decode_audio(handle)
+    assert decoded.sample_rate == 16000
+    assert decoded.channels == 2
+    # four stereo frames interleave to eight samples.
+    assert len(decoded.samples) == 8

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -76,17 +77,21 @@ def test_conforms_to_port() -> None:
     assert isinstance(GlazingKB(), KnowledgeBase)
 
 
-def test_resolve_without_glazing_raises() -> None:
+def test_resolve_without_glazing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    # simulate glazing being absent so the error path runs regardless of install.
+    monkeypatch.setitem(sys.modules, "glazing", None)
     with pytest.raises(GlazingNotInstalledError, match="lairs\\[lexical\\]"):
         GlazingKB().resolve("give.01")
 
 
-def test_search_without_glazing_raises() -> None:
+def test_search_without_glazing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "glazing", None)
     with pytest.raises(GlazingNotInstalledError):
         GlazingKB().search("give")
 
 
-def test_neighbors_without_glazing_raises() -> None:
+def test_neighbors_without_glazing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "glazing", None)
     with pytest.raises(GlazingNotInstalledError):
         GlazingKB().neighbors("give.01")
 

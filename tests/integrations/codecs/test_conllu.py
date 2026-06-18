@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 import sys
+from typing import TYPE_CHECKING
 
 import didactic.api as dx
 import pytest
 from hypothesis import strategies as st
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from lairs.integrations.codecs import CorpusFragment
 from lairs.integrations.codecs.conllu import (
@@ -83,20 +87,22 @@ def test_is_codec_protocol() -> None:
     assert isinstance(ConlluCodec(), Codec)
 
 
-def test_importing_module_does_not_import_conllu() -> None:
-    assert "conllu" not in sys.modules
+def test_importing_module_does_not_import_conllu(
+    assert_lazy_import: Callable[..., None],
+) -> None:
+    assert_lazy_import("lairs.integrations.codecs.conllu", "conllu")
 
 
-def test_decode_requires_optional_library() -> None:
-    if "conllu" in sys.modules:  # pragma: no cover - depends on install state
-        pytest.skip("conllu is installed; cannot test the missing-library path")
+def test_decode_requires_optional_library(monkeypatch: pytest.MonkeyPatch) -> None:
+    # simulate the optional library being absent so the error path is exercised
+    # regardless of whether the dev environment has conllu installed.
+    monkeypatch.setitem(sys.modules, "conllu", None)
     with pytest.raises(ModuleNotFoundError, match="conllu"):
         ConlluCodec().decode(_CONLLU)
 
 
-def test_encode_requires_optional_library() -> None:
-    if "conllu" in sys.modules:  # pragma: no cover - depends on install state
-        pytest.skip("conllu is installed; cannot test the missing-library path")
+def test_encode_requires_optional_library(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "conllu", None)
     with pytest.raises(ModuleNotFoundError, match="conllu"):
         ConlluCodec().encode([])
 
