@@ -159,7 +159,6 @@ def test_op_event_filters_unkept_collection() -> None:
 def test_subscribe_repos_live(pds_server: PdsServer) -> None:
     # tail the live firehose, create one record, and assert the consumer decodes
     # the matching commit event with its record value.
-    pytest.importorskip("websockets")
     ws_endpoint = "ws://" + pds_server.endpoint.removeprefix("http://")
     collection = "pub.layers.test.firehose"
     token = secrets.token_hex(4)

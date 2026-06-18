@@ -25,6 +25,14 @@ publish
     a PDS match a local Repository revision; a dry-run plan is the default.
 inspect
     Print a per-record-type summary of a corpus loaded from a PDS.
+datasets
+    Resolve a handle or DID and list its datasets, one row per corpus.
+toc
+    Resolve a handle or DID and print its repository collection inventory.
+search
+    Fan out over a seed of handles or DIDs and list matching datasets.
+index
+    Build, refresh, search, and diff a local dataset index.
 """
 
 # ruff: noqa: T201  (a console entry point's job is to print to stdout)
@@ -33,18 +41,34 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import shutil
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import httpx
+
+from lairs import data, discovery
+from lairs._aturi import nsid_of as _nsid_of
 from lairs._codegen import pipeline
 from lairs._codegen.manifest import Manifest, load_manifest
+from lairs.atproto.identity import IdentityError
+from lairs.atproto.pds import PdsClient
+from lairs.author import publish as publish_ops
+from lairs.discovery import accelerator
+from lairs.store.repository import Repository
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from lairs.author.publish import PublishPlan
+    from lairs.discovery import CardDiff, CrawlReport, SearchHit, SearchQuery
+    from lairs.discovery.models import (
+        DatasetFilter,
+        DatasetSummary,
+        RepoTableOfContents,
+    )
 
 __all__ = ["main"]
 
@@ -98,6 +122,10 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_materialize(subparsers)
     _add_publish(subparsers)
     _add_inspect(subparsers)
+    _add_datasets(subparsers)
+    _add_toc(subparsers)
+    _add_search(subparsers)
+    _add_index(subparsers)
     return parser
 
 
@@ -427,8 +455,6 @@ def _count_record_types() -> int:
     int
         The number of record-typed definitions across the vendored lexicons.
     """
-    import json  # noqa: PLC0415  (only the vendor path reads lexicon json)
-
     pub = _LEXICON_ROOT / "pub"
     if not pub.exists():
         return 0
@@ -520,12 +546,9 @@ def _run_pull(args: argparse.Namespace) -> int:
     int
         ``0`` on success.
     """
-    from lairs.author.publish import pull  # noqa: PLC0415  (defers httpx-backed deps)
-    from lairs.store.repository import Repository  # noqa: PLC0415
-
     into: Path = args.into
     repo = Repository.init(into)
-    pull(args.did, endpoint=args.endpoint, into=repo)
+    publish_ops.pull(args.did, endpoint=args.endpoint, into=repo)
     uris = repo.staged_uris()
     print(f"pulled {len(uris)} record(s) from {args.did} into {into}")
     if not uris:
@@ -549,12 +572,9 @@ def _run_materialize(args: argparse.Namespace) -> int:
     int
         ``0`` on success.
     """
-    from lairs.atproto.pds import PdsClient  # noqa: PLC0415  (defers httpx import)
-    from lairs.data import load_corpus  # noqa: PLC0415
-
     out: Path = args.out
     with PdsClient(args.endpoint) as client:
-        corpus = load_corpus(args.uri, source="pds", pds_client=client)
+        corpus = data.load_corpus(args.uri, source="pds", pds_client=client)
     written = corpus.materialize(out)
     print(f"materialized {len(written)} view(s) into {out}")
     for path in written:
@@ -576,15 +596,12 @@ def _run_publish(args: argparse.Namespace) -> int:
         ``0`` on success; ``1`` when a live publish is requested without an
         endpoint.
     """
-    from lairs.author.publish import publish  # noqa: PLC0415  (defers httpx import)
-    from lairs.store.repository import Repository  # noqa: PLC0415
-
     if args.yes and args.endpoint is None:
         print("error: --yes requires --endpoint to write to a PDS", file=sys.stderr)
         return 1
     repo = Repository.open(args.repo)
     dry_run = not args.yes
-    plan = publish(
+    plan = publish_ops.publish(
         repo,
         args.revision,
         to=args.to,
@@ -630,11 +647,8 @@ def _run_inspect(args: argparse.Namespace) -> int:
     int
         ``0`` on success.
     """
-    from lairs.atproto.pds import PdsClient  # noqa: PLC0415  (defers httpx import)
-    from lairs.data import load_corpus  # noqa: PLC0415
-
     with PdsClient(args.endpoint) as client:
-        corpus = load_corpus(args.uri, source="pds", pds_client=client)
+        corpus = data.load_corpus(args.uri, source="pds", pds_client=client)
     counts: dict[str, int] = {}
     for uri in corpus.pool.uris():
         nsid = _nsid_of(uri)
@@ -646,25 +660,510 @@ def _run_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
-def _nsid_of(uri: str) -> str:
-    """Return the collection NSID embedded in an AT-URI.
+def _add_filter_args(sub: argparse.ArgumentParser) -> None:
+    """Add the shared dataset facet flags to a subparser."""
+    sub.add_argument("--language", default=None, help="filter by language tag")
+    sub.add_argument("--domain", default=None, help="filter by domain slug")
+    sub.add_argument("--license", default=None, help="filter by license identifier")
+    sub.add_argument(
+        "--min-expressions",
+        type=int,
+        default=None,
+        dest="min_expressions",
+        help="keep corpora with at least this many expressions",
+    )
+    sub.add_argument(
+        "--max-expressions",
+        type=int,
+        default=None,
+        dest="max_expressions",
+        help="keep corpora with at most this many expressions",
+    )
+    sub.add_argument(
+        "--text",
+        default=None,
+        help="case-insensitive substring over name and description",
+    )
+    sub.add_argument(
+        "--has-adjudication",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        dest="has_adjudication",
+        help="require corpora to declare (or not) an adjudication step",
+    )
 
-    An AT-URI has the form ``at://<authority>/<collection>/<rkey>``; the
-    collection segment is the lexicon NSID.
+
+def _dataset_filter(args: argparse.Namespace) -> DatasetFilter:
+    """Build a ``DatasetFilter`` from the parsed facet flags."""
+    return discovery.DatasetFilter(
+        language=args.language,
+        domain=args.domain,
+        license=args.license,
+        min_expression_count=args.min_expressions,
+        max_expression_count=args.max_expressions,
+        text=args.text,
+        has_adjudication=args.has_adjudication,
+    )
+
+
+def _print_datasets(rows: Sequence[DatasetSummary], *, as_json: bool) -> None:
+    """Print dataset summaries as a readable table or JSON array."""
+    if as_json:
+        payload = [json.loads(row.model_dump_json()) for row in rows]
+        print(json.dumps(payload, indent=2))
+        return
+    if not rows:
+        print("no datasets found")
+        return
+    for row in rows:
+        who = row.handle or row.did
+        domain = row.domain or "-"
+        language = row.language or "-"
+        count = row.expression_count if row.expression_count is not None else "-"
+        license_id = row.license or "-"
+        print(f"{row.name}  [{domain}/{language}]  {count} expr  {license_id}")
+        print(f"  {who}  {row.uri}")
+
+
+def _print_toc(toc: RepoTableOfContents, *, as_json: bool) -> None:
+    """Print a repository table of contents as a readable list or JSON object."""
+    if as_json:
+        print(json.dumps(json.loads(toc.model_dump_json()), indent=2))
+        return
+    label = f"{toc.did} ({toc.handle})" if toc.handle else toc.did
+    print(f"repo {label}")
+    for collection in toc.collections:
+        marker = "*" if collection.is_dataset_like else " "
+        count = f"  {collection.count}" if collection.count is not None else ""
+        print(f"  [{marker}] {collection.nsid}{count}")
+
+
+def _add_datasets(subparsers: _Subparsers) -> None:
+    """Register the ``datasets`` subcommand."""
+    sub = subparsers.add_parser(
+        "datasets",
+        help="list an actor's datasets",
+        description=(
+            "Resolve a handle or DID and list its datasets, one row per corpus."
+        ),
+    )
+    sub.add_argument("actor", help="the handle or DID to list datasets for")
+    sub.add_argument(
+        "--source",
+        choices=("auto", "pds", "appview"),
+        default="auto",
+        help="discovery source (default: auto)",
+    )
+    sub.add_argument("--appview", default=None, help="appview base URL")
+    sub.add_argument("--endpoint", default=None, help="PDS base URL override")
+    _add_filter_args(sub)
+    sub.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="maximum number of rows to print",
+    )
+    sub.add_argument(
+        "--json",
+        action="store_true",
+        help="print JSON instead of a table",
+    )
+    sub.set_defaults(handler=_run_datasets)
+
+
+def _run_datasets(args: argparse.Namespace) -> int:
+    """Handle ``lairs datasets``.
 
     Parameters
     ----------
-    uri : str
-        The AT-URI to parse.
+    args : argparse.Namespace
+        The parsed arguments.
 
     Returns
     -------
-    str
-        The collection NSID, or the empty string when none is present.
+    int
+        ``0`` on success, ``1`` on a resolution or transport failure.
     """
-    body = uri.removeprefix("at://")
-    parts = body.split("/")
-    minimum_parts_with_collection = 2
-    if len(parts) >= minimum_parts_with_collection:
-        return parts[1]
-    return ""
+    pds_client = PdsClient(args.endpoint) if args.endpoint else None
+    try:
+        rows = discovery.list_datasets(
+            args.actor,
+            source=args.source,
+            appview=args.appview,
+            filters=_dataset_filter(args),
+            pds_client=pds_client,
+        )
+    except (httpx.HTTPError, IdentityError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if pds_client is not None:
+            pds_client.close()
+    if args.limit is not None:
+        rows = rows[: args.limit]
+    _print_datasets(rows, as_json=args.json)
+    return 0
+
+
+def _print_report(report: CrawlReport) -> None:
+    """Print a crawl or firehose pass summary."""
+    print(
+        f"repos seen: {report.repos_seen}, with corpora: {report.repos_with_corpora}",
+    )
+    print(f"cards built: {report.cards_built}, unchanged: {report.cards_unchanged}")
+    for reason in report.skipped:
+        print(f"  skipped {reason}")
+    if report.revision is not None:
+        print(f"committed {report.revision}")
+
+
+def _print_hits(hits: list[SearchHit]) -> None:
+    """Print ranked search hits."""
+    if not hits:
+        print("no datasets found")
+        return
+    for hit in hits:
+        summary = hit.card.summary
+        domain = summary.domain or "-"
+        language = summary.language or "-"
+        print(f"{hit.score:.1f}  {summary.name}  [{domain}/{language}]  {summary.uri}")
+
+
+def _print_card_diff(diff: CardDiff) -> None:
+    """Print an index diff between two revisions."""
+    print(
+        f"added: {len(diff.added)}  "
+        f"changed: {len(diff.changed)}  "
+        f"removed: {len(diff.removed)}",
+    )
+    for uri in diff.added:
+        print(f"  + {uri}")
+    for uri in diff.changed:
+        print(f"  ~ {uri}")
+    for uri in diff.removed:
+        print(f"  - {uri}")
+
+
+def _add_index(subparsers: _Subparsers) -> None:
+    """Register the ``index`` subcommand group."""
+    index = subparsers.add_parser(
+        "index",
+        help="build, refresh, search, and diff a local dataset index",
+        description=(
+            "Maintain a local, searchable dataset index in a panproto "
+            "Repository, built from a crawl and kept fresh from the firehose."
+        ),
+    )
+    index_sub = index.add_subparsers(dest="index_command", metavar="index_command")
+
+    build = index_sub.add_parser("build", help="crawl repositories into the index")
+    build.add_argument("--into", required=True, type=Path, help="index directory")
+    build.add_argument(
+        "--endpoint",
+        required=True,
+        help="the relay or PDS to crawl",
+    )
+    build.add_argument(
+        "--seed-did",
+        action="append",
+        default=None,
+        dest="seed_did",
+        help="crawl only this DID (repeatable); default crawls every repo",
+    )
+    build.add_argument(
+        "--max-repos",
+        type=int,
+        default=None,
+        dest="max_repos",
+        help="bound on repositories visited",
+    )
+    build.add_argument(
+        "--message",
+        default="backfill crawl",
+        help="commit message for the crawl snapshot",
+    )
+    build.set_defaults(handler=_run_index_build)
+
+    update = index_sub.add_parser("update", help="tail the firehose into the index")
+    update.add_argument("--index", required=True, type=Path, help="index directory")
+    update.add_argument("--relay", required=True, help="the firehose endpoint")
+    update.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="stop after this many events",
+    )
+    update.set_defaults(handler=_run_index_update)
+
+    search = index_sub.add_parser("search", help="search the local index")
+    search.add_argument("--index", required=True, type=Path, help="index directory")
+    search.add_argument("query", nargs="?", default=None, help="free-text query")
+    search.add_argument("--domain", default=None, help="filter by domain slug")
+    search.add_argument("--language", default=None, help="filter by language tag")
+    search.add_argument("--license", default=None, help="filter by license")
+    search.add_argument(
+        "--min-expressions",
+        type=int,
+        default=None,
+        dest="min_expressions",
+        help="minimum expression count",
+    )
+    search.add_argument(
+        "--max-expressions",
+        type=int,
+        default=None,
+        dest="max_expressions",
+        help="maximum expression count",
+    )
+    search.add_argument("--metric", default=None, help="required quality metric slug")
+    search.add_argument(
+        "--min-rounds",
+        type=int,
+        default=None,
+        dest="min_rounds",
+        help="minimum annotation rounds",
+    )
+    search.add_argument(
+        "--duckdb",
+        action="store_true",
+        help="pre-filter through the DuckDB accelerator",
+    )
+    search.set_defaults(handler=_run_index_search)
+
+    diff = index_sub.add_parser("diff", help="diff the index between two revisions")
+    diff.add_argument("--index", required=True, type=Path, help="index directory")
+    diff.add_argument("base", help="the base revision")
+    diff.add_argument("head", help="the head revision")
+    diff.set_defaults(handler=_run_index_diff)
+
+
+def _run_index_build(args: argparse.Namespace) -> int:
+    """Handle ``lairs index build``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments.
+
+    Returns
+    -------
+    int
+        ``0`` on success, ``1`` on a transport failure.
+    """
+    index = discovery.DiscoveryIndex.init(args.into)
+    with PdsClient(args.endpoint) as client:
+        dids = args.seed_did or client.list_repos()
+        try:
+            report = discovery.build_index(
+                index,
+                dids,
+                describe=client,
+                list_corpora=client,
+                endpoint=args.endpoint,
+                max_repos=args.max_repos,
+                message=args.message,
+            )
+        except httpx.HTTPError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+    _print_report(report)
+    return 0
+
+
+def _run_index_update(args: argparse.Namespace) -> int:
+    """Handle ``lairs index update``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments.
+
+    Returns
+    -------
+    int
+        ``0`` on success, ``1`` on a transport failure.
+    """
+    index = discovery.DiscoveryIndex.open(args.index)
+    try:
+        report = discovery.update_index(index, args.relay, limit=args.limit)
+    except (httpx.HTTPError, RuntimeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    _print_report(report)
+    return 0
+
+
+def _run_index_search(args: argparse.Namespace) -> int:
+    """Handle ``lairs index search``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments.
+
+    Returns
+    -------
+    int
+        ``0`` on success.
+    """
+    index = discovery.DiscoveryIndex.open(args.index)
+    query: SearchQuery = discovery.SearchQuery(
+        text=args.query,
+        domain=args.domain,
+        language=args.language,
+        license=args.license,
+        min_expressions=args.min_expressions,
+        max_expressions=args.max_expressions,
+        annotation_metric=args.metric,
+        min_annotation_rounds=args.min_rounds,
+    )
+    if args.duckdb:
+        hits = accelerator.search_accelerated(
+            index, query, out_dir=args.index / ".accel"
+        )
+    else:
+        hits = discovery.search(index.cards(), query)
+    _print_hits(hits)
+    return 0
+
+
+def _run_index_diff(args: argparse.Namespace) -> int:
+    """Handle ``lairs index diff``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments.
+
+    Returns
+    -------
+    int
+        ``0`` on success.
+    """
+    index = discovery.DiscoveryIndex.open(args.index)
+    _print_card_diff(index.diff_cards(args.base, args.head))
+    return 0
+
+
+def _add_toc(subparsers: _Subparsers) -> None:
+    """Register the ``toc`` subcommand."""
+    sub = subparsers.add_parser(
+        "toc",
+        help="show a repository's collection inventory",
+        description=(
+            "Resolve a handle or DID and print the collections in its repository, "
+            "starring the dataset-shaped ones, without dumping records."
+        ),
+    )
+    sub.add_argument("actor", help="the handle or DID to inventory")
+    sub.add_argument(
+        "--source",
+        choices=("auto", "pds", "appview"),
+        default="auto",
+        help="discovery source (default: auto)",
+    )
+    sub.add_argument("--endpoint", default=None, help="PDS base URL override")
+    sub.add_argument(
+        "--counts",
+        action="store_true",
+        help="count records per collection (drains each collection)",
+    )
+    sub.add_argument(
+        "--json",
+        action="store_true",
+        help="print JSON instead of a table",
+    )
+    sub.set_defaults(handler=_run_toc)
+
+
+def _run_toc(args: argparse.Namespace) -> int:
+    """Handle ``lairs toc``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments.
+
+    Returns
+    -------
+    int
+        ``0`` on success, ``1`` on a resolution or transport failure.
+    """
+    pds_client = PdsClient(args.endpoint) if args.endpoint else None
+    try:
+        toc = discovery.table_of_contents(
+            args.actor,
+            source=args.source,
+            counts=args.counts,
+            pds_client=pds_client,
+        )
+    except (httpx.HTTPError, IdentityError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if pds_client is not None:
+            pds_client.close()
+    _print_toc(toc, as_json=args.json)
+    return 0
+
+
+def _add_search(subparsers: _Subparsers) -> None:
+    """Register the ``search`` subcommand."""
+    sub = subparsers.add_parser(
+        "search",
+        help="search datasets across a seed of actors",
+        description=(
+            "Fan out over a seed of handles or DIDs and list the matching "
+            "datasets, deduplicated by corpus."
+        ),
+    )
+    sub.add_argument("actors", nargs="+", help="handles or DIDs to search across")
+    sub.add_argument(
+        "--source",
+        choices=("auto", "pds", "appview"),
+        default="auto",
+        help="discovery source (default: auto)",
+    )
+    sub.add_argument("--appview", default=None, help="appview base URL")
+    _add_filter_args(sub)
+    sub.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="maximum number of rows to print",
+    )
+    sub.add_argument(
+        "--json",
+        action="store_true",
+        help="print JSON instead of a table",
+    )
+    sub.set_defaults(handler=_run_search)
+
+
+def _run_search(args: argparse.Namespace) -> int:
+    """Handle ``lairs search``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments.
+
+    Returns
+    -------
+    int
+        ``0`` on success, ``1`` on a resolution or transport failure.
+    """
+    try:
+        rows = discovery.discover_datasets(
+            args.actors,
+            source=args.source,
+            appview=args.appview,
+            filters=_dataset_filter(args),
+        )
+    except (httpx.HTTPError, IdentityError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if args.limit is not None:
+        rows = rows[: args.limit]
+    _print_datasets(rows, as_json=args.json)
+    return 0

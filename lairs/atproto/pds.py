@@ -35,9 +35,11 @@ __all__ = [
     "QueryParams",
     "RecordDecodeFailure",
     "RecordEnvelope",
+    "RepoDescription",
     "decode",
     "decode_all",
     "decode_repo_car",
+    "describe_repo",
     "get_record",
     "get_repo",
     "list_records",
@@ -59,6 +61,12 @@ _LIST_RECORDS_NSID = "com.atproto.repo.listRecords"
 
 _GET_REPO_NSID = "com.atproto.sync.getRepo"
 """The XRPC method for bulk CAR export of a whole repository."""
+
+_DESCRIBE_REPO_NSID = "com.atproto.repo.describeRepo"
+"""The XRPC method for repository metadata (collections, handle, did doc)."""
+
+_LIST_REPOS_NSID = "com.atproto.sync.listRepos"
+"""The XRPC method for enumerating the repositories a service hosts."""
 
 DEFAULT_PAGE_SIZE = 100
 """The default page size requested from ``listRecords``."""
@@ -103,6 +111,39 @@ class RecordDecodeFailure(dx.Model):
         description="content identifier of the record that failed to decode",
     )
     error: str = dx.field(description="human-readable validation failure description")
+
+
+class RepoDescription(dx.Model):
+    """A repository table of contents from ``com.atproto.repo.describeRepo``.
+
+    Parameters
+    ----------
+    did : str
+        The repository DID.
+    handle : str
+        The repository's handle as resolved by the PDS.
+    handle_is_correct : bool
+        Whether the PDS verified the handle resolves back to this DID.
+    collections : tuple of str
+        The collection NSIDs present in the repository.
+    did_doc : JsonValue
+        The repository's DID document, as returned by the PDS.
+    """
+
+    did: str = dx.field(description="repository DID")
+    handle: str = dx.field(description="repository handle as resolved by the PDS")
+    handle_is_correct: bool = dx.field(
+        default=False,
+        description="whether the PDS verified the handle resolves back to this DID",
+    )
+    collections: tuple[str, ...] = dx.field(
+        default_factory=tuple,
+        description="collection NSIDs present in the repository",
+    )
+    did_doc: JsonValue = dx.field(
+        default=None,
+        description="the repository DID document as returned by the PDS",
+    )
 
 
 def decode[T: dx.Model](envelope: RecordEnvelope, model: type[T]) -> T:
@@ -223,6 +264,43 @@ def _envelope_from_record(record: dict[str, JsonValue]) -> RecordEnvelope:
         uri=uri if isinstance(uri, str) else "",
         cid=cid if isinstance(cid, str) else "",
         value=record.get("value"),
+    )
+
+
+def _repo_description_from_body(body: dict[str, JsonValue]) -> RepoDescription:
+    """Build a ``RepoDescription`` from a raw ``describeRepo`` response object.
+
+    The wire object uses camelCase keys (``handleIsCorrect``, ``didDoc``) that do
+    not match the model field names, so each field is mapped and narrowed
+    explicitly rather than through model validation.
+
+    Parameters
+    ----------
+    body : dict
+        A raw ``describeRepo`` response object.
+
+    Returns
+    -------
+    RepoDescription
+        The modelled repository description.
+    """
+    did = body.get("did")
+    handle = body.get("handle")
+    handle_is_correct = body.get("handleIsCorrect")
+    collections = body.get("collections")
+    kept = (
+        tuple(item for item in collections if isinstance(item, str))
+        if isinstance(collections, list)
+        else ()
+    )
+    return RepoDescription(
+        did=did if isinstance(did, str) else "",
+        handle=handle if isinstance(handle, str) else "",
+        handle_is_correct=handle_is_correct
+        if isinstance(handle_is_correct, bool)
+        else False,
+        collections=kept,
+        did_doc=body.get("didDoc"),
     )
 
 
@@ -571,6 +649,81 @@ class PdsClient:
         """
         return decode_repo_car(self.get_repo_car(repo))
 
+    def describe_repo(self, repo: str) -> RepoDescription:
+        """Fetch a repository's table of contents.
+
+        Wraps ``com.atproto.repo.describeRepo``, which returns the repository's
+        collection NSIDs, handle, and DID document without enumerating any
+        records. This is the cheap way to learn which collections a repo holds.
+
+        Parameters
+        ----------
+        repo : str
+            The repository DID or handle.
+
+        Returns
+        -------
+        RepoDescription
+            The repository's collections, handle, and DID document.
+
+        Raises
+        ------
+        httpx.HTTPStatusError
+            If the PDS returns a non-success status.
+        """
+        response = self._client.get(
+            self._xrpc_url(_DESCRIBE_REPO_NSID),
+            params={"repo": repo},
+        )
+        response.raise_for_status()
+        body = response.json()
+        return _repo_description_from_body(body if isinstance(body, dict) else {})
+
+    def list_repos(self, *, cursor: str | None = None) -> Iterator[str]:
+        """Enumerate the DIDs of repositories this service hosts.
+
+        Wraps ``com.atproto.sync.listRepos`` with cursor pagination folded into a
+        lazy iterator, the seed source for a backfill crawl over a relay or PDS.
+
+        Parameters
+        ----------
+        cursor : str or None, optional
+            An opaque pagination cursor to resume from.
+
+        Yields
+        ------
+        str
+            Repository DIDs, across all pages.
+
+        Raises
+        ------
+        httpx.HTTPStatusError
+            If the service returns a non-success status for any page.
+        """
+        next_cursor = cursor
+        while True:
+            params: QueryParams = {}
+            if next_cursor is not None:
+                params["cursor"] = next_cursor
+            response = self._client.get(
+                self._xrpc_url(_LIST_REPOS_NSID),
+                params=params,
+            )
+            response.raise_for_status()
+            body = response.json()
+            page = body if isinstance(body, dict) else {}
+            repos = page.get("repos")
+            if isinstance(repos, list):
+                for repo in repos:
+                    if isinstance(repo, dict):
+                        did = repo.get("did")
+                        if isinstance(did, str):
+                            yield did
+            returned_cursor = page.get("cursor")
+            if not isinstance(returned_cursor, str) or returned_cursor == "":
+                return
+            next_cursor = returned_cursor
+
 
 def get_record(
     endpoint: str,
@@ -669,3 +822,27 @@ def get_repo(endpoint: str, repo: str) -> tuple[RecordEnvelope, ...]:
     """
     with PdsClient(endpoint) as client:
         return client.get_repo(repo)
+
+
+def describe_repo(endpoint: str, repo: str) -> RepoDescription:
+    """Fetch a repository's table of contents using a throwaway client.
+
+    Parameters
+    ----------
+    endpoint : str
+        The base URL of the PDS.
+    repo : str
+        The repository DID or handle.
+
+    Returns
+    -------
+    RepoDescription
+        The repository's collections, handle, and DID document.
+
+    Raises
+    ------
+    httpx.HTTPStatusError
+        If the PDS returns a non-success status.
+    """
+    with PdsClient(endpoint) as client:
+        return client.describe_repo(repo)

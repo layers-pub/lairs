@@ -11,6 +11,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from lairs.data import Corpus, load_corpus
+from lairs.discovery import (
+    DatasetFilter,
+    DatasetSummary,
+    RepoTableOfContents,
+    discover_datasets,
+    list_datasets,
+    table_of_contents,
+)
 from lairs.integrations.registry import (
     get_codec,
     get_exporter,
@@ -24,11 +32,17 @@ if TYPE_CHECKING:
 __all__ = [
     "BlobRef",
     "Corpus",
+    "DatasetFilter",
+    "DatasetSummary",
+    "RepoTableOfContents",
     "__version__",
     "codec",
+    "discover_datasets",
     "exporter",
     "knowledge_base",
+    "list_datasets",
     "load_corpus",
+    "table_of_contents",
 ]
 
 __version__ = "0.0.0"

@@ -16,11 +16,16 @@
 services:
   pds:
     image: ${LAIRS_PDS_IMAGE:-ghcr.io/bluesky-social/pds:0.4}
+    # the listen port, published port, and advertised port are all driven by the
+    # one LAIRS_PDS_PORT variable so the endpoint the PDS publishes in its DID
+    # document (http://localhost:<port>) always equals the endpoint the host
+    # reaches it on. mapping a host port to a different container port would make
+    # the advertised endpoint disagree with the reachable one.
     ports:
-      - "${LAIRS_PDS_PORT:-3000}:3000"
+      - "${LAIRS_PDS_PORT:-3000}:${LAIRS_PDS_PORT:-3000}"
     environment:
       PDS_HOSTNAME: localhost
-      PDS_PORT: "3000"
+      PDS_PORT: "${LAIRS_PDS_PORT:-3000}"
       PDS_DATA_DIRECTORY: /pds
       PDS_BLOBSTORE_DISK_LOCATION: /pds/blocks
       PDS_DID_PLC_URL: ${PDS_DID_PLC_URL:-https://plc.directory}

@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import datetime
+import json
 import shutil
 from typing import TYPE_CHECKING
 
+import httpx
 import pytest
 
-from lairs import cli
+from lairs import cli, discovery
 from lairs._codegen.manifest import load_manifest
 from lairs.data.corpus import Corpus
+from lairs.discovery import CardDiff, CrawlReport
+from lairs.discovery.models import (
+    CollectionCount,
+    DatasetSummary,
+    RepoTableOfContents,
+)
 from lairs.records._generated import expression as expression_records
 from lairs.records._generated import media as media_records
 from lairs.records._generated import persona as persona_records
@@ -18,6 +26,8 @@ from lairs.store.repository import Repository
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from conftest import PdsServer
 
     from lairs.atproto.pds import PdsClient
 
@@ -42,7 +52,18 @@ def test_help_lists_every_subcommand(capsys: pytest.CaptureFixture[str]) -> None
         cli.main(["--help"])
     assert excinfo.value.code == 0
     out = capsys.readouterr().out
-    for command in ("vendor", "gen", "pull", "materialize", "publish", "inspect"):
+    for command in (
+        "vendor",
+        "gen",
+        "pull",
+        "materialize",
+        "publish",
+        "inspect",
+        "datasets",
+        "toc",
+        "search",
+        "index",
+    ):
         assert command in out
 
 
@@ -394,3 +415,159 @@ def test_nsid_of_extracts_collection() -> None:
 @pytest.mark.integration
 def test_cli_against_live_pds() -> None:
     pytest.skip("requires a live PDS endpoint and credentials")
+
+
+def _raise_value_error(actor: str, **kwargs: str | None) -> tuple[()]:
+    _ = (actor, kwargs)
+    msg = "bad source"
+    raise ValueError(msg)
+
+
+def test_print_datasets_table(capsys: pytest.CaptureFixture[str]) -> None:
+    rows = (
+        DatasetSummary(
+            uri="at://did:plc:x/pub.layers.corpus.corpus/a",
+            did="did:plc:x",
+            name="demo corpus",
+            domain="biomedical",
+            language="en",
+            expression_count=10,
+        ),
+    )
+    cli._print_datasets(rows, as_json=False)
+    out = capsys.readouterr().out
+    assert "demo corpus" in out
+    assert "biomedical" in out
+    assert "at://did:plc:x/pub.layers.corpus.corpus/a" in out
+
+
+def test_print_datasets_empty(capsys: pytest.CaptureFixture[str]) -> None:
+    cli._print_datasets((), as_json=False)
+    assert "no datasets found" in capsys.readouterr().out
+
+
+def test_print_datasets_json(capsys: pytest.CaptureFixture[str]) -> None:
+    rows = (DatasetSummary(uri="at://x", did="did:plc:x", name="demo"),)
+    cli._print_datasets(rows, as_json=True)
+    parsed = json.loads(capsys.readouterr().out)
+    assert parsed[0]["name"] == "demo"
+
+
+def test_print_toc(capsys: pytest.CaptureFixture[str]) -> None:
+    toc = RepoTableOfContents(
+        did="did:plc:x",
+        handle="alice.test",
+        collections=(
+            CollectionCount(nsid="pub.layers.corpus.corpus", is_dataset_like=True),
+            CollectionCount(nsid="app.bsky.feed.post"),
+        ),
+        dataset_collections=("pub.layers.corpus.corpus",),
+    )
+    cli._print_toc(toc, as_json=False)
+    out = capsys.readouterr().out
+    assert "alice.test" in out
+    assert "pub.layers.corpus.corpus" in out
+
+
+def test_datasets_reports_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(discovery, "list_datasets", _raise_value_error)
+    code = cli.main(["datasets", "did:plc:x"])
+    assert code == 1
+    assert "error: bad source" in capsys.readouterr().err
+
+
+def test_search_prints_results(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_discover(
+        actors: list[str],
+        **kwargs: str | None,
+    ) -> tuple[DatasetSummary, ...]:
+        _ = (actors, kwargs)
+        return (
+            DatasetSummary(
+                uri="at://did:plc:x/pub.layers.corpus.corpus/a",
+                did="did:plc:x",
+                name="demo corpus",
+            ),
+        )
+
+    monkeypatch.setattr(discovery, "discover_datasets", fake_discover)
+    code = cli.main(["search", "did:plc:x", "did:plc:y"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "demo corpus" in out
+
+
+def test_print_report(capsys: pytest.CaptureFixture[str]) -> None:
+    report = CrawlReport(
+        repos_seen=3,
+        repos_with_corpora=2,
+        cards_built=5,
+        skipped=("did:plc:z: no pub.layers.corpus.corpus",),
+        revision="abcd",
+    )
+    cli._print_report(report)
+    out = capsys.readouterr().out
+    assert "repos seen: 3" in out
+    assert "cards built: 5" in out
+    assert "skipped did:plc:z" in out
+    assert "committed abcd" in out
+
+
+def test_print_card_diff(capsys: pytest.CaptureFixture[str]) -> None:
+    diff = CardDiff(added=("at://a",), changed=("at://b",), removed=())
+    cli._print_card_diff(diff)
+    out = capsys.readouterr().out
+    assert "added: 1" in out
+    assert "+ at://a" in out
+    assert "~ at://b" in out
+
+
+def _seed_corpus_record(server: PdsServer, name: str) -> None:
+    response = httpx.post(
+        f"{server.endpoint}/xrpc/com.atproto.repo.createRecord",
+        headers={"Authorization": f"Bearer {server.access_jwt}"},
+        json={
+            "repo": server.did,
+            "collection": "pub.layers.corpus.corpus",
+            "record": {
+                "$type": "pub.layers.corpus.corpus",
+                "name": name,
+                "createdAt": "2026-06-18T00:00:00Z",
+            },
+        },
+        timeout=30.0,
+    )
+    response.raise_for_status()
+
+
+@pytest.mark.integration
+def test_index_build_and_search_live(
+    pds_server: PdsServer,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _seed_corpus_record(pds_server, "cli indexed corpus")
+    index_dir = tmp_path / "idx"
+    build_code = cli.main(
+        [
+            "index",
+            "build",
+            "--into",
+            str(index_dir),
+            "--endpoint",
+            pds_server.endpoint,
+            "--seed-did",
+            pds_server.did,
+        ],
+    )
+    assert build_code == 0
+    search_code = cli.main(["index", "search", "--index", str(index_dir), "corpus"])
+    out = capsys.readouterr().out
+    assert search_code == 0
+    assert "cli indexed corpus" in out

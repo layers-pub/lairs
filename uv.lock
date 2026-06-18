@@ -1571,11 +1571,13 @@ version = "0.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "didactic" },
+    { name = "duckdb" },
     { name = "httpx" },
     { name = "libipld" },
     { name = "multiformats" },
     { name = "panproto" },
     { name = "pyarrow" },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -1598,14 +1600,8 @@ brat = [
 conllu = [
     { name = "conllu" },
 ]
-duckdb = [
-    { name = "duckdb" },
-]
 elan = [
     { name = "pympi-ling" },
-]
-firehose = [
-    { name = "websockets" },
 ]
 fsspec = [
     { name = "fsspec" },
@@ -1695,7 +1691,7 @@ requires-dist = [
     { name = "datasets", marker = "extra == 'hf'" },
     { name = "decord", marker = "python_full_version < '3.14' and extra == 'video'" },
     { name = "didactic", specifier = ">=0.9.0" },
-    { name = "duckdb", marker = "extra == 'duckdb'" },
+    { name = "duckdb" },
     { name = "fsspec", marker = "extra == 'fsspec'" },
     { name = "geopandas", marker = "extra == 'geo'" },
     { name = "glazing", marker = "extra == 'lexical'", specifier = ">=0.2" },
@@ -1730,10 +1726,10 @@ requires-dist = [
     { name = "torch", marker = "extra == 'torch'" },
     { name = "wandb", marker = "extra == 'tracking'" },
     { name = "webdataset", marker = "extra == 'webdataset'" },
-    { name = "websockets", marker = "extra == 'firehose'", specifier = ">=13" },
+    { name = "websockets", specifier = ">=13" },
     { name = "xarray", marker = "extra == 'neural'" },
 ]
-provides-extras = ["hf", "torch", "tf", "webdataset", "polars", "duckdb", "fsspec", "conllu", "brat", "elan", "textgrid", "amr", "spacy", "labelstudio", "wikidata", "lexical", "reconciliation", "scholarly", "geo", "bio", "audio", "video", "neural", "tracking", "appview", "firehose", "ml"]
+provides-extras = ["hf", "torch", "tf", "webdataset", "polars", "fsspec", "conllu", "brat", "elan", "textgrid", "amr", "spacy", "labelstudio", "wikidata", "lexical", "reconciliation", "scholarly", "geo", "bio", "audio", "video", "neural", "tracking", "appview", "ml"]
 
 [package.metadata.requires-dev]
 dev = [

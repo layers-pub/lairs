@@ -17,11 +17,17 @@ def test_public_surface() -> None:
     assert set(lairs.__all__) == {
         "BlobRef",
         "Corpus",
+        "DatasetFilter",
+        "DatasetSummary",
+        "RepoTableOfContents",
         "__version__",
         "codec",
+        "discover_datasets",
         "exporter",
         "knowledge_base",
+        "list_datasets",
         "load_corpus",
+        "table_of_contents",
     }
 
 

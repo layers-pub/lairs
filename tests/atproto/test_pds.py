@@ -15,6 +15,7 @@ from lairs.atproto import pds
 from lairs.atproto.pds import (
     PdsClient,
     RecordEnvelope,
+    RepoDescription,
     _envelopes_from_blocks,
     _walk_mst,
     decode,
@@ -53,9 +54,11 @@ def test_exports() -> None:
         "QueryParams",
         "RecordDecodeFailure",
         "RecordEnvelope",
+        "RepoDescription",
         "decode",
         "decode_all",
         "decode_repo_car",
+        "describe_repo",
         "get_record",
         "get_repo",
         "list_records",
@@ -278,6 +281,66 @@ def test_get_repo_car_raises_on_error_status() -> None:
         client.get_repo_car(_REPO)
 
 
+def test_describe_repo_maps_camelcase_fields() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/xrpc/com.atproto.repo.describeRepo"
+        assert request.url.params["repo"] == _REPO
+        return httpx.Response(
+            200,
+            json={
+                "did": _REPO,
+                "handle": "alice.test",
+                "handleIsCorrect": True,
+                "collections": [_COLLECTION, "pub.layers.corpus.corpus", 7],
+                "didDoc": {"id": _REPO},
+            },
+        )
+
+    with _client(handler) as client:
+        description = client.describe_repo(_REPO)
+    assert isinstance(description, RepoDescription)
+    assert description.did == _REPO
+    assert description.handle == "alice.test"
+    assert description.handle_is_correct is True
+    # the integer collection entry is dropped defensively.
+    assert description.collections == (_COLLECTION, "pub.layers.corpus.corpus")
+    assert description.did_doc == {"id": _REPO}
+
+
+def test_describe_repo_defaults_on_empty_body() -> None:
+    with _client(lambda _r: httpx.Response(200, json=[])) as client:
+        description = client.describe_repo(_REPO)
+    assert description.did == ""
+    assert description.handle == ""
+    assert description.handle_is_correct is False
+    assert description.collections == ()
+    assert description.did_doc is None
+
+
+def test_describe_repo_raises_on_error_status() -> None:
+    with (
+        _client(lambda _r: httpx.Response(500)) as client,
+        pytest.raises(httpx.HTTPStatusError),
+    ):
+        client.describe_repo(_REPO)
+
+
+def test_list_repos_paginates_dids() -> None:
+    pages = {
+        None: {"repos": [{"did": "did:plc:a"}, {"did": "did:plc:b"}], "cursor": "p2"},
+        "p2": {"repos": [{"did": "did:plc:c"}]},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/xrpc/com.atproto.sync.listRepos"
+        cursor = request.url.params.get("cursor")
+        return httpx.Response(200, json=pages[cursor])
+
+    with _client(handler) as client:
+        dids = list(client.list_repos())
+    assert dids == ["did:plc:a", "did:plc:b", "did:plc:c"]
+
+
 def test_walk_mst_reconstructs_keys_in_order() -> None:
     # a three-node tree exercising prefix compression, a left subtree, and a
     # right subtree, so the in-order walk must interleave all three.
@@ -477,6 +540,18 @@ def test_get_record_missing_raises_live(pds_server: PdsServer) -> None:
         client.get_record(
             pds_server.did, "pub.layers.expression.expression", "does-not-exist"
         )
+
+
+@pytest.mark.integration
+def test_describe_repo_live(pds_server: PdsServer) -> None:
+    # seed a record then read the repo table of contents; the seeded collection
+    # must appear without enumerating any records.
+    collection = "pub.layers.test.describe"
+    _seed_records(pds_server, collection, 1)
+    client = PdsClient(pds_server.endpoint)
+    description = client.describe_repo(pds_server.did)
+    assert description.did == pds_server.did
+    assert collection in description.collections
 
 
 def _fresh_account(server: PdsServer) -> tuple[str, str]:

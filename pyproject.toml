@@ -13,6 +13,10 @@ dependencies = [
     "pyarrow",
     "libipld",
     "multiformats",
+    # the firehose consumer and the discovery index's query accelerator are
+    # part of the shipped feature set, so their runtime deps are not optional.
+    "websockets>=13",
+    "duckdb",
 ]
 
 [project.optional-dependencies]
@@ -23,7 +27,6 @@ torch = ["torch"]
 tf = ['tensorflow; python_version < "3.14"']
 webdataset = ["webdataset"]
 polars = ["polars"]
-duckdb = ["duckdb"]
 fsspec = ["fsspec"]
 conllu = ["conllu"]
 brat = ["brat"]
@@ -44,7 +47,6 @@ video = ['av', 'decord; python_version < "3.14"']
 neural = ["mne", "xarray"]
 tracking = ["wandb", "mlflow"]
 appview = ["httpx"]
-firehose = ["websockets>=13"]
 ml = ["lairs[hf]", "lairs[torch]", "lairs[fsspec]"]
 
 [project.scripts]

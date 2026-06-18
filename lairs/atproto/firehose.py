@@ -1,4 +1,4 @@
-"""Optional firehose consumer.
+"""Firehose consumer.
 
 Consumes ``com.atproto.sync.subscribeRepos`` over a websocket and yields the
 commit events whose collection matches the Layers NSIDs, to keep a local store
@@ -7,10 +7,9 @@ bodies carry an embedded CAR archive whose blocks hold the created and updated
 record values, which are recovered through the shared CAR primitives and
 rendered to the same DAG-JSON shape the XRPC record endpoints emit.
 
-The websocket transport is provided by the ``websockets`` library, declared
-under the ``firehose`` extra and imported lazily, so importing this module
-without the extra still exposes the event model and protocol. Integration-marked
-tests exercise the consumer against a live PDS firehose.
+The websocket transport is provided by the ``websockets`` library, a core
+runtime dependency. Integration-marked tests exercise the consumer against a
+live PDS firehose.
 """
 
 from __future__ import annotations
@@ -19,6 +18,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import didactic.api as dx
 import libipld
+from websockets.exceptions import ConnectionClosed
+from websockets.sync.client import connect
 
 from lairs._types import JsonValue  # noqa: TC001  (runtime: didactic field sort)
 from lairs.atproto._car import ipld_to_json
@@ -299,18 +300,7 @@ def subscribe_repos(
     ------
     FirehoseEvent
         Decoded commit events for the kept collections.
-
-    Raises
-    ------
-    RuntimeError
-        If the ``firehose`` extra (the ``websockets`` library) is not installed.
     """
-    try:
-        from websockets.exceptions import ConnectionClosed  # noqa: PLC0415
-        from websockets.sync.client import connect  # noqa: PLC0415
-    except ImportError as exc:  # pragma: no cover - exercised without the extra
-        msg = "the firehose consumer requires the 'firehose' extra (websockets)"
-        raise RuntimeError(msg) from exc
     keep = _keep_predicate(nsids)
     url = _subscription_url(relay, cursor)
     # max_size is disabled because commit frames can exceed the default cap.
