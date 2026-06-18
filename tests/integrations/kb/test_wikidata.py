@@ -13,8 +13,13 @@ from lairs.integrations.ports import KnowledgeBase
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from contextlib import AbstractContextManager
 
-_ENTITY_DATA = {
+    from conftest import RouteHandler
+
+    from lairs._types import JsonValue
+
+_ENTITY_DATA: JsonValue = {
     "entities": {
         "Q42": {
             "labels": {"en": {"language": "en", "value": "Douglas Adams"}},
@@ -43,14 +48,14 @@ _ENTITY_DATA = {
     },
 }
 
-_SEARCH_RESPONSE = {
+_SEARCH_RESPONSE: JsonValue = {
     "search": [
         {"id": "Q42", "label": "Douglas Adams"},
         {"id": "Q5", "label": "human"},
     ],
 }
 
-_SPARQL_RESPONSE = {
+_SPARQL_RESPONSE: JsonValue = {
     "results": {
         "bindings": [
             {
@@ -173,6 +178,34 @@ def test_neighbors_rel_filter_in_query() -> None:
     assert "wdt:P31" in captured["query"]
 
 
+def _wikidata_routes(path: str, _params: dict[str, str]) -> tuple[int, JsonValue]:
+    """Serve the three Wikidata endpoints the connector uses, from fixtures."""
+    if path.endswith("/Q42.json"):
+        return 200, _ENTITY_DATA
+    if path.endswith("/api"):
+        return 200, _SEARCH_RESPONSE
+    return 200, _SPARQL_RESPONSE
+
+
 @pytest.mark.integration
-def test_resolve_live() -> None:
-    pytest.skip("requires network access to the Wikidata endpoints")
+def test_wikidata_against_loopback_server(
+    route_server: Callable[[RouteHandler], AbstractContextManager[str]],
+) -> None:
+    # exercise resolve/search/neighbors end-to-end over the real httpx transport
+    # against a loopback server, so the connector runs without reaching the
+    # public Wikidata endpoints.
+    with route_server(_wikidata_routes) as base, httpx.Client() as client:
+        kb = WikidataKB(
+            endpoint=f"{base}/sparql",
+            api_endpoint=f"{base}/api",
+            entity_endpoint=base,
+            client=client,
+        )
+        entity = kb.resolve("Q42")
+        candidates = kb.search("Douglas")
+        edges = kb.neighbors("Q42")
+    assert entity.ref == "Q42"
+    assert entity.label == "Douglas Adams"
+    assert candidates[0].ref == "Q42"
+    assert edges
+    assert isinstance(edges[0], Edge)

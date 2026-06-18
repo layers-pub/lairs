@@ -17,12 +17,15 @@ from lairs.integrations.ports import KnowledgeBase
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from contextlib import AbstractContextManager
+
+    from conftest import RouteHandler
 
     from lairs._types import JsonValue
 
 _ENDPOINT = "https://recon.example/api"
 
-_QUERIES_RESPONSE = {
+_QUERIES_RESPONSE: JsonValue = {
     "q0": {
         "result": [
             {
@@ -36,7 +39,7 @@ _QUERIES_RESPONSE = {
     },
 }
 
-_MANIFEST = {
+_MANIFEST: JsonValue = {
     "name": "Example reconciliation",
     "extend": {
         "propose_properties": {
@@ -51,7 +54,7 @@ _MANIFEST = {
     },
 }
 
-_EXTEND_RESPONSE = {
+_EXTEND_RESPONSE: JsonValue = {
     "rows": {
         "Q42": {
             "P31": [{"id": "Q5", "name": "human"}],
@@ -199,6 +202,39 @@ def test_neighbors_without_extend_raises() -> None:
         kb.neighbors("Q42")
 
 
+# a manifest without a suggest service, so resolve()'s best-effort label lookup
+# early-returns instead of reaching out to the fixture's external suggest url
+# (the suggest path is covered by the mock-transport unit test).
+_LOOPBACK_MANIFEST: JsonValue = {
+    "name": "loopback reconciliation",
+    "extend": {"propose_properties": {"properties": [{"id": "P31"}, {"id": "P569"}]}},
+}
+
+
+def _recon_routes(path: str, params: dict[str, str]) -> tuple[int, JsonValue]:
+    """Serve the reconciliation manifest, queries, and extend, from fixtures."""
+    _ = path
+    body = json.loads(params["__body"]) if params.get("__body") else {}
+    if "queries" in body:
+        return 200, _QUERIES_RESPONSE
+    if "extend" in body:
+        return 200, _EXTEND_RESPONSE
+    return 200, _LOOPBACK_MANIFEST
+
+
 @pytest.mark.integration
-def test_resolve_live() -> None:
-    pytest.skip("requires network access to a reconciliation endpoint")
+def test_reconciliation_against_loopback_server(
+    route_server: Callable[[RouteHandler], AbstractContextManager[str]],
+) -> None:
+    # exercise search/resolve/neighbors end-to-end over the real httpx transport
+    # against a loopback server, so the connector runs without reaching a public
+    # reconciliation endpoint (the queries and extend calls are real POSTs).
+    with route_server(_recon_routes) as base, httpx.Client() as client:
+        kb = ReconciliationKB(f"{base}/api", client)
+        candidates = kb.search("Douglas Adams")
+        entity = kb.resolve("Q42")
+        edges = kb.neighbors("Q42")
+    assert candidates[0].ref == "Q42"
+    assert entity.ref == "Q42"
+    assert edges
+    assert isinstance(edges[0], Edge)

@@ -546,12 +546,6 @@ def test_apply_writes_module_function() -> None:
 
 
 @pytest.mark.integration
-def test_publish_dry_run_live() -> None:
-    # exercises a real publish dry-run when opted in; skips otherwise.
-    pytest.skip("publish requires a Repository and credentials")
-
-
-@pytest.mark.integration
 def test_write_round_trip_live(pds_server: PdsServer) -> None:
     """Create a record through the write client and read it back from the PDS."""
     auth = {"Authorization": f"Bearer {pds_server.access_jwt}"}

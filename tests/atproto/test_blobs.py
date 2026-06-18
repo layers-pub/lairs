@@ -79,15 +79,6 @@ def test_upload_blob_is_deferred_to_authoring() -> None:
 
 
 @pytest.mark.integration
-def test_get_blob_live() -> None:
-    # exercises a real getBlob when opted in; skips otherwise.
-    try:
-        blobs.get_blob(_ENDPOINT, _DID, _CID)
-    except httpx.HTTPError:
-        pytest.skip("network unavailable for live getBlob")
-
-
-@pytest.mark.integration
 def test_blob_round_trip_live(pds_server: PdsServer) -> None:
     """Upload a blob, bind it to a record, and fetch it back by CID."""
     payload = b"the audio bytes" * 64

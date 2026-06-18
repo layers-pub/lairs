@@ -99,18 +99,6 @@ def test_query_raises_on_error_status() -> None:
         client.query("corpus.listCorpora", {})
 
 
-@pytest.mark.integration
-def test_query_live() -> None:
-    # exercises a real appview query when opted in; skips otherwise.
-    client = AppviewClient(_ENDPOINT)
-    try:
-        client.query("corpus.listCorpora", {})
-    except httpx.HTTPError:
-        pytest.skip("network unavailable for live appview query")
-    finally:
-        client.close()
-
-
 def _appview_routes(path: str, params: dict[str, str]) -> tuple[int, JsonValue]:
     """Serve a minimal Layers appview: one get method and one paged list."""
     if path == "/xrpc/pub.layers.corpus.getCorpus":

@@ -172,16 +172,6 @@ def test_resolve_full_from_did_has_no_handle() -> None:
     assert resolution.handle is None
 
 
-@pytest.mark.integration
-def test_resolve_handle_live() -> None:
-    # exercises real well-known resolution when opted in; skips otherwise.
-    try:
-        did = identity.resolve_handle("bsky.app")
-    except IdentityError:
-        pytest.skip("network unavailable for live identity resolution")
-    assert did.startswith("did:")
-
-
 def _plc_routes(path: str, _params: dict[str, str]) -> tuple[int, JsonValue]:
     """Serve the PLC directory contract: GET /{did} returns the document."""
     if path == f"/{_DID}":

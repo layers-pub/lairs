@@ -419,8 +419,32 @@ def test_nsid_of_extracts_collection() -> None:
 
 
 @pytest.mark.integration
-def test_cli_against_live_pds() -> None:
-    pytest.skip("requires a live PDS endpoint and credentials")
+def test_cli_toc_against_live_pds(
+    pds_server: PdsServer,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # drive `lairs toc` end-to-end against the dockerized PDS: seed a corpus
+    # record, then run the command and assert it lists the collection.
+    httpx.post(
+        f"{pds_server.endpoint}/xrpc/com.atproto.repo.createRecord",
+        headers={"Authorization": f"Bearer {pds_server.access_jwt}"},
+        json={
+            "repo": pds_server.did,
+            "collection": "pub.layers.corpus.corpus",
+            "record": {
+                "$type": "pub.layers.corpus.corpus",
+                "name": "cli live corpus",
+                "createdAt": "2026-06-18T00:00:00Z",
+            },
+        },
+        timeout=30.0,
+    ).raise_for_status()
+    code = cli.main(
+        ["toc", pds_server.did, "--endpoint", pds_server.endpoint, "--source", "pds"],
+    )
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "pub.layers.corpus.corpus" in captured.out
 
 
 def _raise_value_error(actor: str, **kwargs: str | None) -> tuple[()]:

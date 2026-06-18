@@ -86,6 +86,7 @@ dev = [
     "ty",
     "pytest",
     "pytest-cov",
+    "pytest-recording",
     "hypothesis",
     # numpy 2.3 is the first release with cp314 wheels; pin the floor so the
     # combined optional set resolves to a wheel instead of a failing source build.

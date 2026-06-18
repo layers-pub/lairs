@@ -320,17 +320,27 @@ def _handler_class(routes: RouteHandler) -> type[BaseHTTPRequestHandler]:
     class _Handler(BaseHTTPRequestHandler):
         """A GET-only handler that serialises route results as JSON."""
 
-        def do_GET(self) -> None:  # the stdlib dispatches GET to this name
-            """Dispatch a GET request and write the JSON response."""
+        def _dispatch(self, extra: dict[str, str]) -> None:
+            """Dispatch the request to ``routes`` and write the JSON response."""
             split = urlsplit(self.path)
             query = {key: values[0] for key, values in parse_qs(split.query).items()}
-            status, body = routes(split.path, query)
+            status, body = routes(split.path, {**query, **extra})
             payload = json.dumps(body).encode()
             self.send_response(status)
             self.send_header("content-type", "application/json")
             self.send_header("content-length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
+
+        def do_GET(self) -> None:  # the stdlib dispatches GET to this name
+            """Dispatch a GET request and write the JSON response."""
+            self._dispatch({})
+
+        def do_POST(self) -> None:  # the stdlib dispatches POST to this name
+            """Dispatch a POST request, exposing the body under ``__body``."""
+            length = int(self.headers.get("content-length", "0"))
+            body = self.rfile.read(length).decode() if length else ""
+            self._dispatch({"__body": body})
 
         def log_message(self, format: str, *args: str) -> None:  # noqa: A002
             """Discard per-request logging to keep test output quiet."""

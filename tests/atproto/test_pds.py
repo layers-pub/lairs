@@ -435,20 +435,6 @@ def test_module_list_records_drains_pages() -> None:
 
 
 @pytest.mark.integration
-def test_get_record_live() -> None:
-    # exercises a real PDS getRecord when opted in; skips otherwise.
-    try:
-        pds.get_record(
-            _ENDPOINT,
-            _REPO,
-            "pub.layers.corpus.corpus",
-            "rkey",
-        )
-    except httpx.HTTPError:
-        pytest.skip("network unavailable for live pds getRecord")
-
-
-@pytest.mark.integration
 def test_pds_round_trip_live(pds_server: PdsServer) -> None:
     """Seed a record on a real PDS and read it back through the client."""
     value = {

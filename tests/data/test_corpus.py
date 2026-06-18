@@ -6,9 +6,10 @@ import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import httpx
 import pytest
 
-from lairs.atproto.pds import RecordEnvelope
+from lairs.atproto.pds import PdsClient, RecordEnvelope
 from lairs.data import corpus
 from lairs.data.corpus import (
     Corpus,
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import didactic.api as dx
+    from conftest import PdsServer
 
 _NOW = datetime(2024, 1, 1, tzinfo=UTC)
 
@@ -271,9 +273,25 @@ def test_load_corpus_without_client_not_implemented() -> None:
 
 
 @pytest.mark.integration
-def test_load_corpus_live() -> None:
-    # exercises a real corpus load when opted in; skips otherwise.
-    try:
-        load_corpus(_C1, source="auto")
-    except NotImplementedError:
-        pytest.skip("live corpus loading needs a real pds endpoint")
+def test_load_corpus_from_pds_live(pds_server: PdsServer) -> None:
+    # load a corpus end-to-end from the dockerized PDS through the real client.
+    httpx.post(
+        f"{pds_server.endpoint}/xrpc/com.atproto.repo.createRecord",
+        headers={"Authorization": f"Bearer {pds_server.access_jwt}"},
+        json={
+            "repo": pds_server.did,
+            "collection": "pub.layers.corpus.corpus",
+            "record": {
+                "$type": "pub.layers.corpus.corpus",
+                "name": "live corpus",
+                "createdAt": "2026-06-18T00:00:00Z",
+                "domain": "biomedical",
+            },
+        },
+        timeout=30.0,
+    ).raise_for_status()
+    uri = f"at://{pds_server.did}/pub.layers.corpus.corpus/c1"
+    loaded = load_corpus(uri, source="pds", pds_client=PdsClient(pds_server.endpoint))
+    assert isinstance(loaded, Corpus)
+    # only a corpus record was seeded, so the joined graph has no expressions.
+    assert len(loaded.expressions) == 0

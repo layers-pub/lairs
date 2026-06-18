@@ -17,6 +17,7 @@ from lairs.integrations.ports import KnowledgeBase
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
     from lairs.integrations.kb.glazing import XrefLinks
 
@@ -205,7 +206,21 @@ def test_confidence_for_reads_nested_score() -> None:
     assert _confidence_for(links, "verbnet_classes", "x") == 0.5
 
 
-@pytest.mark.integration
-def test_resolve_live() -> None:
-    pytest.importorskip("glazing")
-    pytest.skip("requires glazing data downloaded via `glazing init`")
+def test_search_with_real_glazing_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # build a minimal real-format propbank dataset from glazing's own models, so
+    # the real UnifiedSearch and the GlazingKB mapping run offline without the
+    # one-time `glazing init` download (glazing reads GLAZING_DATA_DIR/converted).
+    models = pytest.importorskip("glazing.propbank.models")
+    converted = tmp_path / "converted"
+    converted.mkdir()
+    frameset = models.Frameset(
+        predicate_lemma="give",
+        rolesets=[models.Roleset(id="give.01", name="give", roles=[])],
+    )
+    (converted / "propbank.jsonl").write_text(frameset.model_dump_json() + "\n")
+    monkeypatch.setenv("GLAZING_DATA_DIR", str(tmp_path))
+    candidates = GlazingKB().search("give")
+    assert candidates == [Candidate(ref="propbank:give", label="give", score=1.0)]
