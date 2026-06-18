@@ -107,9 +107,12 @@ convention = "numpy"
 
 [tool.ruff.lint.per-file-ignores]
 # tests may assert, use magic numbers, carry fewer docstrings, live without an
-# __init__.py, and reach into private members. ANN401 stays on everywhere.
+# __init__.py, reach into private members, and use throwaway fake passwords.
+# ANN401 stays on everywhere.
 "tests/**" = [
     "S101",
+    "S105",
+    "S106",
     "PLR2004",
     "D100",
     "D101",

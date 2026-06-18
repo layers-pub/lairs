@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from lairs.atproto.auth import Session, authed_client, login
 from lairs.data import Corpus, load_corpus
 from lairs.discovery import (
     DatasetFilter,
@@ -35,13 +36,16 @@ __all__ = [
     "DatasetFilter",
     "DatasetSummary",
     "RepoTableOfContents",
+    "Session",
     "__version__",
+    "authed_client",
     "codec",
     "discover_datasets",
     "exporter",
     "knowledge_base",
     "list_datasets",
     "load_corpus",
+    "login",
     "table_of_contents",
 ]
 

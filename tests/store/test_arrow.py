@@ -70,7 +70,7 @@ def test_flatten_span_anchor() -> None:
 def test_flatten_token_ref_anchor() -> None:
     columns = arrow.flatten_anchor({"tokenizationId": "tok", "tokenIndex": 4})
     assert columns["anchor_kind"] == "tokenRef"
-    assert columns["token_id"] == "tok"  # noqa: S105
+    assert columns["token_id"] == "tok"
     assert columns["token_index"] == 4
 
 

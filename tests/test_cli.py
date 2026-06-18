@@ -12,6 +12,9 @@ import pytest
 
 from lairs import cli, discovery
 from lairs._codegen.manifest import load_manifest
+from lairs.atproto import auth
+from lairs.atproto.auth import Session
+from lairs.author.publish import PublishPlan
 from lairs.data.corpus import Corpus
 from lairs.discovery import CardDiff, CrawlReport
 from lairs.discovery.models import (
@@ -63,6 +66,9 @@ def test_help_lists_every_subcommand(capsys: pytest.CaptureFixture[str]) -> None
         "toc",
         "search",
         "index",
+        "login",
+        "logout",
+        "whoami",
     ):
         assert command in out
 
@@ -571,3 +577,185 @@ def test_index_build_and_search_live(
     out = capsys.readouterr().out
     assert search_code == 0
     assert "cli indexed corpus" in out
+
+
+# login / logout / whoami ----------------------------------------------------
+
+_FAKE_SESSION = Session(
+    did="did:plc:me",
+    pds_endpoint="https://pds.example",
+    access_jwt="access",
+    refresh_jwt="refresh",
+    handle="me.test",
+    password="app-pw",
+)
+
+
+def _fake_login(identifier: str, password: str, *, pds: str | None = None) -> Session:
+    _ = (identifier, password, pds)
+    return _FAKE_SESSION
+
+
+def test_login_saves_session(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(auth, "login", _fake_login)
+    code = cli.main(["login", "me.test", "--app-password", "app-pw"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "logged in as me.test (did:plc:me)" in out
+    assert auth.SessionStore().load() == _FAKE_SESSION
+
+
+def test_login_reads_env_password(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("LAIRS_APP_PASSWORD", "app-pw")
+    monkeypatch.setattr(auth, "login", _fake_login)
+    code = cli.main(["login", "me.test"])
+    assert code == 0
+    assert "logged in" in capsys.readouterr().out
+
+
+def test_login_requires_password(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.delenv("LAIRS_APP_PASSWORD", raising=False)
+    code = cli.main(["login", "me.test"])
+    assert code == 1
+    assert "LAIRS_APP_PASSWORD" in capsys.readouterr().err
+
+
+def test_whoami_not_logged_in(capsys: pytest.CaptureFixture[str]) -> None:
+    code = cli.main(["whoami"])
+    assert code == 1
+    assert "not logged in" in capsys.readouterr().out
+
+
+def test_whoami_after_login(capsys: pytest.CaptureFixture[str]) -> None:
+    auth.SessionStore().save(_FAKE_SESSION)
+    code = cli.main(["whoami"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "me.test" in out
+    assert "did:plc:me" in out
+
+
+def test_logout_deletes_session(capsys: pytest.CaptureFixture[str]) -> None:
+    auth.SessionStore().save(_FAKE_SESSION)
+    code = cli.main(["logout"])
+    assert code == 0
+    assert "logged out" in capsys.readouterr().out
+    assert auth.SessionStore().load() is None
+
+
+def test_logout_when_not_logged_in(capsys: pytest.CaptureFixture[str]) -> None:
+    code = cli.main(["logout"])
+    assert code == 0
+    assert "not logged in" in capsys.readouterr().out
+
+
+def _fake_publish(  # noqa: PLR0913  (mirrors the publish() signature)
+    repo: Repository,
+    revision: str,
+    *,
+    to: str,
+    endpoint: str | None = None,
+    client: httpx.Client | None = None,
+    dry_run: bool = False,
+) -> PublishPlan:
+    _ = repo
+    _PUBLISH_CALLS.append((to, endpoint, dry_run, client is None))
+    return PublishPlan(repo=to, revision=revision, creates=(), updates=(), deletes=())
+
+
+_PUBLISH_CALLS: list[tuple[str, str | None, bool, bool]] = []
+
+
+def test_publish_uses_session_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _PUBLISH_CALLS.clear()
+    auth.SessionStore().save(_FAKE_SESSION)
+    monkeypatch.setattr("lairs.author.publish.publish", _fake_publish)
+    repo_dir = tmp_path / "repo"
+    _make_repo(repo_dir)
+    code = cli.main(["publish", "--repo", str(repo_dir)])
+    assert code == 0
+    target, endpoint, dry_run, client_is_none = _PUBLISH_CALLS[0]
+    assert target == "did:plc:me"
+    assert endpoint == "https://pds.example"
+    assert dry_run is True
+    assert client_is_none is True
+
+
+def test_publish_yes_injects_authed_client(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _PUBLISH_CALLS.clear()
+    auth.SessionStore().save(_FAKE_SESSION)
+    monkeypatch.setattr("lairs.author.publish.publish", _fake_publish)
+    repo_dir = tmp_path / "repo"
+    _make_repo(repo_dir)
+    code = cli.main(["publish", "--repo", str(repo_dir), "--yes"])
+    assert code == 0
+    assert "applied" in capsys.readouterr().out
+    _target, _endpoint, dry_run, client_is_none = _PUBLISH_CALLS[0]
+    assert dry_run is False
+    assert client_is_none is False  # an authenticated client was injected
+
+
+@pytest.mark.integration
+def test_login_and_publish_live(
+    pds_server: PdsServer,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # mint an app password, log in via the CLI, then apply a real publish and
+    # confirm the record landed on the PDS.
+    minted = httpx.post(
+        f"{pds_server.endpoint}/xrpc/com.atproto.server.createAppPassword",
+        headers={"Authorization": f"Bearer {pds_server.access_jwt}"},
+        json={"name": "cli-publish-test"},
+        timeout=30.0,
+    )
+    minted.raise_for_status()
+    monkeypatch.setenv("LAIRS_APP_PASSWORD", str(minted.json()["password"]))
+    assert cli.main(["login", pds_server.handle, "--pds", pds_server.endpoint]) == 0
+
+    repo_dir = tmp_path / "repo"
+    repo = Repository.init(repo_dir)
+    uri = f"at://{pds_server.did}/pub.layers.expression.expression/cliauth"
+    repo.save(
+        uri,
+        expression_records.Expression(
+            id="00000000-0000-0000-0000-000000000001",
+            text="published via cli",
+            kind="sentence",
+            createdAt=_NOW,
+        ),
+    )
+    repo.commit("seed")
+    code = cli.main(["publish", "--repo", str(repo_dir), "--yes"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "applied" in out
+
+    fetched = httpx.get(
+        f"{pds_server.endpoint}/xrpc/com.atproto.repo.getRecord",
+        params={
+            "repo": pds_server.did,
+            "collection": "pub.layers.expression.expression",
+            "rkey": "cliauth",
+        },
+        timeout=30.0,
+    )
+    assert fetched.status_code == 200
+    assert fetched.json()["value"]["text"] == "published via cli"

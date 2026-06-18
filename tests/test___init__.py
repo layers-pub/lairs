@@ -20,13 +20,16 @@ def test_public_surface() -> None:
         "DatasetFilter",
         "DatasetSummary",
         "RepoTableOfContents",
+        "Session",
         "__version__",
+        "authed_client",
         "codec",
         "discover_datasets",
         "exporter",
         "knowledge_base",
         "list_datasets",
         "load_corpus",
+        "login",
         "table_of_contents",
     }
 

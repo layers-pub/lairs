@@ -11,6 +11,13 @@ injectable session for later auth and writes.
 from __future__ import annotations
 
 from lairs.atproto.appview import AppviewClient
+from lairs.atproto.auth import (
+    Session,
+    SessionAuth,
+    SessionStore,
+    authed_client,
+    login,
+)
 from lairs.atproto.blobs import BlobBytes, BlobClient, get_blob, upload_blob
 from lairs.atproto.firehose import FirehoseEvent, RepoSubscriber, subscribe_repos
 from lairs.atproto.identity import (
@@ -44,12 +51,17 @@ __all__ = [
     "RecordEnvelope",
     "RepoDescription",
     "RepoSubscriber",
+    "Session",
+    "SessionAuth",
+    "SessionStore",
+    "authed_client",
     "decode",
     "decode_all",
     "describe_repo",
     "get_blob",
     "get_record",
     "list_records",
+    "login",
     "resolve_did",
     "resolve_handle",
     "resolve_pds",

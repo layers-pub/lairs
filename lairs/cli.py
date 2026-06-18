@@ -33,6 +33,12 @@ search
     Fan out over a seed of handles or DIDs and list matching datasets.
 index
     Build, refresh, search, and diff a local dataset index.
+login
+    Authenticate to a PDS with an app password and save the session.
+logout
+    Forget the saved session.
+whoami
+    Print the saved session's identity.
 """
 
 # ruff: noqa: T201  (a console entry point's job is to print to stdout)
@@ -42,6 +48,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -53,6 +60,7 @@ from lairs import data, discovery
 from lairs._aturi import nsid_of as _nsid_of
 from lairs._codegen import pipeline
 from lairs._codegen.manifest import Manifest, load_manifest
+from lairs.atproto import auth
 from lairs.atproto.identity import IdentityError
 from lairs.atproto.pds import PdsClient
 from lairs.author import publish as publish_ops
@@ -126,6 +134,9 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_toc(subparsers)
     _add_search(subparsers)
     _add_index(subparsers)
+    _add_login(subparsers)
+    _add_logout(subparsers)
+    _add_whoami(subparsers)
     return parser
 
 
@@ -269,13 +280,13 @@ def _add_publish(subparsers: _Subparsers) -> None:
     )
     sub.add_argument(
         "--to",
-        required=True,
-        help="the target repository DID to publish to",
+        default=None,
+        help="the target repository DID (defaults to the logged-in account)",
     )
     sub.add_argument(
         "--endpoint",
         default=None,
-        help="the base URL of the target PDS (required with --yes)",
+        help="the base URL of the target PDS (defaults to the logged-in PDS)",
     )
     sub.add_argument(
         "--yes",
@@ -596,18 +607,42 @@ def _run_publish(args: argparse.Namespace) -> int:
         ``0`` on success; ``1`` when a live publish is requested without an
         endpoint.
     """
-    if args.yes and args.endpoint is None:
-        print("error: --yes requires --endpoint to write to a PDS", file=sys.stderr)
+    store = auth.SessionStore()
+    session = store.load()
+    target = args.to or (session.did if session is not None else None)
+    endpoint = args.endpoint or (session.pds_endpoint if session is not None else None)
+    if target is None:
+        print("error: --to is required (or run 'lairs login')", file=sys.stderr)
+        return 1
+    if args.yes and endpoint is None:
+        print(
+            "error: --yes requires --endpoint or a logged-in session",
+            file=sys.stderr,
+        )
+        return 1
+    if args.yes and session is None:
+        print(
+            "error: --yes requires a logged-in session (run 'lairs login')",
+            file=sys.stderr,
+        )
         return 1
     repo = Repository.open(args.repo)
     dry_run = not args.yes
-    plan = publish_ops.publish(
-        repo,
-        args.revision,
-        to=args.to,
-        endpoint=args.endpoint,
-        dry_run=dry_run,
-    )
+    client = None
+    if args.yes and session is not None:
+        client = auth.authed_client(session, store=store)
+    try:
+        plan = publish_ops.publish(
+            repo,
+            args.revision,
+            to=target,
+            endpoint=endpoint,
+            client=client,
+            dry_run=dry_run,
+        )
+    finally:
+        if client is not None:
+            client.close()
     _print_plan(plan, dry_run=dry_run)
     return 0
 
@@ -1166,4 +1201,129 @@ def _run_search(args: argparse.Namespace) -> int:
     if args.limit is not None:
         rows = rows[: args.limit]
     _print_datasets(rows, as_json=args.json)
+    return 0
+
+
+def _add_login(subparsers: _Subparsers) -> None:
+    """Register the ``login`` subcommand."""
+    sub = subparsers.add_parser(
+        "login",
+        help="authenticate to a PDS with an app password",
+        description=(
+            "Resolve a handle or DID to its PDS, exchange an app password for a "
+            "session, and save it so later commands authenticate automatically. "
+            "Prefer the LAIRS_APP_PASSWORD environment variable over "
+            "--app-password so the secret does not appear in the process list."
+        ),
+    )
+    sub.add_argument("identifier", help="the account handle or DID")
+    sub.add_argument(
+        "--app-password",
+        default=None,
+        dest="app_password",
+        help="an app password (default: read LAIRS_APP_PASSWORD)",
+    )
+    sub.add_argument(
+        "--pds",
+        default=None,
+        help="the PDS base URL (skips handle resolution)",
+    )
+    sub.set_defaults(handler=_run_login)
+
+
+def _run_login(args: argparse.Namespace) -> int:
+    """Handle ``lairs login``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments.
+
+    Returns
+    -------
+    int
+        ``0`` on success, ``1`` on a missing password or auth failure.
+    """
+    password = args.app_password or os.environ.get("LAIRS_APP_PASSWORD")
+    if not password:
+        print(
+            "error: provide --app-password or set LAIRS_APP_PASSWORD",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        session = auth.login(args.identifier, password, pds=args.pds)
+    except (httpx.HTTPError, IdentityError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    store = auth.SessionStore()
+    store.save(session)
+    print(f"logged in as {session.handle or session.did} ({session.did})")
+    print(f"session saved to {store.path}")
+    return 0
+
+
+def _add_logout(subparsers: _Subparsers) -> None:
+    """Register the ``logout`` subcommand."""
+    sub = subparsers.add_parser(
+        "logout",
+        help="forget the saved session",
+        description="Delete the saved authentication session, if any.",
+    )
+    sub.set_defaults(handler=_run_logout)
+
+
+def _run_logout(args: argparse.Namespace) -> int:
+    """Handle ``lairs logout``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments.
+
+    Returns
+    -------
+    int
+        ``0`` always.
+    """
+    _ = args
+    store = auth.SessionStore()
+    if store.delete():
+        print(f"logged out ({store.path})")
+    else:
+        print("not logged in")
+    return 0
+
+
+def _add_whoami(subparsers: _Subparsers) -> None:
+    """Register the ``whoami`` subcommand."""
+    sub = subparsers.add_parser(
+        "whoami",
+        help="print the saved session's identity",
+        description="Print the identity of the saved authentication session.",
+    )
+    sub.set_defaults(handler=_run_whoami)
+
+
+def _run_whoami(args: argparse.Namespace) -> int:
+    """Handle ``lairs whoami``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments.
+
+    Returns
+    -------
+    int
+        ``0`` when a session is saved, ``1`` when not logged in.
+    """
+    _ = args
+    session = auth.SessionStore().load()
+    if session is None:
+        print("not logged in")
+        return 1
+    print(session.handle or session.did)
+    print(f"  did: {session.did}")
+    print(f"  pds: {session.pds_endpoint}")
     return 0

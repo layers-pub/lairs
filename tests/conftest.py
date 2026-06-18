@@ -31,6 +31,20 @@ if TYPE_CHECKING:
     from lairs._types import JsonValue
 
 
+@pytest.fixture(autouse=True)
+def _isolated_session_store(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """Redirect the auth session store to a throwaway path for every test.
+
+    Keeps tests hermetic and stops them from reading or overwriting the
+    developer's real lairs session file.
+    """
+    session_file = tmp_path_factory.mktemp("auth") / "session.json"
+    monkeypatch.setenv("LAIRS_AUTH_FILE", str(session_file))
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Register the ``--run-integration`` command-line flag."""
     parser.addoption(
