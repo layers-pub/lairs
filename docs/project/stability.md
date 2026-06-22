@@ -15,10 +15,12 @@ lookups.
 
 The `pub.layers.*` models under `lairs.records` are generated from the
 vendored lexicons. Their shape tracks the Layers lexicons; a Layers
-version bump changes them. The generation is reproducible: the vendored
-lexicon tree hash is recorded in `lairs/lexicons/MANIFEST.toml` and
-embedded in each generated module, and `lairs gen --check` fails when
-the committed modules drift from the vendored lexicons.
+version bump changes them. The currently vendored release is Layers
+`0.8.0`, recorded as `layers_version` in `lairs/lexicons/MANIFEST.toml`.
+The generation is reproducible: the vendored lexicon tree hash is
+recorded in the same manifest and embedded in each generated module, and
+`lairs gen --check` fails when the committed modules drift from the
+vendored lexicons.
 
 ## Optional integrations
 

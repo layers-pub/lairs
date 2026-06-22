@@ -64,7 +64,7 @@ nav:
   - Tutorial:
     - tutorial/index.md
     - Reading a corpus: tutorial/01-reading-a-corpus.md
-    - Materialising views: tutorial/02-materialising-views.md
+    - Materializing views: tutorial/02-materializing-views.md
     - Authoring and publishing: tutorial/03-authoring-and-publishing.md
   - Guides:
     - guide/index.md

@@ -32,7 +32,7 @@ returns the tracked artifact identifier as `"<name>:<revision>"`.
 - For **MLflow**, the bundle's fields are logged as run parameters and the
   revision is set as a tag.
 
-An unrecognised backend raises `ValueError`. A backend whose optional dependency
+An unrecognized backend raises `ValueError`. A backend whose optional dependency
 is missing raises `ImportError` directing the caller to install
 `lairs[tracking]`. The probe runs before any logging, so the error is raised only
 when that backend is used.
@@ -56,7 +56,7 @@ against, independent of the caller.
 The revision id is the reproducibility anchor. A tag pins an exact,
 byte-reproducible set of record values in the Repository, so rebuilding the
 dataset behind a run is: open the same Repository, resolve the logged revision,
-and materialise. Pairing the revision with the lexicon manifest hash also pins
+and materialize. Pairing the revision with the lexicon manifest hash also pins
 the schema, so the generated models match the records.
 
 ```python

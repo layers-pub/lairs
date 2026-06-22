@@ -12,7 +12,7 @@ generation](codegen.md).
 
 ## View helpers
 
-Behaviour over the generated models, never replacements for them.
+Behavior over the generated models, never replacements for them.
 
 ::: lairs.records.views.anchor_kind
 
@@ -22,7 +22,18 @@ Behaviour over the generated models, never replacements for them.
 
 One module per `pub.layers.*` namespace. Each class mirrors a lexicon
 record, object, or union definition. Unions render as `dx.TaggedUnion`
-families with their discriminator.
+families with their discriminator. Permission-set (OAuth scope) lexicons
+and method-only namespaces (query, procedure, subscription) contribute no
+record types and emit no module.
+
+The shared provenance models that the produce records embed live in
+`defs`: `Licensing` (an optional SPDX `expression` plus an array of
+`LicenseRef`, covering single, dual, multi, composite, and
+component-scoped licensing) and `ReproducibilityInfo` (code URI, commit,
+command, environment, seed). The bibliographic models live in `eprint`:
+`Citation` (a raw string and/or structured CSL-JSON / DataCite fields),
+`Creator` (CSL name parts plus DataCite `nameType` / `affiliation` and
+ORCID / ROR grounding), and `Date` (structured or free-form, CSL style).
 
 ### alignment
 

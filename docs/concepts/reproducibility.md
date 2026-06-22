@@ -71,9 +71,23 @@ on the PDS and emits only the writes needed to make the PDS match. The
 revision is the unit of publication, so what reaches a PDS is always a
 named, diffable state.
 
+## In-record reproducibility metadata
+
+The store guarantee above is about record *values*: the same revision
+yields the same bytes. A record may also carry reproducibility metadata
+*in its value*, describing how the artifact it represents was produced.
+That metadata is the `ReproducibilityInfo` def (code URI, commit hash,
+command, environment, random seed). It is a shared def, carried by the
+produce records that release a computational artifact (the corpus, the
+annotation layer, the segmentation, the cluster set, the alignment, the
+edge set, the experiment definition) as well as by the eprint data link,
+rather than living only on eprints. The two are complementary: the store
+pins what the records contain, and `ReproducibilityInfo` records how a
+producer would regenerate the artifact those records describe.
+
 ## Arrow views are rebuildable derivations
 
-Fast ML access is served by materialised Arrow and Parquet views: an
+Fast ML access is served by materialized Arrow and Parquet views: an
 expressions table, an exploded annotations table, and per-record-type
 tables, with anchors flattened into typed columns. These are *derived*
 from the Repository and are explicitly never the source of truth.
@@ -95,11 +109,13 @@ experiment-tracking hook logs a Repository *revision* as an artifact, not
 a copy, so a logged run pins exact record content, and a dataset pushed
 to an external hub carries a provenance card naming the corpus AT-URI,
 the Repository revision or tag, the lexicon manifest hash, and the
-license from the corpus record. The external copy is a mirror, and the PDS
+license facet projected from the corpus record's structured `licensing`
+(the SPDX expression, or the first license's SPDX slug). The external
+copy is a mirror, and the PDS
 and the Repository stay canonical. Reproducibility therefore does not
 stop at the store boundary. It travels with the data wherever an
 adapter takes it.
 
-For the operations (committing, tagging, diffing, and materialising)
+For the operations (committing, tagging, diffing, and materializing)
 see the [store guide](../guide/store.md). For how exports bind to the
 revision rather than to a copy, see [integrations](integrations.md).

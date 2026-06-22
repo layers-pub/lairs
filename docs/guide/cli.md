@@ -62,7 +62,7 @@ pulled, no commit is made.
 
 ## `materialize`
 
-Load a corpus from a PDS and write its normalised Arrow/Parquet views.
+Load a corpus from a PDS and write its normalized Arrow/Parquet views.
 
 ```bash
 lairs materialize at://did:plc:author/pub.layers.corpus.corpus/abc \
@@ -110,5 +110,5 @@ total record count and a count per collection NSID.
 ## See also
 
 - [Authoring](authoring.md) for the `pull`/`publish` workflow in Python.
-- [Dataset API](dataset-api.md) for working with a materialised corpus.
-- [Exporters](exporters.md) for turning the materialised views into datasets.
+- [Dataset API](dataset-api.md) for working with a materialized corpus.
+- [Exporters](exporters.md) for turning the materialized views into datasets.

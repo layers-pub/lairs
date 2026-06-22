@@ -33,7 +33,7 @@ print(expressions[0].text)
 The documentation follows the [Diátaxis](https://diataxis.fr/)
 structure:
 
-- The [Tutorial](tutorial/index.md) works through reading, materialising,
+- The [Tutorial](tutorial/index.md) works through reading, materializing,
   and authoring a corpus on a single running example. Read it first if
   you have not used lairs before.
 - The [Guides](guide/index.md) are task-oriented. Each one answers a

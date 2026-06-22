@@ -2,7 +2,7 @@
 
 This guide covers the `KnowledgeBase` port and the three bundled connectors:
 Wikidata, the generic W3C/OpenRefine reconciliation adapter, and the glazing
-lexical-semantic connector. It documents their key, licence, and dependency
+lexical-semantic connector. It documents their key, license, and dependency
 requirements, and the explicit errors raised when one is absent.
 
 A knowledge base resolves, entity-links, reconciles, and enriches Layers records
@@ -27,6 +27,17 @@ GlazingKB = lairs.knowledge_base("glazing")
 ```
 
 An unknown name raises `UnknownAdapterError`, listing the available connectors.
+
+## Bibliographic and identity grounding
+
+Beyond these three connectors, records ground bibliographic and identity
+references through the `knowledgeRef` source vocabulary, which the Layers lexicons
+extend with `orcid`, `ror`, and `openalex` (alongside `crossref`, `dblp`, and
+`semantic-scholar`). An eprint `Citation` and its `Creator` entries use these
+sources directly: a person grounds to ORCID, an organization to ROR, and an author
+or work to an OpenAlex id. These are reference sources carried on the records, not
+live connectors with `resolve`/`search`/`neighbors`; the bundled connectors above
+remain Wikidata, the reconciliation endpoint, and glazing.
 
 ## Wikidata
 
@@ -110,7 +121,7 @@ installing the package.
 | `reconciliation` | none (`httpx`) | endpoint URL required | `ReconciliationError` when a service is unadvertised |
 | `glazing` | `lairs[lexical]` plus `glazing init` data | none | `GlazingNotInstalledError` on first use |
 
-Licence note: the underlying resources carry their own licences (Wikidata under
+License note: the underlying resources carry their own licenses (Wikidata under
 CC0, and FrameNet, PropBank, VerbNet, and WordNet under their respective terms).
 lairs does not relicense them, so consult each source before redistribution.
 

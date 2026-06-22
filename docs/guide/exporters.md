@@ -89,7 +89,11 @@ ds = load_from_hub("org/my-corpus", revision="main")
 
 The `ProvenanceBundle` records the corpus AT-URI, the Repository revision or tag,
 the vendored lexicon manifest hash and Layers version (filled from the manifest
-packaged with lairs), the licence, and the corpus name. `dataset_card(bundle)`
+packaged with lairs), the license, and the corpus name. The `license` field is a
+flat SPDX facet (a slug such as `CC-BY-4.0`, or an expression such as
+`MIT OR Apache-2.0`), the same facet a discovery listing carries, projected from
+the corpus record's structured `licensing` embed rather than copied from a license
+string the record no longer has. `dataset_card(bundle)`
 renders the markdown card, where only set fields appear. `push_to_hub` needs both
 `datasets` and `huggingface_hub` from `lairs[hf]`, and `load_from_hub` needs
 `datasets`. Each raises a clear `ImportError` when absent. Hub authentication is
@@ -115,7 +119,7 @@ loader = DataLoader(result.dataset, batch_size=32, collate_fn=result.collate)
 Numeric and anchor columns become tensors, and the rest pass through as Python
 values. When `tensor_columns` is unset, the numeric columns are inferred from the
 Arrow schema. The flat view carries no blob payloads, so media bytes are not
-materialised here. `spec.resolve_media` is recorded on the result for a
+materialized here. `spec.resolve_media` is recorded on the result for a
 downstream loader transform (which owns the media resolver) to act on. The
 column-selection and batching logic is pure Python, and only stacking a tensor
 column imports `torch`. `torch` comes from the `lairs[torch]` extra, and a missing

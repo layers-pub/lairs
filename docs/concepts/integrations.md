@@ -28,7 +28,7 @@ stable:
    [reproducibility](reproducibility.md)).
 
 Binding only to these four is the abstraction that keeps per-integration
-code thin. Layers already normalises everything to (expression text or
+code thin. Layers already normalizes everything to (expression text or
 media) plus (anchor) plus (annotation kind), so an adapter rarely needs
 schema logic of its own. A HuggingFace exporter, for instance, has almost
 no schema code because the Arrow flattening has already resolved the
@@ -103,7 +103,7 @@ because it never touched them. The ports are the contract, and everything
 behind them is free to change. This is the same ports-and-adapters
 discipline used elsewhere in the stack for emitter and lens frameworks,
 applied here to integrations, and it is what allows the integration
-catalogue to be broad without making the core large or fragile.
+catalog to be broad without making the core large or fragile.
 
 Because codecs and exporters are uniform, registered, and bound only to
 the four surfaces, pipelines compose: decode an external corpus with a

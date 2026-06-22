@@ -35,7 +35,7 @@ the start, raises `BuildError`. The other builders follow the same pattern:
 
 `LayerBuilder` assembles an annotation layer over one expression. It takes the
 expression's AT-URI, the layer `kind`, and a creation timestamp. `add` appends
-an annotation, minting a UUID for each one that lacks it, and `build` finalises
+an annotation, minting a UUID for each one that lacks it, and `build` finalizes
 the layer:
 
 ```python
@@ -68,7 +68,7 @@ annotation, so calling `build` with none raises `BuildError`.
 ## Staging into a store
 
 The store is a [`Repository`](../guide/store.md): a content-addressed,
-git-like store where a corpus snapshot is a commit. Initialise one on disk, stage
+git-like store where a corpus snapshot is a commit. Initialize one on disk, stage
 each record under its AT-URI with `save`, and commit:
 
 ```python
@@ -169,7 +169,7 @@ dry run is the safe stopping point.
 You built anchors and an annotation layer with the authoring builders, staged the
 records into a committed store snapshot, and computed a dependency-ordered
 publish plan with a dry run that sent nothing. That closes the loop: read a
-corpus, materialise its views, author new records, and plan their publication.
+corpus, materialize its views, author new records, and plan their publication.
 
 From here, the [Guides](../guide/index.md) cover each subsystem in depth, and the
 [API reference](../reference/index.md) gives the per-symbol detail.

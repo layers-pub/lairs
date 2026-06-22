@@ -1,8 +1,8 @@
-# Materialising views
+# Materializing views
 
 The records you read in the last chapter are the source of truth. For
 ML-speed scanning and filtering you want them flattened into columns. lairs
-materialises the record graph into Arrow tables and Parquet files: an
+materializes the record graph into Arrow tables and Parquet files: an
 `expressions` view with one row per expression, and an `annotations` view with
 one row per annotation. These views are derived and rebuildable. They are never
 authoritative, and you can always regenerate them from the records.
@@ -10,9 +10,9 @@ authoritative, and you can always regenerate them from the records.
 This chapter starts from the `corpus` built in the
 [previous chapter](01-reading-a-corpus.md).
 
-## Materialising to Parquet
+## Materializing to Parquet
 
-`Corpus.materialize` builds the normalised views from the graph and writes one
+`Corpus.materialize` builds the normalized views from the graph and writes one
 Parquet file per view into a directory, returning the written paths in name
 order:
 
@@ -52,7 +52,7 @@ annotations.column("tokenIndex").to_pylist()         # [0, 1]
 ## The dataset to an Arrow table
 
 You do not have to go through Parquet. Any [`Dataset`](../guide/dataset-api.md)
-materialises straight to an in-memory Arrow table with `to_arrow()`:
+materializes straight to an in-memory Arrow table with `to_arrow()`:
 
 ```python
 table = corpus.expressions.to_arrow()
@@ -94,7 +94,7 @@ directly from the annotation's scalar field.
 
 ## What you have
 
-You materialised a corpus to Parquet, read a view back with pyarrow, turned a
+You materialized a corpus to Parquet, read a view back with pyarrow, turned a
 dataset directly into an Arrow table, and saw the fixed anchor columns every
 flattened view carries. The next chapter goes the other direction: building
 records and computing a plan to publish them.

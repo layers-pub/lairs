@@ -30,7 +30,7 @@ with PdsClient("https://pds.example") as client:
 directly from a PDS. The `appview` and `auto` sources are not yet implemented
 without an appview client and raise `NotImplementedError`. Until endpoint
 discovery lands, supply an injected `pds_client`. The `cache_dir` and `revision`
-parameters are reserved and not yet used. An unrecognised `source` raises
+parameters are reserved and not yet used. An unrecognized `source` raises
 `ValueError`.
 
 ## Corpus views
@@ -91,7 +91,7 @@ for batch in ds.iter(batch_size=32):     # tuples of records; last may be shorte
 ```
 
 `map` and `filter` are lazy: they compose onto the source and run as records flow
-through a later iteration or materialisation, preserving streaming behaviour.
+through a later iteration or materialization, preserving streaming behavior.
 `take(n)` and `materialize()` drain into a new in-memory dataset with random
 access.
 
@@ -100,7 +100,7 @@ tagged = ds.map(lambda e: e.with_(kind="sentence"))   # lazy, returns a Dataset
 some = ds.filter(lambda e: e.text != "").take(100)     # in-memory, at most 100
 ```
 
-Materialise to columnar form with `to_arrow` (the flattened view, with any
+Materialize to columnar form with `to_arrow` (the flattened view, with any
 `anchor` field expanded into typed anchor columns) or `to_pandas`. pandas is an
 optional dependency, and `to_pandas` raises a clear `ImportError` when it is absent.
 
@@ -118,7 +118,7 @@ from lairs.records._generated.expression import Expression
 
 stream = Dataset.streaming(lambda: iter(fetch_expressions()), model=Expression)
 stream.is_streaming                      # True
-sample = stream.take(64)                 # materialises the first 64
+sample = stream.take(64)                 # materializes the first 64
 ```
 
 ## Features

@@ -26,7 +26,7 @@ from lairs.author import span, token_ref, temporal, bbox, keyframe, spatio_tempo
 from lairs.records._generated.defs import TemporalSpan
 
 text = span(0, 11)                       # byte offsets, byte_end >= byte_start
-tok = token_ref("tokenization-0", 3)     # tokenisation UUID, 0-based index
+tok = token_ref("tokenization-0", 3)     # tokenization UUID, 0-based index
 clip = temporal(1000, 4000)              # milliseconds, end_ms >= start_ms
 
 box = bbox(x=10, y=20, width=64, height=48)   # width/height at least one pixel
@@ -47,7 +47,7 @@ height falls below the lexicon minimum.
 ## Building an annotation layer
 
 `LayerBuilder` collects annotations, minting a UUID for any that lack one, and
-finalises them into a single `AnnotationLayer`. The layer `kind`, `subkind`, and
+finalizes them into a single `AnnotationLayer`. The layer `kind`, `subkind`, and
 `formalism` are validated against the model's open vocabulary: an unknown but
 non-empty community value is accepted, an empty string is rejected.
 
@@ -101,7 +101,7 @@ owning DID, so the safety scope is explicit at the call site.
 from lairs.author import WriteClient
 
 with WriteClient("https://pds.example", "did:plc:author", client=session) as wc:
-    blob = wc.upload_blob(audio_bytes, "audio/wav")     # honours the 100MB cap
+    blob = wc.upload_blob(audio_bytes, "audio/wav")     # honors the 100MB cap
     result = wc.create_record(
         "pub.layers.expression.expression",
         value=expression.model_dump(),

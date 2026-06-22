@@ -102,7 +102,7 @@ Because brat is plain text, the whole codec works without any extra installed.
 
 Each codec ships an `Iso` whose round-trip law fixtures verify
 `backward(forward(x)) == x` on the supported subset. The CoNLL-U subset is one
-tokenisation with `UPOS`/`XPOS`/lemma tags, morphological features, and a
+tokenization with `UPOS`/`XPOS`/lemma tags, morphological features, and a
 projective dependency tree. The brat subset is text-bound entities, binary
 relations, and attributes. `canonical_standoff` returns the canonical,
 round-trippable form (entity tags `T1..Tn`, relation tags `R1..Rn`, attribute

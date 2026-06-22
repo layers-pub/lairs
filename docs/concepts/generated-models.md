@@ -18,12 +18,12 @@ function of the vendored lexicons, and updating to a new Layers version
 is a mechanical sequence rather than a model-by-model edit. Re-vendor the
 lexicons, regenerate, run the drift check.
 
-This is a hard rule, not a preference. Behaviour over the generated
+This is a hard rule, not a preference. Behavior over the generated
 models (builders, view helpers, anchor dispatch) is ordinary code and
 lives outside the generated tree. Anything that mirrors the schema is
-generated. Anything that is behaviour over the schema is not. The
+generated. Anything that is behavior over the schema is not. The
 `anchor_kind` helper and the `explode_layer` helper in `lairs.records`
-are behaviour. The `Anchor` and `AnnotationLayer` classes are generated.
+are behavior. The `Anchor` and `AnnotationLayer` classes are generated.
 
 ## The path from lexicon to model
 
@@ -34,7 +34,7 @@ lexicon JSON
   -> panproto.parse_atproto_lexicon(doc)   parse to a Schema
   -> Schema + document  ->  spec models     lairs._codegen.schema_to_spec
   -> emitted module text                    lairs._codegen.emit
-  -> lairs/records/_generated/<ns>.py       committed, ruff-canonicalised
+  -> lairs/records/_generated/<ns>.py       committed, ruff-canonicalized
 ```
 
 panproto parses each lexicon into a `Schema` under its built-in
@@ -70,12 +70,12 @@ byte-for-byte against the committed modules.
 ## Why not the lossy theory path
 
 panproto can also induce a categorical *theory* from a Schema, and
-didactic can synthesise models from a theory. That route is shorter, and
+didactic can synthesize models from a theory. That route is shorter, and
 it is not used. The induced theory is lossy by design: it cannot express
 refined value types, per-field defaults and descriptions, or the
 reference-versus-containment distinction, and it drops union
 discriminators, so a model rebuilt from a theory cannot reconstruct a
-tagged union. didactic's own spec-dict synthesiser is closer but still
+tagged union. didactic's own spec-dict synthesizer is closer but still
 discards descriptions, defaults, optionality, refined types, and the
 embed-versus-ref distinction.
 
@@ -114,7 +114,7 @@ into a temporary directory off the vendored lexicons and compares them
 byte-for-byte against the committed ones. Any difference fails. Each
 generated module carries a header recording the lexicon-tree hash it was
 produced from, and the same hash lives in the manifest, so a stale
-generation is visible at a glance and caught in CI. The canonicalisation
+generation is visible at a glance and caught in CI. The canonicalization
 pass exists precisely so this comparison is byte-exact rather than
 merely semantically equivalent.
 

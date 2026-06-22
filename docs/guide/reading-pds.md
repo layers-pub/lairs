@@ -91,7 +91,7 @@ block decoding is out of scope for the read milestone.
 
 ## Decode envelopes into models
 
-Each response is the standard ATProto record envelope, modelled as
+Each response is the standard ATProto record envelope, modeled as
 `RecordEnvelope` with `uri`, `cid`, and a `value` that holds the record's
 JSON. `decode` validates one envelope's value against any `dx.Model`
 target and returns the typed instance:

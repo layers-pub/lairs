@@ -58,7 +58,7 @@ records = {
                 "id": "doc-0001",
                 "kind": "sentence",
                 "createdAt": "2026-01-01T00:00:00Z",
-                "language": "en",
+                "languages": ["en"],
                 "text": "The cat sat on the mat.",
                 "anchor": {"textSpan": {"byteStart": 0, "byteEnd": 23}},
             },
@@ -134,7 +134,7 @@ The dataset also reports the schema it derives from the model:
 
 ```python
 expressions.features.names()
-# ('anchor', 'createdAt', 'eprintRef', 'features', 'id', 'kind', ...)
+# ('anchor', 'createdAt', 'eprintRefs', 'features', 'id', 'kind', ...)
 ```
 
 ## Reading a generated Expression
@@ -158,15 +158,15 @@ Their fields are read by attribute access:
 first = expressions[0]
 first.id            # 'doc-0001'
 first.kind          # 'sentence'
-first.language      # 'en'
+first.languages     # ('en',)
 first.text          # 'The cat sat on the mat.'
 ```
 
 `Expression` carries an optional `anchor` describing how the expression attaches
 to its parent, plus reference fields that point at other records by AT-URI
-(`mediaRef`, `parentRef`, `eprintRef`, `sourceRef`). Fields that were absent in
-the record value take their declared default, and optional fields default to
-`None`:
+(`mediaRef`, `parentRef`, `sourceRef`, and the `eprintRefs` array). Fields that
+were absent in the record value take their declared default: an array field
+defaults to the empty tuple and an optional scalar defaults to `None`:
 
 ```python
 first.mediaRef      # None
@@ -209,4 +209,4 @@ dataset, read the fields off a generated `Expression` model and its `anchor`, an
 joined expressions to their annotation layers. The next chapter turns these
 records into columnar Arrow and Parquet views.
 
-[Next: materialising views](02-materialising-views.md).
+[Next: materializing views](02-materializing-views.md).

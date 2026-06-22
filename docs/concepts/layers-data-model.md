@@ -7,7 +7,7 @@ that graph-and-anchor structure rather than a flat row shape. This page
 describes the shape the generated models represent, faithful to the
 lexicons they are generated from.
 
-The model descriptions here summarise the lexicons. The authoritative
+The model descriptions here summarize the lexicons. The authoritative
 form is the generated code under `lairs.records`, and the lexicons it is
 generated from under `lairs/lexicons/pub/layers/`.
 
@@ -22,12 +22,13 @@ A top-level expression (a document, a recording) has no `parentRef`.
 
 An expression carries several things. It holds its raw `text`, against
 which every byte-offset span is measured, an open `kind` slug
-(`document`, `sentence`, `word`, and so on), a primary `language`, and an
-optional list of additional `languages` for code-switching. It also holds
-references outward to media (`mediaRef`), to a parent (`parentRef`), and
-to external resources (`sourceUrl`, `sourceRef`). It may carry an inline
-`mediaBlob`, which lairs represents as a `BlobRef` rather than inlining
-the bytes.
+(`document`, `sentence`, `word`, and so on), and its `languages`, a list
+of BCP-47 tags that is empty when language is unspecified and holds more
+than one tag under code-switching. It also holds references outward to
+media (`mediaRef`), to a parent (`parentRef`), to eprints (`eprintRefs`,
+an array), and to external resources (`sourceUrl`, `sourceRef`). It may
+carry an inline `mediaBlob`, which lairs represents as a `BlobRef` rather
+than inlining the bytes.
 
 ## Segmentations: token-level decomposition
 
@@ -48,7 +49,7 @@ slugs that tell a consumer how to interpret them:
 
 - `kind`: the structural interpretation, one of `token-tag`, `span`,
   `relation`, `tree`, `graph`, `tier`, or `document-tag`.
-- `subkind`: the specialisation (`pos`, `ner`, `lemma`, `dependency`,
+- `subkind`: the specialization (`pos`, `ner`, `lemma`, `dependency`,
   `coreference`, `frame`, and many more).
 - `formalism`: the standard or theory used (`universal-dependencies`,
   `propbank`, `framenet`, `amr`, `conll-u`, and so on).
@@ -96,6 +97,55 @@ typed, directed edges whose endpoints are `objectRef`s. Grounding to
 external knowledge bases hangs off the graph and off individual records
 through `knowledgeRef`, which names a source (Wikidata, WordNet,
 FrameNet, and others) and an identifier within it.
+
+## Produce records: provenance shared across record types
+
+The records that release a curated artifact (the corpus, the annotation
+layer, the segmentation, the cluster set, the alignment, the edge set,
+the ontology, the resource collection, the persona, the experiment
+definition, and the media record) share a common provenance vocabulary
+rather than each spelling it out differently.
+
+- `licensing` is a structured `Licensing` embed, not a license string. It
+  carries an optional SPDX `expression` and an array of `licenses`, where
+  each `LicenseRef` names an `spdx` slug (with `spdxUri`, `name`, `url`,
+  `attribution`, `notes`) and an optional `appliesTo` component. One shape
+  covers single licensing, dual or multi licensing (the `expression`
+  encodes `MIT OR Apache-2.0`), composite terms (`AND`), exceptions
+  (`WITH`), and per-component licensing (annotations under one license,
+  the underlying text under another).
+- `eprintRefs` is an always-present array of eprint AT-URIs (papers or
+  preprints associated with the record), never a single optional
+  reference. An expression carries the same array.
+- `reproducibility` is a `ReproducibilityInfo` embed (code URI, commit
+  hash, command, environment, random seed) recording how a computational
+  artifact was produced. It is shared across the produce records and the
+  eprint data link, not specific to one of them.
+
+The corpus is one such produce. Beyond the provenance fields above it
+carries a `name`, a `description`, a `domain` slug, an `expressionCount`,
+an `annotationDesign` (annotator assignment, adjudication, quality
+criteria), and the languages it covers as `languages` (a list of BCP-47
+tags). There is no singular corpus language field; the language facet is
+always the list.
+
+## Eprints and citations
+
+An `eprint.eprint` record links a Layers record to a paper or preprint.
+Its bibliographic metadata is a structured `Citation` embed rather than a
+single citation string. A `Citation` may carry a `raw` formatted string,
+structured CSL-JSON and DataCite fields (`type`, `title`, `creators`,
+`containerTitle`, `publisher`, `issued`, `accessed`, `doi`, `url`,
+`isbn`, `issn`, `pmid`, `abstract`, `language`), or both; consumers
+prefer the structured fields and fall back to `raw`. Each `Creator`
+follows CSL-JSON name parts (`given`, `family`, `literal`, particles,
+`suffix`) plus DataCite `nameType` and `affiliation`, and grounds
+identity through an `agent` (DID) or a `knowledgeRef` (ORCID for a
+person, ROR for an organization, OpenAlex author id). Dates are `Date`
+embeds in CSL style, either structured `year`/`month`/`day` or a
+free-form `literal`. An eprint records the platforms it is mirrored on
+through `platformEprintRefs`, an array (an eprint may live on several
+publication platforms at once).
 
 ## Joined by AT-URI
 

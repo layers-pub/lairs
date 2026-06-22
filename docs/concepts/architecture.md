@@ -28,7 +28,7 @@ generated dx.Model modules                lairs.records._generated
         v
 in-memory pool + Repository (schematic VCS)        lairs.store
         |
-materialised Arrow / Parquet views
+materialized Arrow / Parquet views
         |
    Dataset API          modality tooling (audio / video / signal)
    lairs.data           lairs.media
@@ -45,15 +45,15 @@ Each layer is a package with a narrow responsibility:
   emits one module per namespace. This is the load-bearing subsystem.
   The [generated-models](generated-models.md) page covers it in detail.
 - `lairs.records` re-exports the generated models, namespace by
-  namespace, alongside hand-written behaviour over them: `BlobRef`, and
+  namespace, alongside hand-written behavior over them: `BlobRef`, and
   view helpers such as `anchor_kind` and `explode_layer`. The rule is
   strict. Anything that mirrors the schema is generated. Anything that
-  is behaviour over the schema is ordinary code.
+  is behavior over the schema is ordinary code.
 - `lairs.atproto` resolves identity, fetches records and blobs, and (for
   authoring) writes to a PDS.
 - `lairs.store` is the on-disk and in-memory home for records: an
   AT-URI-keyed `ModelPool`, a didactic `Repository` wrapper, the Arrow
-  and Parquet materialisation, and a blob cache.
+  and Parquet materialization, and a blob cache.
 - `lairs.data` and `lairs.media` are the consumer-facing surfaces: the
   dataset API and the anchor resolver.
 - `lairs.integrations` is the optional adapter framework, kept out of
@@ -87,12 +87,12 @@ named, diffable revision rather than an untracked one-off write.
 ## The store as the hinge
 
 The store is where the two flows meet, and it is deliberately the
-centre of gravity. Reads terminate in the store and writes originate
+center of gravity. Reads terminate in the store and writes originate
 from it. This matters for three reasons.
 
 First, the store decouples access from consumption. The dataset API and
 the media layer read from the store, not from the network. A corpus can
-be loaded once and worked with offline, materialised to columnar views,
+be loaded once and worked with offline, materialized to columnar views,
 sliced by anchor, and exported, all without touching a PDS again.
 
 Second, the store is the reproducibility boundary. The didactic

@@ -55,7 +55,7 @@ referrer_uris = pool.backref_uris(expression_uri)
 ## Commit a snapshot
 
 `Repository` wraps didactic's panproto-backed, content-addressed,
-git-like VCS. Initialise a new repository or open an existing one:
+git-like VCS. Initialize a new repository or open an existing one:
 
 ```python
 from pathlib import Path
@@ -126,7 +126,7 @@ head_index)` when comparing two captured index maps directly.
 *classes* (for example two generated record types across a Layers
 version bump) and wraps `dx.diff`.
 
-## Materialise Arrow views
+## Materialize Arrow views
 
 Arrow/Parquet views are derived, rebuildable outputs, never the source of
 truth: they are computed from the record store and can always be
@@ -152,10 +152,10 @@ unset.
 
 `records_to_table` and `expressions_table` build a table with one row per
 record, anchors flattened. `annotations_table` mirrors the appview's
-normalisation: it explodes each layer's `annotations` array into one row
+normalization: it explodes each layer's `annotations` array into one row
 per `(layer_uri, annotation_index)`, flattening each annotation's anchor.
 Pass any of these as the `views` mapping to `materialize` to write
-pre-built normalised tables instead of the per-NSID default:
+pre-built normalized tables instead of the per-NSID default:
 
 ```python
 from lairs.store.arrow import annotations_table, expressions_table, materialize

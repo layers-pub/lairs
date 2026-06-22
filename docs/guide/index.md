@@ -27,7 +27,7 @@ It works the same ground on a single running example.
 - [Working with the store](store.md): hold records in the in-memory
   `ModelPool` with AT-URI resolution and back-references, persist a
   corpus snapshot as a commit in the `Repository`, tag and diff
-  revisions, materialise Arrow/Parquet views with flattened anchor
+  revisions, materialize Arrow/Parquet views with flattened anchor
   columns, and cache blob bytes by content. Reach for this when a
   loaded corpus needs addressing, reproducibility, or columnar access.
 - [Resolving and slicing media](media.md): resolve a media record to a
