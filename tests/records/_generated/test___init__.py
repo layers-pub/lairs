@@ -126,6 +126,11 @@ def _union_vertices() -> list[tuple[str, str]]:
     pairs: list[tuple[str, str]] = []
     for path in sorted((_LEXICON_ROOT / "pub").rglob("*.json")):
         document = json.loads(path.read_text(encoding="utf-8"))
+        main = document.get("defs", {}).get("main", {})
+        if isinstance(main, dict) and main.get("type") == "permission-set":
+            # Permission-set lexicons are OAuth scope definitions the ATProto
+            # parser does not model; the codegen skips them too.
+            continue
         schema = pp.parse_atproto_lexicon(document)
         pairs.extend(
             (vertex.id, document["id"])

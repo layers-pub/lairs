@@ -112,7 +112,10 @@ def namespace_specs(lexicon_root: Path) -> dict[str, list[ModelSpec]]:
         schema = pp.parse_atproto_lexicon(document)
         namespace = _namespace_of(_document_id(document))
         grouped[namespace].extend(schema_to_specs(schema, document))
-    return dict(grouped)
+    # Drop namespaces that contribute no models (e.g. method-only namespaces
+    # such as `integration`, whose lexicons are all queries) so the generated
+    # tree carries no empty modules.
+    return {namespace: specs for namespace, specs in grouped.items() if specs}
 
 
 def _canonicalise(out_root: Path) -> None:
@@ -290,15 +293,36 @@ def _generated_init_text(namespaces: Sequence[str]) -> str:
 
 
 def _load_documents(lexicon_root: Path) -> list[dict[str, JsonValue]]:
-    """Load every lexicon JSON document under the tree, in stable order."""
+    """Load every generatable lexicon JSON document under the tree, in stable order.
+
+    Permission-set lexicons (OAuth scope definitions) are skipped: they are not
+    record, query, or object schemas, and the ATProto lexicon parser does not
+    model them. This mirrors the Rust codegen, which skips unsupported def kinds
+    rather than failing on them.
+    """
     pub = lexicon_root / "pub"
     documents: list[dict[str, JsonValue]] = []
     for path in sorted(pub.rglob("*.json")):
         with path.open(encoding="utf-8") as handle:
             loaded = json.load(handle)
-        if isinstance(loaded, dict):
+        if isinstance(loaded, dict) and not _is_unsupported_lexicon(loaded):
             documents.append(loaded)
     return documents
+
+
+# Main-definition kinds the codegen does not model; their lexicons are skipped.
+_UNSUPPORTED_MAIN_TYPES = frozenset({"permission-set"})
+
+
+def _is_unsupported_lexicon(document: Mapping[str, JsonValue]) -> bool:
+    """Return whether the codegen skips this lexicon (e.g. a permission set)."""
+    defs = document.get("defs")
+    if not isinstance(defs, dict):
+        return False
+    main = defs.get("main")
+    if not isinstance(main, dict):
+        return False
+    return main.get("type") in _UNSUPPORTED_MAIN_TYPES
 
 
 def _document_id(document: Mapping[str, JsonValue]) -> str:
