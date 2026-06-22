@@ -2,17 +2,17 @@
 #
 # This file records the provenance of the vendored `pub/layers/**` lexicon JSON
 # so a regeneration is reproducible and auditable. It is rewritten by
-# `lairs vendor --layers-ref <git-sha|tag>`.
+# `lairs vendor --from <path>`.
 #
 # The runtime representation of this manifest is a didactic model; this TOML
 # file is its serialised, reviewable form.
 
 [provenance]
-layers_git_sha = ""
-layers_version = "0.7.0"
-vendored_at = "2026-06-16"
-lexicon_tree_hash = "c579e63d3ffd0d55171eeeef7fbee9254e184419ebdfbb1bddc4807310069330"
+layers_git_sha = "f4b97064bbbbe03d1f90cceec6ae17c155ce6e15"
+layers_version = "0.8.0"
+vendored_at = "2026-06-22"
+lexicon_tree_hash = "cedfb9f34cc55fb5be1abb81dda63fd6a6671af2efd6a5e5923fca0c77ba0fd1"
 
 [counts]
-lexicon_files = 90
+lexicon_files = 99
 record_types = 26
