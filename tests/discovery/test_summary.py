@@ -18,6 +18,7 @@ from lairs.records._generated.corpus import (
     AnnotationDesign,
     Corpus,
 )
+from lairs.records._generated.defs import LicenseRef, Licensing
 
 if TYPE_CHECKING:
     from lairs._types import JsonValue
@@ -32,9 +33,8 @@ def test_summary_from_corpus_projects_fields() -> None:
         createdAt=_CREATED,
         description="a demo corpus",
         domain="biomedical",
-        language="en",
         languages=("en", "de"),
-        license="CC-BY-4.0",
+        licensing=Licensing(licenses=(LicenseRef(spdx="CC-BY-4.0"),)),
         version="1.0",
         expressionCount=42,
         ontologyRefs=("at://did:plc:o/pub.layers.ontology.ontology/x",),
@@ -57,6 +57,29 @@ def test_summary_from_corpus_projects_fields() -> None:
     assert summary.ontology_refs == ("at://did:plc:o/pub.layers.ontology.ontology/x",)
     assert summary.has_adjudication is False
     assert summary.source_endpoint == "https://pds.example"
+
+
+def test_summary_from_corpus_uses_license_expression_for_dual_licensing() -> None:
+    corpus = Corpus(
+        name="dual",
+        createdAt=_CREATED,
+        licensing=Licensing(
+            expression="MIT OR Apache-2.0",
+            licenses=(LicenseRef(spdx="MIT"), LicenseRef(spdx="Apache-2.0")),
+        ),
+    )
+    summary = summary_from_corpus(corpus, uri=_URI, did="did:plc:x")
+    assert summary.license == "MIT OR Apache-2.0"
+
+
+def test_summary_from_corpus_falls_back_to_first_license_spdx() -> None:
+    corpus = Corpus(
+        name="single",
+        createdAt=_CREATED,
+        licensing=Licensing(licenses=(LicenseRef(spdx="CC-BY-4.0"),)),
+    )
+    summary = summary_from_corpus(corpus, uri=_URI, did="did:plc:x")
+    assert summary.license == "CC-BY-4.0"
 
 
 def test_summary_from_corpus_detects_adjudication() -> None:
@@ -82,7 +105,7 @@ def test_summary_from_envelope_decodes_corpus() -> None:
                 "$type": "pub.layers.corpus.corpus",
                 "name": "demo",
                 "createdAt": "2026-06-18T00:00:00Z",
-                "language": "en",
+                "languages": ["en"],
             },
         ),
         source_endpoint="https://pds.example",

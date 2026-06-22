@@ -699,7 +699,11 @@ def _add_filter_args(sub: argparse.ArgumentParser) -> None:
     """Add the shared dataset facet flags to a subparser."""
     sub.add_argument("--language", default=None, help="filter by language tag")
     sub.add_argument("--domain", default=None, help="filter by domain slug")
-    sub.add_argument("--license", default=None, help="filter by license identifier")
+    sub.add_argument(
+        "--license",
+        default=None,
+        help="filter by license facet (SPDX slug or expression)",
+    )
     sub.add_argument(
         "--min-expressions",
         type=int,
@@ -935,7 +939,11 @@ def _add_index(subparsers: _Subparsers) -> None:
     search.add_argument("query", nargs="?", default=None, help="free-text query")
     search.add_argument("--domain", default=None, help="filter by domain slug")
     search.add_argument("--language", default=None, help="filter by language tag")
-    search.add_argument("--license", default=None, help="filter by license")
+    search.add_argument(
+        "--license",
+        default=None,
+        help="filter by license facet (SPDX slug or expression)",
+    )
     search.add_argument(
         "--min-expressions",
         type=int,

@@ -48,7 +48,7 @@ def test_card_from_corpus_projects_and_flattens() -> None:
         name="demo",
         createdAt=_NOW,
         domain="biomedical",
-        language="en",
+        languages=("en",),
         expressionCount=42,
         annotationDesign=AnnotationDesign(
             adjudication=AdjudicationSpec(method="majority-vote"),

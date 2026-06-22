@@ -15,6 +15,7 @@ import didactic.api as dx
 from lairs._aturi import authority_of, nsid_of
 from lairs.discovery.models import DatasetSummary
 from lairs.records._generated import corpus as corpus_records
+from lairs.records._generated import defs as defs_records
 
 if TYPE_CHECKING:
     from lairs._types import JsonValue
@@ -65,6 +66,32 @@ def _has_adjudication(corpus: corpus_records.Corpus) -> bool:
     return design is not None and design.adjudication is not None
 
 
+def _license_facet(licensing: defs_records.Licensing | None) -> str | None:
+    """Project structured licensing into a flat discovery facet.
+
+    Returns the SPDX expression when set (the canonical representation for
+    dual or multi licensing), otherwise the first license's SPDX slug, or
+    ``None`` when no licensing is recorded.
+
+    Parameters
+    ----------
+    licensing : lairs.records._generated.defs.Licensing or None
+        The corpus's structured licensing terms.
+
+    Returns
+    -------
+    str or None
+        A flat license identifier suitable for faceted discovery.
+    """
+    if licensing is None:
+        return None
+    if licensing.expression:
+        return licensing.expression
+    if licensing.licenses:
+        return licensing.licenses[0].spdx
+    return None
+
+
 def summary_from_corpus(
     corpus: corpus_records.Corpus,
     *,
@@ -101,9 +128,9 @@ def summary_from_corpus(
         description=corpus.description,
         domain=corpus.domain,
         domain_uri=corpus.domainUri,
-        language=corpus.language,
+        language=corpus.languages[0] if corpus.languages else None,
         languages=corpus.languages or (),
-        license=corpus.license,
+        license=_license_facet(corpus.licensing),
         version=corpus.version,
         expression_count=corpus.expressionCount,
         created_at=corpus.createdAt.isoformat(),

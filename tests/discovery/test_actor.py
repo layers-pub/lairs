@@ -27,7 +27,7 @@ _CORPUS_VALUE = {
     "name": "demo corpus",
     "createdAt": "2026-06-18T00:00:00Z",
     "domain": "biomedical",
-    "language": "en",
+    "languages": ["en"],
 }
 _DID_DOC = {
     "id": _DID,
