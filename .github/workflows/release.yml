@@ -48,6 +48,11 @@ jobs:
       - name: Ruff lint
         run: uv run ruff check lairs tests
 
+      - name: Install TensorFlow nightly
+        # no stable cp314 wheel yet; the nightly lets ty resolve tensorflow and
+        # runs the tfdata exporter tests rather than skipping them.
+        run: uv pip install tf-nightly
+
       - name: Type check (ty)
         run: uv run ty check --error-on-warning
 

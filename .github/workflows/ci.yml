@@ -44,6 +44,13 @@ jobs:
       - name: Ruff lint
         run: uv run ruff check lairs tests
 
+      - name: Install TensorFlow nightly
+        # TensorFlow ships no stable cp314 wheel yet (the tf extra markers it out
+        # of the locked env), so the nightly provides one. Installing it lets ty
+        # resolve `import tensorflow` in the tfdata exporter. decord and
+        # label-studio-sdk have no cp314 wheel at all and remain unexercised.
+        run: uv pip install tf-nightly
+
       - name: Type check (ty)
         run: uv run ty check --error-on-warning
 
@@ -81,6 +88,12 @@ jobs:
 
       - name: Sync dependencies (dev group with every installable extra)
         run: uv sync --frozen
+
+      - name: Install TensorFlow nightly
+        # no stable cp314 wheel yet; the nightly runs the tfdata exporter tests
+        # rather than skipping them. decord and label-studio-sdk have no cp314
+        # wheel at all, so a small number of their tests skip cleanly.
+        run: uv pip install tf-nightly
 
       - name: Confirm Docker is available
         run: |
