@@ -299,7 +299,15 @@ def test_push_to_hub_forwards_token_split_and_config(
     assert _FakeHfApi.tokens == ["hf_secret"]
 
 
-@pytest.mark.vcr
+# match without the HTTP method (and allow an interaction to replay more than
+# once). huggingface_hub probes some metadata endpoints with HEAD on one machine
+# and GET on another depending on whether the free-threaded-only hf_xet backend
+# is importable, so matching on method makes the cassette environment-specific.
+# Path and query still pin each request to the right recorded interaction.
+@pytest.mark.vcr(
+    match_on=["scheme", "host", "port", "path", "query"],
+    allow_playback_repeats=True,
+)
 def test_load_from_hub_reads_public_dataset(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
