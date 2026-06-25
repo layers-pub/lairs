@@ -11,13 +11,13 @@ which verifies the build, publishes to PyPI via Trusted Publishing, and cuts the
 GitHub release. The documentation is published
 separately by the
 [docs workflow](https://github.com/layers-pub/lairs/blob/main/.github/workflows/docs.yml)
-on every push to `main`. Your job is to prepare the release commit and push the
-tag.
+on every push to `main`. A maintainer prepares the release commit and pushes the
+tag; the workflows do the rest.
 
 The version is declared once, in `pyproject.toml` (`project.version`). At runtime
 `lairs.__version__` reads it back through `importlib.metadata.version("lairs")`,
 so the installed metadata must match the source. After bumping the version,
-reinstall (`uv sync`) before you build locally.
+reinstall (`uv sync`) before building locally.
 
 ## Prepare the release
 
@@ -81,20 +81,3 @@ uv run --no-project --with "lairs==X.Y.Z" python -c "import lairs; print(lairs._
 
 Then continue normal development against the new `## [Unreleased]` changelog
 section.
-
-## One-time setup
-
-The workflows assume this is configured on the repository and the package
-indexes:
-
-- **PyPI Trusted Publisher.** On PyPI, add a publisher for `layers-pub/lairs`,
-  workflow `release.yml`, environment `pypi`. Before the first release the
-  project does not exist yet, so add it as a *pending* publisher; the first tag
-  push creates the project.
-- **GitHub environments.** Create the `pypi` and `github-pages` environments in
-  the repository settings. Add protection rules (for example a required reviewer
-  on `pypi`) as desired.
-- **GitHub Pages source.** Set Pages to deploy from GitHub Actions. The site is
-  served at <https://layers.pub/lairs/>: the `layers-pub` organization's Pages
-  custom domain (`layers.pub`) serves each project repository at `/<repo>/`, so
-  no per-repo domain or CNAME is needed.
