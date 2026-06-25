@@ -107,5 +107,10 @@ nav:
     - Experiment tracking: reference/tracking.md
     - Explorer TUI: reference/explorer.md
     - CLI: reference/cli.md
+  - Development:
+    - development/index.md
+    - Testing: development/testing.md
+    - Code generation: development/codegen.md
+    - Releasing: development/releasing.md
   - Project:
     - project/stability.md

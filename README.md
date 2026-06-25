@@ -80,6 +80,15 @@ uv run pytest                    # unit tests only
 uv run pytest --run-integration  # include integration tests (docker, network, extras)
 ```
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide and the
+[Development](https://layers-pub.github.io/lairs/development/) section of the
+documentation for testing, code generation, and the release process. All
+participants are expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Changelog
+
+Notable changes are recorded in [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
-MIT
+`lairs` is released under the [MIT License](LICENSE).
