@@ -4,7 +4,7 @@ Thank you for your interest in improving `lairs`. This document explains how to
 set up a development environment, the checks your change must pass, and the
 conventions the codebase follows. The same material, with more depth on the
 internals, lives in the
-[Development section of the documentation](https://layers-pub.github.io/lairs/development/).
+[Development section of the documentation](https://layers.pub/lairs/development/).
 
 By participating you agree to uphold our [Code of Conduct](CODE_OF_CONDUCT.md).
 
@@ -133,7 +133,7 @@ uv run lairs gen --check    # drift gate: fail if generated output is stale
 
 To pull in a new lexicon version, re-vendor with `uv run lairs vendor` (which
 updates `MANIFEST.toml`) and then regenerate. See
-[Vendoring and codegen](https://layers-pub.github.io/lairs/guide/codegen/) for
+[Vendoring and codegen](https://layers.pub/lairs/guide/codegen/) for
 the full workflow.
 
 ## Commit and pull-request conventions

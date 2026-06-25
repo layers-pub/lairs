@@ -1,6 +1,6 @@
 site_name: lairs
 site_description: A read/write dataset client for the Layers format, built on didactic.
-site_url: https://layers-pub.github.io/lairs/
+site_url: https://layers.pub/lairs/
 site_author: layers-pub contributors
 repo_url: https://github.com/layers-pub/lairs
 repo_name: layers-pub/lairs

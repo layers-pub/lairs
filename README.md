@@ -6,22 +6,22 @@
 
 <p align="center">
   <a href="https://github.com/layers-pub/lairs/actions/workflows/ci.yml"><img src="https://github.com/layers-pub/lairs/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://layers-pub.github.io/lairs/"><img src="https://img.shields.io/badge/docs-online-blue" alt="Docs"></a>
+  <a href="https://layers.pub/lairs/"><img src="https://img.shields.io/badge/docs-online-blue" alt="Docs"></a>
   <a href="https://pypi.org/project/lairs/"><img src="https://img.shields.io/pypi/v/lairs" alt="PyPI"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.14%2B-blue" alt="Python 3.14+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
 </p>
 
 <p align="center">
-  <a href="https://layers-pub.github.io/lairs/tutorial/"><strong>Tutorial</strong></a>
+  <a href="https://layers.pub/lairs/tutorial/"><strong>Tutorial</strong></a>
   ·
-  <a href="https://layers-pub.github.io/lairs/guide/"><strong>Guides</strong></a>
+  <a href="https://layers.pub/lairs/guide/"><strong>Guides</strong></a>
   ·
-  <a href="https://layers-pub.github.io/lairs/concepts/"><strong>Concepts</strong></a>
+  <a href="https://layers.pub/lairs/concepts/"><strong>Concepts</strong></a>
   ·
-  <a href="https://layers-pub.github.io/lairs/reference/"><strong>API</strong></a>
+  <a href="https://layers.pub/lairs/reference/"><strong>API</strong></a>
   ·
-  <a href="https://layers-pub.github.io/lairs/development/"><strong>Development</strong></a>
+  <a href="https://layers.pub/lairs/development/"><strong>Development</strong></a>
 </p>
 
 ---
@@ -107,7 +107,7 @@ uv run pytest --run-integration  # include integration tests (docker, network, e
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide and the
-[Development](https://layers-pub.github.io/lairs/development/) section of the
+[Development](https://layers.pub/lairs/development/) section of the
 documentation for testing, code generation, and the release process. All
 participants are expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 

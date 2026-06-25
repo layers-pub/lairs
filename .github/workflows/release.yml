@@ -197,29 +197,8 @@ jobs:
           files: dist/*
           fail_on_unmatched_files: true
 
-  # deploy the documentation to GitHub Pages (the gh-pages branch).
-  docs:
-    name: Deploy documentation
-    needs: pypi
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Install Python ${{ env.UV_PYTHON }}
-        run: uv python install ${{ env.UV_PYTHON }}
-
-      - name: Sync docs dependencies
-        run: uv sync --frozen --group docs
-
-      - name: Deploy to GitHub Pages
-        run: uv run --group docs mkdocs gh-deploy --force
+  # documentation is built and deployed to GitHub Pages by the dedicated Docs
+  # workflow (.github/workflows/docs.yml) on every push to main. the release
+  # commit (version bump and changelog) lands on main before the tag, so the
+  # published site at https://layers.pub/lairs/ is already current by release
+  # time. nothing to deploy here.
