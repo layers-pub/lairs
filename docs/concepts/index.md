@@ -15,8 +15,7 @@ Read them when a guide tells you *how* and you want to know *why*.
   the hinge between them.
 - [Generated models](generated-models.md): why no `pub.layers.*` model
   is hand-written, the lexicon-to-model path, why the lossy theory route
-  is not used, and the drift gate that keeps the committed models
-  honest.
+  is not used, and the drift gate.
 - [The Layers data model](layers-data-model.md): the record graph of
   expressions, segmentations, annotation layers, anchors, media, and the
   knowledge graph, how records join by AT-URI, and the polymorphic
