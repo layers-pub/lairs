@@ -1,11 +1,36 @@
 [project]
 name = "lairs"
-version = "0.0.0"
+version = "0.1.0"
 description = "A read/write dataset client for the Layers format, built on didactic."
 readme = "README.md"
 requires-python = ">=3.14"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Aaron Steven White", email = "aaronstevenwhite@gmail.com" }]
+keywords = [
+    "layers",
+    "atproto",
+    "bluesky",
+    "linguistics",
+    "annotation",
+    "nlp",
+    "datasets",
+    "corpus",
+    "didactic",
+    "lexicon",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Text Processing :: Linguistic",
+    "Typing :: Typed",
+]
 dependencies = [
     "didactic>=0.9.0",
     "panproto>=0.56.0",
@@ -50,6 +75,13 @@ neural = ["mne", "xarray"]
 tracking = ["wandb", "mlflow"]
 appview = ["httpx"]
 ml = ["lairs[hf]", "lairs[torch]", "lairs[fsspec]"]
+
+[project.urls]
+Homepage = "https://github.com/layers-pub/lairs"
+Documentation = "https://layers-pub.github.io/lairs/"
+Repository = "https://github.com/layers-pub/lairs"
+Issues = "https://github.com/layers-pub/lairs/issues"
+Changelog = "https://github.com/layers-pub/lairs/blob/main/CHANGELOG.md"
 
 [project.scripts]
 lairs = "lairs.cli:main"
