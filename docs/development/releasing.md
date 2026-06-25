@@ -7,8 +7,8 @@ change.
 
 Releases are automated. Pushing a `vX.Y.Z` tag triggers the
 [release workflow](https://github.com/layers-pub/lairs/blob/main/.github/workflows/release.yml),
-which verifies the build, rehearses the upload on TestPyPI, publishes to PyPI via
-Trusted Publishing, and cuts the GitHub release. The documentation is published
+which verifies the build, publishes to PyPI via Trusted Publishing, and cuts the
+GitHub release. The documentation is published
 separately by the
 [docs workflow](https://github.com/layers-pub/lairs/blob/main/.github/workflows/docs.yml)
 on every push to `main`. Your job is to prepare the release commit and push the
@@ -66,13 +66,9 @@ git push origin vX.Y.Z        # the release workflow publishes the release
 ```
 
 The tag push starts `release.yml`: it verifies, builds the sdist and wheel,
-asserts the built version matches the tag, rehearses the upload on TestPyPI,
-publishes to PyPI, and creates the GitHub release with the changelog section as
-notes. Watch it from the Actions tab.
-
-You can also rehearse the whole build-and-publish path against TestPyPI without
-cutting a tag: run the release workflow manually (Actions, Release, Run
-workflow). Check `skip_verify` for a fast publish-path-only rehearsal.
+asserts the built version matches the tag, publishes to PyPI, and creates the
+GitHub release with the changelog section as notes. Watch it from the Actions
+tab.
 
 ## After the release
 
@@ -95,11 +91,9 @@ indexes:
   workflow `release.yml`, environment `pypi`. Before the first release the
   project does not exist yet, so add it as a *pending* publisher; the first tag
   push creates the project.
-- **TestPyPI Trusted Publisher.** The same, on test.pypi.org, with environment
-  `testpypi`.
-- **GitHub environments.** Create `pypi`, `testpypi`, and `github-pages`
-  environments in the repository settings. Add protection rules (for example a
-  required reviewer on `pypi`) as desired.
+- **GitHub environments.** Create the `pypi` and `github-pages` environments in
+  the repository settings. Add protection rules (for example a required reviewer
+  on `pypi`) as desired.
 - **GitHub Pages source.** Set Pages to deploy from GitHub Actions. The site is
   served at <https://layers.pub/lairs/>: the `layers-pub` organization's Pages
   custom domain (`layers.pub`) serves each project repository at `/<repo>/`, so
