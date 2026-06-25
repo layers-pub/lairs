@@ -6,6 +6,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      skip_verify:
+        description: "Fast rehearsal: skip verify (lint, types, docs, full test suite) and go straight to build then TestPyPI. Manual runs only; tag pushes always verify."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -19,6 +24,9 @@ jobs:
   # here too.
   verify:
     name: Verify before release
+    # skipped only on a manual fast rehearsal (workflow_dispatch + skip_verify);
+    # every tag push always verifies.
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_verify) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,6 +67,9 @@ jobs:
   build:
     name: Build distributions
     needs: verify
+    # run when verify passed, or when it was intentionally skipped (fast
+    # rehearsal); never when verify failed or the run was cancelled.
+    if: ${{ !cancelled() && (needs.verify.result == 'success' || needs.verify.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
