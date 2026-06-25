@@ -17,7 +17,6 @@ from lairs.integrations.hf.hub import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
     from typing import ClassVar
 
     import pyarrow as pa
@@ -136,12 +135,6 @@ def test_load_from_hub_without_datasets_raises_import_error(
     monkeypatch.setitem(sys.modules, "datasets", None)
     with pytest.raises(ImportError, match="lairs\\[hf\\]"):
         hub.load_from_hub("org/corpus")
-
-
-@pytest.fixture
-def vcr_config() -> dict[str, list[str]]:
-    """Strip credential headers from recorded hub cassettes."""
-    return {"filter_headers": ["authorization", "cookie", "set-cookie"]}
 
 
 class _FakeHubDataset:
@@ -299,33 +292,27 @@ def test_push_to_hub_forwards_token_split_and_config(
     assert _FakeHfApi.tokens == ["hf_secret"]
 
 
-# match without the HTTP method (and allow an interaction to replay more than
-# once). huggingface_hub probes some metadata endpoints with HEAD on one machine
-# and GET on another depending on whether the free-threaded-only hf_xet backend
-# is importable, so matching on method makes the cassette environment-specific.
-# Path and query still pin each request to the right recorded interaction.
-@pytest.mark.vcr(
-    match_on=["scheme", "host", "port", "path", "query"],
-    allow_playback_repeats=True,
-)
-def test_load_from_hub_reads_public_dataset(
-    tmp_path: Path,
+def test_load_from_hub_without_split_returns_dataset_dict(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # replay a recorded read of a tiny public dataset, so the datasets load path
-    # runs deterministically offline from the committed cassette. A multi-split
-    # repository with no split selected yields a DatasetDict, not a Dataset, which
-    # the concrete-type assertion pins.
+    # with no split, load_from_hub returns whatever datasets.load_dataset yields;
+    # for a multi-split repository that is a DatasetDict. Build a real one in
+    # memory and stub the loader, so the DatasetDict type contract is verified
+    # deterministically. (A recorded HTTP cassette is unreliable here: the
+    # huggingface_hub request set shifts with the free-threaded-only hf_xet
+    # backend, swapping HEAD probes for body-carrying GET downloads across
+    # machines and CI.)
     datasets = pytest.importorskip("datasets")
-    monkeypatch.setenv("HF_HOME", str(tmp_path))
-    # pin the standard (non-Xet) download path. hf_xet ships only free-threaded
-    # (cp314t) wheels, so whether the Xet backend is active depends on the
-    # interpreter's free-threaded status, which varies across machines and CI.
-    # disabling it keeps the recorded request set deterministic and replayable.
-    monkeypatch.setenv("HF_HUB_DISABLE_XET", "1")
-    loaded = hub.load_from_hub("hf-internal-testing/fixtures_ade20k")
+    expected = datasets.DatasetDict(
+        {
+            "train": datasets.Dataset.from_dict({"text": ["a", "b"]}),
+            "test": datasets.Dataset.from_dict({"text": ["c"]}),
+        },
+    )
+    monkeypatch.setattr(datasets, "load_dataset", lambda *_args, **_kwargs: expected)
+    loaded = hub.load_from_hub("org/multi-split-corpus")
     assert isinstance(loaded, datasets.DatasetDict)
-    assert len(loaded) >= 1
+    assert set(loaded) == {"train", "test"}
 
 
 class _FakeLoadModule:
