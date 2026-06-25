@@ -34,7 +34,7 @@ type Interpolation = Literal["linear", "step", "cubic"]
 class BoundingBox(dx.Model):
     """An axis-aligned bounding box in pixel coordinates.
 
-    Parameters
+    Attributes
     ----------
     x : float
         The left coordinate in pixels.
@@ -55,7 +55,7 @@ class BoundingBox(dx.Model):
 class Keyframe(dx.Model):
     """A timed bounding box used as a spatio-temporal keyframe.
 
-    Parameters
+    Attributes
     ----------
     time_ms : int
         The keyframe time in milliseconds.
@@ -70,7 +70,7 @@ class Keyframe(dx.Model):
 class VideoFrame(dx.Model):
     """A single decoded video frame.
 
-    Parameters
+    Attributes
     ----------
     index : int
         The frame index.

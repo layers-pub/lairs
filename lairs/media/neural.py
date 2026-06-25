@@ -36,7 +36,7 @@ class SignalBuffer(dx.Model):
     aligned with ``channels`` by position. The payload lives in an opaque field
     so callers go through the typed helpers rather than inspecting it blindly.
 
-    Parameters
+    Attributes
     ----------
     sample_rate : float
         The sample rate in hertz.

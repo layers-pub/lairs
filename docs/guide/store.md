@@ -28,6 +28,8 @@ pool.add(layer_uri, layer)
 print(len(pool))                 # number of records
 print(expression_uri in pool)    # membership by URI
 same = pool.get(expression_uri)  # or None when absent
+print(pool.uris())               # every AT-URI, insertion order
+print(pool.models())             # every model instance, insertion order
 ```
 
 Cross-reference resolution degrades gracefully. `resolve` returns the
@@ -62,7 +64,8 @@ from pathlib import Path
 
 from lairs.store.repository import Repository
 
-repo = Repository.init(Path("corpus-repo"))
+repo = Repository.init(Path("corpus-repo"))   # create a new repository
+repo = Repository.open(Path("corpus-repo"))   # reopen an existing one
 ```
 
 didactic's Repository is a *schema* VCS, where a commit records the
@@ -78,6 +81,7 @@ print(repo.staged_uris())          # sorted AT-URIs in the working tree
 
 revision = repo.commit("import ud-en")
 print(repo.head())                 # current head, or None when empty
+print(repo.log())                  # commit log, newest first
 ```
 
 Read records back by AT-URI with `load` (validated against a Model class)
@@ -96,9 +100,9 @@ a corpus is a graph of many record types.
 ## Tag and diff revisions
 
 A tag pins the exact record values committed at a revision, giving a
-reproducible named dataset version. Tag creation is not on didactic's
-public Repository surface, so the wrapper reaches the underlying
-`panproto.Repository` handle for it:
+reproducible named dataset version. Tag creation is on didactic's public
+Repository surface, so the wrapper calls `create_tag` on the underlying
+didactic handle directly:
 
 ```python
 repo.tag("v1", revision=revision)   # defaults to head when revision omitted
@@ -110,18 +114,18 @@ Tagging an empty repository with no head raises `ValueError`. `resolve`
 turns a branch name, tag name, or commit-id prefix into a full commit id.
 
 There is no native revision-to-revision data diff on either surface, so
-the wrapper computes the record diff itself from the committed AT-URI
-index. `diff` resolves both refs (so an unknown ref fails loudly) and
-returns a `RecordDiff` of the `added`, `removed`, and `changed` AT-URIs:
+the wrapper computes the record diff itself. It reconstructs each
+revision's value set by folding the committed data read with `data_at`
+over the revision's commit ancestry, keyed by AT-URI, then compares the
+two sets by content. `diff` resolves both refs (so an unknown ref fails
+loudly) and returns a `RecordDiff` of the `added`, `removed`, and
+`changed` AT-URIs:
 
 ```python
 record_diff = repo.diff("v1", "HEAD")
 print(record_diff.added, record_diff.removed, record_diff.changed)
 ```
 
-Because the working tree is shared in a single-checkout repository, pass
-explicit per-revision snapshots to `diff_snapshots(base_index,
-head_index)` when comparing two captured index maps directly.
 `schema_diff(old, new)` is the separate structural diff over two Model
 *classes* (for example two generated record types across a Layers
 version bump) and wraps `dx.diff`.
@@ -149,6 +153,10 @@ Polymorphic anchors are flattened into a fixed set of typed columns,
 anchor union per row. The column set is uniform across rows regardless of
 which anchor variant each record uses, and unrelated columns are left
 unset.
+
+`flatten_anchor` performs this projection for a single dumped anchor,
+returning a mapping over `ANCHOR_COLUMNS` with the recognised fields
+filled and the rest unset; the table builders call it per row.
 
 `records_to_table` and `expressions_table` build a table with one row per
 record, anchors flattened. `annotations_table` mirrors the appview's

@@ -130,7 +130,7 @@ class BratCodec:
 class _Entity(dx.Model):
     """A parsed brat text-bound entity line.
 
-    Parameters
+    Attributes
     ----------
     tag : str
         The entity identifier (for example ``"T1"``).
@@ -154,7 +154,7 @@ class _Entity(dx.Model):
 class _Relation(dx.Model):
     """A parsed brat relation line.
 
-    Parameters
+    Attributes
     ----------
     tag : str
         The relation identifier (for example ``"R1"``).
@@ -175,7 +175,7 @@ class _Relation(dx.Model):
 class _Attribute(dx.Model):
     """A parsed brat attribute line.
 
-    Parameters
+    Attributes
     ----------
     tag : str
         The attribute identifier (for example ``"A1"``).
@@ -196,7 +196,7 @@ class _Attribute(dx.Model):
 class _Standoff(dx.Model):
     """The fully parsed contents of a brat source.
 
-    Parameters
+    Attributes
     ----------
     text : str
         The document text.

@@ -17,7 +17,7 @@ __all__ = ["BlobRef"]
 class BlobRef(dx.Model):
     """An immutable reference to an ATProto blob.
 
-    Parameters
+    Attributes
     ----------
     cid : str
         The content identifier of the blob.

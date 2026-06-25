@@ -50,7 +50,7 @@ _COMMIT_TYPE = "#commit"
 class FirehoseEvent(dx.Model):
     """A single decoded commit event from the repo firehose.
 
-    Parameters
+    Attributes
     ----------
     seq : int
         The monotonically increasing sequence number of the event.

@@ -75,7 +75,7 @@ DEFAULT_PAGE_SIZE = 100
 class RecordEnvelope(dx.Model):
     """The standard ATProto record envelope.
 
-    Parameters
+    Attributes
     ----------
     uri : str
         The AT-URI of the record.
@@ -96,7 +96,7 @@ class RecordEnvelope(dx.Model):
 class RecordDecodeFailure(dx.Model):
     """A per-record decode failure with diagnostics.
 
-    Parameters
+    Attributes
     ----------
     uri : str
         The AT-URI of the record that failed to decode.
@@ -116,7 +116,7 @@ class RecordDecodeFailure(dx.Model):
 class RepoDescription(dx.Model):
     """A repository table of contents from ``com.atproto.repo.describeRepo``.
 
-    Parameters
+    Attributes
     ----------
     did : str
         The repository DID.

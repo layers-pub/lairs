@@ -25,7 +25,7 @@ class DatasetSummary(dx.Model):
     actor and source it was found through, so a listing renders one row per
     dataset without dumping records.
 
-    Parameters
+    Attributes
     ----------
     uri : str
         The corpus AT-URI.
@@ -115,7 +115,7 @@ class DatasetSummary(dx.Model):
 class CollectionCount(dx.Model):
     """A repository collection NSID with an optional record count.
 
-    Parameters
+    Attributes
     ----------
     nsid : str
         The collection NSID.
@@ -139,7 +139,7 @@ class CollectionCount(dx.Model):
 class RepoTableOfContents(dx.Model):
     """An actor's repository inventory: identity plus per-collection counts.
 
-    Parameters
+    Attributes
     ----------
     did : str
         The repository DID.
@@ -179,7 +179,7 @@ class DatasetFilter(dx.Model):
     parameters on the appview path; the rest are applied client-side over the
     mapped summaries.
 
-    Parameters
+    Attributes
     ----------
     language : str or None
         Keep corpora whose primary or listed languages include this tag.

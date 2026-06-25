@@ -364,7 +364,7 @@ class PendingId(str):
     commits. It subclasses :class:`str` so it can be carried in the same
     AT-URI-typed string fields and still be recognised by the publisher.
 
-    Parameters
+    Attributes
     ----------
     local_id : str
         A stable local identifier, unique within an authoring session.

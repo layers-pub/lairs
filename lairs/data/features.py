@@ -55,7 +55,7 @@ _UNKNOWN_TOKEN = "string"  # noqa: S105
 class FeatureSpec(dx.Model):
     """A single named feature and its dtype.
 
-    Parameters
+    Attributes
     ----------
     name : str
         The feature (column) name.
@@ -76,7 +76,7 @@ class FeatureSpec(dx.Model):
 class Features(dx.Model):
     """A dataset schema description as an ordered tuple of feature specs.
 
-    Parameters
+    Attributes
     ----------
     specs : tuple of FeatureSpec
         The ordered feature specifications.

@@ -44,7 +44,7 @@ _ATPROTO_PDS_SERVICE_TYPE = "AtprotoPersonalDataServer"
 class IdentityResolution(dx.Model):
     """The resolved identity of an ATProto repository.
 
-    Parameters
+    Attributes
     ----------
     did : str
         The resolved decentralised identifier.

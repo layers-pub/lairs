@@ -60,7 +60,7 @@ class TorchExportSpec(dx.Model):
     flow. When ``columns`` is unset every column is kept; when ``tensor_columns``
     is unset the numeric (and anchor) columns are inferred from the Arrow schema.
 
-    Parameters
+    Attributes
     ----------
     columns : tuple of str or None, optional
         The ordered subset of Arrow columns to keep. ``None`` keeps every
@@ -296,7 +296,7 @@ class TorchExportResult(dx.Model):
     objects held in opaque fields; the tensor columns are typed metadata so a
     caller can build a ``DataLoader`` with the matching collate function.
 
-    Parameters
+    Attributes
     ----------
     dataset : torch.utils.data.Dataset
         The map-style dataset over the Arrow rows.

@@ -1,7 +1,8 @@
 # Media
 
-Media resolution and anchor-aware slicing. `resolve_media` decodes a
-media record to a byte-carrying handle. `resolve_anchor` dispatches an
+Media resolution and anchor-aware slicing. `resolve_media` resolves a
+media record to a media handle, fetching bytes lazily through injected
+ports; decoding is a separate step. `resolve_anchor` dispatches an
 anchor to the slice of the target it points at. The audio, video, and
 neural decode paths require the matching `lairs[...]` extra at runtime,
 but the millisecond-to-sample math, slicing, and box interpolation are

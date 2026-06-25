@@ -78,7 +78,7 @@ class TaskTemplate(dx.Model):
     or span layer exports under the conventional column names HuggingFace tooling
     recognises.
 
-    Parameters
+    Attributes
     ----------
     task : str
         The canonical HuggingFace task name (for example
@@ -223,7 +223,7 @@ class ExportSpec(dx.Model):
     canonical task name. It is a plain didactic model so it is serialisable and
     carries cleanly into a dataset card's provenance.
 
-    Parameters
+    Attributes
     ----------
     shape : {"nested", "exploded"}, optional
         The tabular shape of the Arrow view being exported.

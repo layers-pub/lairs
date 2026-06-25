@@ -38,7 +38,7 @@ class BlobBytes(dx.Model):
     The bytes are carried in an opaque field so the holder stays a ``dx.Model``
     while remaining a runtime container the media layer can cache by CID.
 
-    Parameters
+    Attributes
     ----------
     did : str
         The repository DID the blob was fetched from.

@@ -58,7 +58,7 @@ _RKEY_LENGTH = 24
 class CardProvenance(dx.Model):
     """Where a dataset card came from, for trust and refresh.
 
-    Parameters
+    Attributes
     ----------
     source_did : str
         The corpus author's DID.
@@ -84,7 +84,7 @@ class CardProvenance(dx.Model):
 class CardFreshness(dx.Model):
     """Firehose and crawl bookkeeping so freshness and resume are first-class.
 
-    Parameters
+    Attributes
     ----------
     first_seen_at : datetime
         When this corpus first entered the index.
@@ -117,7 +117,7 @@ class CardFreshness(dx.Model):
 class DatasetCard(dx.Model):
     """A searchable, denormalized index entry for one corpus.
 
-    Parameters
+    Attributes
     ----------
     summary : DatasetSummary
         The corpus-derived listing projection.
@@ -159,7 +159,7 @@ class DatasetCard(dx.Model):
 class SyncCursor(dx.Model):
     """A resumable firehose position for one relay.
 
-    Parameters
+    Attributes
     ----------
     relay : str
         The firehose endpoint this cursor is for.
@@ -177,7 +177,7 @@ class SyncCursor(dx.Model):
 class RepoCrawlState(dx.Model):
     """Per-repository crawl bookkeeping so a re-run skips finished repos.
 
-    Parameters
+    Attributes
     ----------
     did : str
         The crawled repository DID.
@@ -216,7 +216,7 @@ class RepoCrawlState(dx.Model):
 class CrawlReport(dx.Model):
     """A summary of a crawl or firehose pass, logging every skip.
 
-    Parameters
+    Attributes
     ----------
     repos_seen : int
         The number of repositories visited.

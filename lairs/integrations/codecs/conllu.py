@@ -153,7 +153,7 @@ class ConlluCodec:
 class _Feat(dx.Model):
     """A single CoNLL-U morphological feature key/value pair.
 
-    Parameters
+    Attributes
     ----------
     key : str
         The feature name (for example ``"Number"``).
@@ -168,7 +168,7 @@ class _Feat(dx.Model):
 class _ConlluToken(dx.Model):
     """A single parsed CoNLL-U token row.
 
-    Parameters
+    Attributes
     ----------
     index : int
         The 0-based token index (one less than the CoNLL-U ``ID``).
@@ -204,7 +204,7 @@ class _ConlluToken(dx.Model):
 class _ConlluSentence(dx.Model):
     """A single parsed CoNLL-U sentence.
 
-    Parameters
+    Attributes
     ----------
     text : str
         The reconstructed sentence text.

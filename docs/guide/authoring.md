@@ -8,16 +8,16 @@ git-like round trip.
 Writes target only the authenticated user's own repository. The write client
 never accepts another repository's DID at a write call, and OAuth is not handled
 here: an authenticated `httpx.Client` carrying the session's bearer token and
-write scopes is injected. See [Concepts](../concepts/) for why the write path is
+write scopes is injected. See [Concepts](../concepts/index.md) for why the write path is
 isolated in the authoring component.
 
-For signatures, see the [reference](../reference/). This guide shows the task
+For signatures, see the [reference](../reference/index.md). This guide shows the task
 path and the load-bearing options.
 
 ## Building anchors
 
 An annotation attaches to source data through an
-[`Anchor`](../reference/). The builders in `lairs.author` construct the correct
+[`Anchor`](../reference/index.md). The builders in `lairs.author` construct the correct
 anchor sub-model and validate every argument against the lexicon constraints at
 construction time, raising `BuildError` rather than deferring to a PDS rejection.
 
@@ -53,7 +53,7 @@ non-empty community value is accepted, an empty string is rejected.
 
 ```python
 from datetime import UTC, datetime
-from lairs.author import LayerBuilder, span
+from lairs.author import LayerBuilder, new_uuid, span
 
 builder = LayerBuilder(
     expression="at://did:plc:author/pub.layers.expression.expression/abc",
@@ -64,11 +64,14 @@ builder = LayerBuilder(
 )
 builder.add(anchor=span(0, 5), label="PER", confidence=950)
 builder.add(anchor=span(9, 20), label="ORG")
+builder.add(anchor=span(24, 30), label="LOC", annotation_uuid=new_uuid())
 layer = builder.build()                   # raises BuildError if no annotations
 ```
 
 `confidence` is validated against the model's 0-1000 range, and `token_index`
-against its minimum. `build` raises `BuildError` when no annotations were added.
+against its minimum. `add` mints a UUID when `annotation_uuid` is omitted; pass an
+explicit one minted with `new_uuid` to set it yourself. `build` raises
+`BuildError` when no annotations were added.
 
 ## Cross-references before publication
 
@@ -146,10 +149,12 @@ not re-export `publish` as a top-level name (a same-named symbol would shadow th
 submodule).
 
 ```python
+from pathlib import Path
+
 from lairs.author.publish import publish
 from lairs.store.repository import Repository
 
-repo = Repository.open("/path/to/repo")
+repo = Repository.open(Path("/path/to/repo"))
 
 # dry run: compute and return the plan without sending any writes.
 plan = publish(repo, "HEAD", to="did:plc:author", endpoint="https://pds.example",
@@ -179,10 +184,12 @@ model and staged under its AT-URI, and a record that fails to validate is skippe
 rather than aborting the pull.
 
 ```python
+from pathlib import Path
+
 from lairs.author.publish import pull
 from lairs.store.repository import Repository
 
-repo = Repository.init("/path/to/repo")
+repo = Repository.init(Path("/path/to/repo"))
 pull("did:plc:author", endpoint="https://pds.example", into=repo)
 revision = repo.commit("pull layers records")
 ```

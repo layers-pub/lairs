@@ -60,7 +60,7 @@ _FILE_MODE = 0o600
 class Session(dx.Model):
     """An authenticated PDS session.
 
-    Parameters
+    Attributes
     ----------
     did : str
         The authenticated account DID.

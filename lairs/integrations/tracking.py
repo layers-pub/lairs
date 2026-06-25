@@ -41,7 +41,7 @@ _ARTIFACT_NAME = "lairs-revision"
 class ProvenanceBundle(dx.Model):
     """The provenance pinned alongside a logged Repository revision.
 
-    Parameters
+    Attributes
     ----------
     revision : str
         The Repository revision (commit id or tag) the run was logged against.

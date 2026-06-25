@@ -13,20 +13,27 @@ store doubling as schema-aware version control.
 Every structured value in lairs is a [didactic](https://github.com/panproto/didactic)
 model. The `pub.layers.*` record models
 are generated from the vendored lexicons and committed to the
-repository. Updating to a new Layers version is a re-vendor, a
+repository. Updating to a new Layers version involves a re-vendor, a
 regeneration, and a drift check.
 
 ```python
 import lairs
+from lairs.atproto import PdsClient
 
-corpus = lairs.load_corpus(
-    "at://did:plc:abc/pub.layers.corpus.corpus/ud-en",
-    source="pds",
-)
+with PdsClient("https://pds.example") as client:
+    corpus = lairs.load_corpus(
+        "at://did:plc:abc/pub.layers.corpus.corpus/ud-en",
+        source="pds",
+        pds_client=client,
+    )
 expressions = corpus.expressions
 print(len(expressions))
 print(expressions[0].text)
 ```
+
+The `pds` source reads directly from a PDS and needs an injected
+`pds_client`; endpoint discovery and the `appview` and `auto` sources are
+not implemented yet.
 
 ## Where to start
 
@@ -57,5 +64,5 @@ generated lexicon models in both directions.
 
 lairs is pre-1.0. Optional integrations (HuggingFace, PyTorch, format
 codecs, knowledge-base connectors, experiment trackers) are not part of
-the core install; each is an extra, discovered at runtime through entry
+the core install: each is an extra, discovered at runtime through entry
 points. Importing `lairs` never imports an integration's dependency.

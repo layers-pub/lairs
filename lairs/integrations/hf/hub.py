@@ -47,7 +47,7 @@ class ProvenanceBundle(dx.Model):
     bundle pins the exact corpus AT-URI, the Repository revision or tag, the
     vendored lexicon manifest hash, and the corpus license.
 
-    Parameters
+    Attributes
     ----------
     corpus_uri : str or None, optional
         The AT-URI of the source ``corpus`` record.

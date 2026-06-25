@@ -6,8 +6,8 @@ reading the `Features` derived from the model field specs.
 
 The dataset API sits over the generated record models. A `Dataset` is generic
 over the model type it yields, so indexing and iteration stay precisely typed.
-Rationale is in [Concepts](../concepts/), and signatures are in the
-[reference](../reference/).
+Rationale is in [Concepts](../concepts/index.md), and signatures are in the
+[reference](../reference/index.md).
 
 ## Loading a corpus
 
@@ -129,7 +129,7 @@ field specs, so it always matches the lexicons. Each field becomes a
 
 ```python
 features = corpus.expressions.features
-features.names()                         # ("$type", "id", "kind", "text", ...)
+features.names()                         # ("anchor", "createdAt", "eprintRefs", "features", ...)
 spec = features.get("text")              # FeatureSpec or None
 spec.dtype                               # "string"
 spec.nullable                            # True when optional or not required

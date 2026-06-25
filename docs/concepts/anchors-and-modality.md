@@ -71,8 +71,10 @@ whatever target it is given:
   window, and against a signal buffer returns a multi-channel window.
 - a `boundingBox` against a video frame returns the cropped frame.
 - a `spatioTemporalAnchor` against a video frame interpolates the
-  keyframed box to the frame's time (linear, step, or cubic) and crops to
-  it, so an object track resolves to a dense box over its span.
+  keyframed box (linear, step, or cubic) and crops to it, so an object
+  track resolves to a dense box over its span. The interpolation uses the
+  frame's `index` as the time argument, which stands in for the frame's
+  temporal position rather than its millisecond timestamp.
 
 The dispatch is structural, like the helpers above. The resolver unwraps
 the anchor object to find its single set variant, and if it is handed a
@@ -91,6 +93,13 @@ rather than guessing, and an undeterminable anchor kind raises too. The
 modality decoders themselves (audio, video, neural) live behind optional
 extras and supply the buffer types and the slicing math. The resolver is
 the layer that turns an anchor into the right call.
+
+The targets the resolver slices come from `resolve_media`, the public
+entry point that turns a media record (a `blob` or an `externalUri`) into
+a `MediaHandle` holding the raw bytes plus typed metadata. Both are
+exported from `lairs.media` alongside `resolve_anchor`. A handle's decoded
+bytes feed the modality decoders that produce the audio buffer, signal
+buffer, or video frame an anchor then resolves against.
 
 ## Why this is the unifying idea
 

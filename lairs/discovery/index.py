@@ -47,7 +47,7 @@ class CardDiff(dx.Model):
     index, falling back to the card's own index URI otherwise (for example a
     removed card).
 
-    Parameters
+    Attributes
     ----------
     added : tuple of str
         Corpora whose card appeared between the revisions.

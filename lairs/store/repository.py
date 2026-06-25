@@ -86,7 +86,7 @@ def _safe_name(uri: str) -> str:
 class RecordDiff(dx.Model):
     """A structural diff of the record set between two revisions.
 
-    Parameters
+    Attributes
     ----------
     added : tuple of str
         AT-URIs present at the head revision but not the base revision.

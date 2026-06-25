@@ -66,7 +66,7 @@ _KNOWN_TOKENS: frozenset[str] = frozenset(
 class TfFeatureSpec(dx.Model):
     """A single Arrow column described as a tensorflow feature.
 
-    Parameters
+    Attributes
     ----------
     name : str
         The column name.
@@ -88,7 +88,7 @@ class TfFeatureSpec(dx.Model):
 class TfDataSpec(dx.Model):
     """Options that shape the emitted ``tf.data.Dataset``.
 
-    Parameters
+    Attributes
     ----------
     columns : tuple of str, optional
         The columns to keep, in order. An empty tuple keeps every column.

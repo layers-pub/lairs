@@ -76,7 +76,7 @@ _VALID_SOURCES = frozenset({_SOURCE_PDS, _SOURCE_APPVIEW, _SOURCE_AUTO})
 class ExpressionWithAnnotations(dx.Model):
     """An expression joined to its annotation layers.
 
-    Parameters
+    Attributes
     ----------
     expression : pub.layers.expression.Expression
         The expression record.
@@ -99,7 +99,7 @@ class ExpressionWithAnnotations(dx.Model):
 class ExpressionWithMedia(dx.Model):
     """An expression joined to its media record.
 
-    Parameters
+    Attributes
     ----------
     expression : pub.layers.expression.Expression
         The expression record.
@@ -122,7 +122,7 @@ class ExpressionWithMedia(dx.Model):
 class ExpressionWithSegmentation(dx.Model):
     """An expression joined to its segmentation records.
 
-    Parameters
+    Attributes
     ----------
     expression : pub.layers.expression.Expression
         The expression record.

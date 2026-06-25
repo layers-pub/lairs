@@ -46,7 +46,7 @@ types so that no method ever returns a widened type:
   corpus fragment and `encode`s records back out. The pivot is the anchor
   model: a codec only has to translate its spans and labels into lairs
   anchors and one of the seven annotation kinds. lairs owns the rest.
-  Examples: CoNLL-U, brat standoff, ELAN, TextGrid.
+  The registered codecs are CoNLL-U and brat standoff.
 - **Exporters** consume the Arrow views (and the anchor resolver) and
   emit a framework-native dataset. An exporter `export`s a view, with an
   optional spec, into a target object such as a `datasets.Dataset` or a
@@ -63,6 +63,15 @@ A fourth port, `StorageBackend`, abstracts byte storage (read, write,
 exists) so the blob cache and the Parquet views can sit on local or
 remote storage. It is a supporting surface rather than a fourth adapter
 family.
+
+Experiment tracking is a further integration capability that sits outside
+the three families. `lairs.integrations.tracking.log_revision` binds the
+Repository-revisions surface to Weights & Biases or MLflow (the
+`lairs[tracking]` extra): it records a `ProvenanceBundle` pinning the exact
+commit or tag and the vendored lexicon manifest hash, not a copy of the
+data, so the dataset behind a logged run can always be rebuilt from its
+revision. Like the adapters, the backend libraries are imported lazily, so
+importing the module never pulls in `wandb` or `mlflow`.
 
 The three families correspond to the three places external tools meet
 Layers data: at the format boundary (codecs), at the data plane
@@ -108,10 +117,16 @@ catalog to be broad without making the core large or fragile.
 Because codecs and exporters are uniform, registered, and bound only to
 the four surfaces, pipelines compose: decode an external corpus with a
 codec, transform it, export it with an exporter, mirror it to a hub with
-its provenance intact. Codecs carry round-trip law fixtures
-(`decode(encode(x))` recovers `x` on the supported subset) and exporters
-carry schema-parity fixtures, so the composition is checked rather than
-assumed.
+its provenance intact. The mirror step is the HuggingFace Hub push/pull
+surface (`push_to_hub`, `load_from_hub`, and the `dataset_card` and
+`provenance_bundle` helpers, re-exported from `lairs.integrations.hf`),
+which writes a corpus to the Hub as Arrow/Parquet shards behind a dataset
+card carrying the corpus AT-URI, the Repository revision, and the vendored
+lexicon manifest hash, and reads a mirror back. The PDS and the Repository
+stay canonical; the Hub is an export and mirror target. Codecs carry
+round-trip law fixtures (`decode(encode(x))` recovers `x` on the supported
+subset) and exporters carry schema-parity fixtures, so the composition is
+checked rather than assumed.
 
 For the stability contract on the ports and the extras, see
 [stability](../project/stability.md). For the adapter that proves the

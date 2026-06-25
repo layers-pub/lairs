@@ -35,3 +35,51 @@ It works the same ground on a single running example.
   at, and decode and slice audio, video, and neural signals. Reach for
   this when an annotation must be turned into the waveform, frame, or
   signal window it anchors.
+
+## Authoring and querying
+
+- [Authoring and publishing records](authoring.md): build Layers
+  records with the `lairs.author` builders, write a single record,
+  publish a whole graph in one dependency-ordered `applyWrites` batch,
+  inspect the dry-run plan, and pull an account's records back for a
+  git-like round trip. Reach for this when producing records and writing
+  them to your own PDS repository.
+- [The dataset API](dataset-api.md): load a corpus, take typed
+  `Dataset` views over it, walk the cross-reference graph with the join
+  helpers, and read the `Features` derived from the model field specs.
+  Reach for this when a loaded corpus needs a `datasets`-like access
+  surface over the generated record models.
+
+## Integrations
+
+- [Format codecs](codecs.md): decode external annotation formats into
+  Layers records and encode them back through the `Codec` port, with the
+  bundled CoNLL-U and brat codecs resolved by name through the registry.
+  Reach for this when moving between Layers and an existing annotation
+  format.
+- [Exporters](exporters.md): turn a flattened Arrow view into a
+  framework-native dataset through the `Exporter` port, with the bundled
+  HuggingFace `datasets`, PyTorch, tf.data, and WebDataset exporters
+  resolved by name. Reach for this when feeding a corpus into a training
+  pipeline.
+- [Knowledge bases](knowledge-bases.md): resolve, entity-link,
+  reconcile, and enrich records through the `KnowledgeBase` port, with
+  the bundled Wikidata, W3C/OpenRefine reconciliation, and glazing
+  connectors. Reach for this when grounding records against external
+  references.
+- [Experiment tracking](tracking.md): log a `Repository` revision as a
+  tracked artifact with provenance for Weights & Biases and MLflow,
+  pinning the exact commit and lexicon manifest hash rather than copying
+  the data. Reach for this when an experiment must record which corpus
+  revision it ran on.
+
+## Tooling
+
+- [The CLI](cli.md): drive vendoring, codegen, pulling, materializing,
+  publishing, inspecting, and index operations from the `lairs`
+  command-line interface. Reach for this to run lairs from a shell or a
+  CI pipeline.
+- [The explorer TUI](explorer.md): open a terminal interface for
+  discovering corpora, browsing records by type over a local repository,
+  and running queries over materialized data with `lairs tui`. Reach for
+  this to explore Layers data interactively.

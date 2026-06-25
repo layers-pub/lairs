@@ -47,7 +47,7 @@ _DATETIME_FORMAT = "datetime"
 class FieldSpec(dx.Model):
     """A single field of a generated model.
 
-    Parameters
+    Attributes
     ----------
     name : str
         The lexicon property name, used verbatim as the python attribute name.
@@ -133,7 +133,7 @@ class FieldSpec(dx.Model):
 class VariantSpec(dx.Model):
     """A single member of a formal union definition.
 
-    Parameters
+    Attributes
     ----------
     discriminator_value : str
         The value the union discriminator takes for this variant, derived from
@@ -154,7 +154,7 @@ class VariantSpec(dx.Model):
 class ModelSpec(dx.Model):
     """A generated model or union, ready for emission.
 
-    Parameters
+    Attributes
     ----------
     name : str
         The python class name (the capitalised lexicon definition shortname).

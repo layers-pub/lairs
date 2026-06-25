@@ -32,7 +32,7 @@ _SIGNAL_WEIGHT = 0.5
 class SearchQuery(dx.Model):
     """A structured, serializable query over dataset cards.
 
-    Parameters
+    Attributes
     ----------
     text : str or None
         A case-insensitive substring matched against name and description.
@@ -77,7 +77,7 @@ class SearchQuery(dx.Model):
 class SearchHit(dx.Model):
     """A matched dataset card with its ranking score.
 
-    Parameters
+    Attributes
     ----------
     card : DatasetCard
         The matched card.

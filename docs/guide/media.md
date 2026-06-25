@@ -20,20 +20,42 @@ The handle is a model holding typed metadata (`cid`, `mime_type`,
 raw bytes in an opaque `data` field.
 
 Transport and cache are not implemented here: they are injected through
-the `BlobFetcher`, `UriFetcher`, and `BlobCache` ports. The
-[ATProto blob client](reading-pds.md) satisfies the fetcher shape and the
-[store's blob cache](store.md) satisfies the cache shape:
+the `BlobFetcher`, `UriFetcher`, and `BlobCache` ports. Each port's
+`get_blob`, `get_uri`, and `get`/`put` return raw `bytes`, and the
+resolver stores that return value directly in `MediaHandle.data` and the
+cache. Concrete components from elsewhere in the library plug in with a
+thin adapter:
+
+- The [ATProto blob client](reading-pds.md)'s `BlobClient.get_blob`
+  returns a `BlobBytes` holder, not `bytes`, so a `blob_fetcher` wraps it
+  and yields `blob.data`.
+- The [store's blob cache](store.md) shares the port's method names, but
+  its `get` returns `bytes | None` and its `put` returns the written
+  `Path`. The resolver probes `exists` before `get`, so a cache miss is
+  never read through the port, and it ignores the `put` return value, so
+  passing the store's `BlobCache` works as the cache.
 
 ```python
 from lairs.atproto.blobs import BlobClient
 from lairs.store.blobcache import BlobCache
 from lairs.media.resolve import resolve_media
 
-with BlobClient(pds_endpoint) as fetcher:
+
+class BlobFetcherAdapter:
+    """Adapt ``BlobClient`` to the ``BlobFetcher`` port's bytes contract."""
+
+    def __init__(self, client: BlobClient) -> None:
+        self._client = client
+
+    def get_blob(self, did: str, cid: str) -> bytes:
+        return self._client.get_blob(did, cid).data
+
+
+with BlobClient(pds_endpoint) as client:
     handle = resolve_media(
         media_record,
         did=repo_did,
-        blob_fetcher=fetcher,
+        blob_fetcher=BlobFetcherAdapter(client),
         cache=BlobCache(cache_root),
     )
 print(handle.modality, handle.mime_type, len(handle.data))

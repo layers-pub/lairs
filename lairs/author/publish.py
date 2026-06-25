@@ -289,7 +289,7 @@ def content_address(data: bytes) -> str:
 class WriteOp(dx.Model):
     """A single planned write operation against a repository.
 
-    Parameters
+    Attributes
     ----------
     action : str
         The operation: ``create``, ``update``, or ``delete``.
@@ -322,7 +322,7 @@ class WriteOp(dx.Model):
 class WriteResult(dx.Model):
     """The per-record outcome of a write.
 
-    Parameters
+    Attributes
     ----------
     uri : str
         The AT-URI of the record.
@@ -349,7 +349,7 @@ class WriteResult(dx.Model):
 class PublishPlan(dx.Model):
     """The minimal write plan to make a PDS match a revision.
 
-    Parameters
+    Attributes
     ----------
     repo : str
         The target repository DID.

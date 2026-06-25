@@ -131,7 +131,7 @@ class MediaHandle(dx.Model):
     When ``data`` is empty the handle is metadata-only and bytes are fetched on
     a later decode.
 
-    Parameters
+    Attributes
     ----------
     cid : str
         The content identifier of the resolved media.

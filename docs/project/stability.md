@@ -34,8 +34,9 @@ The four ports they bind to are the stable contract: `Codec`,
 ## Deferred capabilities
 
 Some capabilities are declared but not yet implemented, and raise
-`NotImplementedError` with a description of what is missing: the
-firehose consumer (`lairs.atproto.firehose`), the bulk CAR repository
-pull (`lairs.atproto.pds.PdsClient.get_repo_car`), and appview-only
-corpus loading without an injected client. These are tracked for later
-milestones and are not part of the supported surface until implemented.
+`NotImplementedError` with a description of what is missing: appview
+corpus loading (`lairs.data.load_corpus` with `source="appview"`) and any
+corpus load without an injected `pds_client`, which both await endpoint
+discovery, and blob upload (`lairs.atproto.blobs`). These are tracked for
+later milestones and are not part of the supported surface until
+implemented.

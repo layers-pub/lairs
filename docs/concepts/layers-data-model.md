@@ -103,8 +103,11 @@ FrameNet, and others) and an identifier within it.
 The records that release a curated artifact (the corpus, the annotation
 layer, the segmentation, the cluster set, the alignment, the edge set,
 the ontology, the resource collection, the persona, the experiment
-definition, and the media record) share a common provenance vocabulary
-rather than each spelling it out differently.
+definition, and the media record) draw on a common provenance vocabulary
+rather than each spelling it out differently. Not every record carries
+every field: `licensing` is the one constant, `eprintRefs` is nearly
+universal, and `reproducibility` is reserved for records that release a
+computed artifact.
 
 - `licensing` is a structured `Licensing` embed, not a license string. It
   carries an optional SPDX `expression` and an array of `licenses`, where
@@ -113,14 +116,20 @@ rather than each spelling it out differently.
   covers single licensing, dual or multi licensing (the `expression`
   encodes `MIT OR Apache-2.0`), composite terms (`AND`), exceptions
   (`WITH`), and per-component licensing (annotations under one license,
-  the underlying text under another).
+  the underlying text under another). Every record in this group carries
+  it.
 - `eprintRefs` is an always-present array of eprint AT-URIs (papers or
   preprints associated with the record), never a single optional
-  reference. An expression carries the same array.
+  reference. An expression carries the same array. It appears on every
+  record in this group except the persona, whose only provenance field is
+  `licensing`.
 - `reproducibility` is a `ReproducibilityInfo` embed (code URI, commit
   hash, command, environment, random seed) recording how a computational
-  artifact was produced. It is shared across the produce records and the
-  eprint data link, not specific to one of them.
+  artifact was produced. It appears only where a record can be the output
+  of a computation: the corpus, the annotation layer, the segmentation,
+  the cluster set, the alignment, the edge set, and the experiment
+  definition carry it, as does the eprint data link, while the ontology,
+  the resource collection, the persona, and the media record do not.
 
 The corpus is one such produce. Beyond the provenance fields above it
 carries a `name`, a `description`, a `domain` slug, an `expressionCount`,
@@ -128,6 +137,29 @@ an `annotationDesign` (annotator assignment, adjudication, quality
 criteria), and the languages it covers as `languages` (a list of BCP-47
 tags). There is no singular corpus language field; the language facet is
 always the list.
+
+Membership is not a field on either side. An expression carries no
+`corpusRef`, and the corpus carries no list of expressions. Instead the
+`corpus.membership` record binds the two, pairing a `corpusRef` with an
+`expressionRef` and optionally recording a train/dev/test `split` and an
+`ordinal` position. The corpus is the graph that these membership records
+and the other AT-URI references induce.
+
+## Judgments and experiments
+
+Annotation through `annotationLayer` records is one mode of capturing
+linguistic structure; elicited human judgment is the other, and it has
+its own record group. A `judgment.experimentDef` record defines an
+experiment or elicitation task, naming the corpus, persona, ontology, and
+templates it draws on, the measure and task types, and the response scale
+or labels. A `judgment.judgmentSet` collects the judgments a single
+annotator gave for one experiment, pointing back at it through
+`experimentRef`. A `judgment.agreementReport` summarizes inter-annotator
+agreement across several judgment sets, naming the `judgmentSetRefs` it
+covers, a `metric`, and the computed `value`. Only the experiment
+definition is a produce record carrying the shared provenance fields; the
+judgment set and the agreement report record an annotator's responses and
+a derived metric.
 
 ## Eprints and citations
 

@@ -19,7 +19,7 @@ class FragmentRecord(dx.Model):
     The record value is carried as a JSON string so a fragment is independent
     of any one generated namespace module and round-trips losslessly.
 
-    Parameters
+    Attributes
     ----------
     local_id : str
         The local identifier or AT-URI of the record within the fragment.
@@ -39,7 +39,7 @@ class CorpusFragment(dx.Model):
 
     A fragment is the pivot a codec decodes into and encodes from.
 
-    Parameters
+    Attributes
     ----------
     records : tuple of FragmentRecord, optional
         The decoded records.

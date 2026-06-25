@@ -108,9 +108,11 @@ bundle forward rather than copying data away from its source: an
 experiment-tracking hook logs a Repository *revision* as an artifact, not
 a copy, so a logged run pins exact record content, and a dataset pushed
 to an external hub carries a provenance card naming the corpus AT-URI,
-the Repository revision or tag, the lexicon manifest hash, and the
-license facet projected from the corpus record's structured `licensing`
-(the SPDX expression, or the first license's SPDX slug). The external
+the Repository revision and tag, the lexicon manifest hash, the Layers
+version, and a license identifier supplied by the caller from the corpus
+record. (The card stores that license string verbatim; the structured
+`licensing` to SPDX projection, expression else the first license's
+slug, belongs to the discovery summary, not the export card.) The external
 copy is a mirror, and the PDS
 and the Repository stay canonical. Reproducibility therefore does not
 stop at the store boundary. It travels with the data wherever an

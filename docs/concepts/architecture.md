@@ -49,11 +49,22 @@ Each layer is a package with a narrow responsibility:
   view helpers such as `anchor_kind` and `explode_layer`. The rule is
   strict. Anything that mirrors the schema is generated. Anything that
   is behavior over the schema is ordinary code.
-- `lairs.atproto` resolves identity, fetches records and blobs, and (for
-  authoring) writes to a PDS.
+- `lairs.atproto` is the read-oriented transport: identity resolution,
+  direct-PDS record fetch (`getRecord`, `listRecords`), blob fetch and
+  upload, and the optional appview query client. It carries an injectable
+  session for auth but does not itself write records to a PDS.
+- `lairs.author` is the write surface. It holds the builders over the
+  generated models, the `WriteClient` that issues `createRecord` /
+  `putRecord` / `deleteRecord` / `applyWrites`, the dependency-ordered
+  bulk publish, and the `pull`/`publish` round trip that diffs a local
+  `Repository` revision against the live PDS.
 - `lairs.store` is the on-disk and in-memory home for records: an
   AT-URI-keyed `ModelPool`, a didactic `Repository` wrapper, the Arrow
   and Parquet materialization, and a blob cache.
+- `lairs.discovery` is the dataset-discovery surface over the PDS and
+  appview clients: listing an actor's datasets and repository table of
+  contents, fanning out across actors, and building a local searchable
+  index.
 - `lairs.data` and `lairs.media` are the consumer-facing surfaces: the
   dataset API and the anchor resolver.
 - `lairs.integrations` is the optional adapter framework, kept out of
@@ -74,15 +85,17 @@ validate cleanly and a single bad record should not sink the pull. The
 decoded models land in the store: the `ModelPool` for immediate work, or
 the `Repository` for a versioned snapshot.
 
-The **write flow** runs from a builder out to a PDS. Records are
-constructed as instances of the generated models, so authoring is
-validated against the lexicons by construction. They are committed to the
-local `Repository` first, where they can be tagged, diffed, and
-inspected as a named revision. Publishing maps a revision to the minimal
-set of PDS writes (`applyWrites`) that makes the PDS match it, ordering
-the writes by cross-reference dependency so a referenced record always
-exists before the record that points at it. What reaches the PDS is a
-named, diffable revision rather than an untracked one-off write.
+The **write flow** runs from a builder out to a PDS and lives in
+`lairs.author`. Records are constructed as instances of the generated
+models through the package's builders, so authoring is validated against
+the lexicons by construction. They are committed to the local
+`Repository` first, where they can be tagged, diffed, and inspected as a
+named revision. `publish` maps a revision to the minimal set of PDS
+writes (`applyWrites`) that makes the PDS match it, ordering the writes
+by cross-reference dependency so a referenced record always exists before
+the record that points at it. The `WriteClient` issues those writes
+against the user's own repository. What reaches the PDS is a named,
+diffable revision rather than an untracked one-off write.
 
 ## The store as the hinge
 
@@ -104,11 +117,11 @@ Repository and are never the source of truth. They can always be
 rebuilt. The [reproducibility](reproducibility.md) page develops this.
 
 Third, the store is what makes authoring a `git`-like round trip against
-a PDS. `pull` ingests existing PDS records into a Repository. An author
-branches, modifies, and diffs locally, and `publish` computes the
-difference against what is already on the PDS and emits only the writes
-needed to close it. The local store is the authoring surface and the
-version control layer at once.
+a PDS. `lairs.author`'s `pull` ingests existing PDS records into a
+Repository. An author branches, modifies, and diffs locally, and
+`publish` computes the difference against what is already on the PDS and
+emits only the writes needed to close it. The local store is the
+authoring surface and the version control layer at once.
 
 ## What lairs is not
 

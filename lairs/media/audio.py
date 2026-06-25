@@ -36,7 +36,7 @@ class AudioBuffer(dx.Model):
     lives in an opaque field so callers go through the typed helpers rather than
     inspecting it blindly.
 
-    Parameters
+    Attributes
     ----------
     sample_rate : int
         The sample rate in hertz.

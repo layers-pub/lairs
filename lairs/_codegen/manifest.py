@@ -26,7 +26,7 @@ __all__ = ["Manifest", "load_manifest"]
 class Manifest(dx.Model):
     """Provenance of the vendored lexicon tree.
 
-    Parameters
+    Attributes
     ----------
     layers_git_sha : str
         The upstream Layers git revision the tree was vendored from.

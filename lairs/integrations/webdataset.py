@@ -60,7 +60,7 @@ _MIME_EXT: dict[str, str] = {
 class WebDatasetSpec(dx.Model):
     """An export specification for the WebDataset exporter.
 
-    Parameters
+    Attributes
     ----------
     output_dir : str, optional
         The directory the tar shards are written into. Created if absent.
@@ -431,7 +431,7 @@ class _MediaCell(dx.Model):
     out the fields :func:`~lairs.media.resolve_media` reads, so the exporter never
     inspects the raw mapping with widened types.
 
-    Parameters
+    Attributes
     ----------
     cid : str, optional
         The media content identifier.

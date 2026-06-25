@@ -85,9 +85,45 @@ The module-level `list_records` drains every page into a list and closes
 the client, so prefer `PdsClient.list_records` over an open client for
 true streaming.
 
-The bulk `com.atproto.sync.getRepo` CAR path (`PdsClient.get_repo_car`)
-is deferred: it raises `NotImplementedError` because CAR / DAG-CBOR
-block decoding is out of scope for the read milestone.
+## Describe a repository
+
+`PdsClient.describe_repo` wraps `com.atproto.repo.describeRepo` and
+returns a `RepoDescription` carrying the repo's `collections`, `handle`,
+`handle_is_correct` flag, and `did_doc`, without enumerating any records.
+It is the cheap way to learn which collections a repo holds before
+deciding what to fetch:
+
+```python
+with PdsClient(resolution.pds_endpoint) as client:
+    description = client.describe_repo(resolution.did)
+    print(description.collections)  # ("pub.layers.expression.expression", ...)
+```
+
+`PdsClient.list_repos` wraps `com.atproto.sync.listRepos`, folding its
+cursor into a lazy iterator of repository DIDs. It is the seed source for
+a backfill crawl over a relay or PDS. Both methods have module-level
+throwaway-client wrappers (`describe_repo`); `RepoDescription` is exported
+alongside them.
+
+## Read a whole repository
+
+The bulk `com.atproto.sync.getRepo` CAR path is fully implemented.
+`PdsClient.get_repo_car` fetches the repository as a raw CAR archive and
+returns its bytes. `PdsClient.get_repo` fetches that archive and decodes
+it: it walks the repository's Merkle search tree with `libipld` through
+the module-level `decode_repo_car`, recovering one `RecordEnvelope` per
+record in MST key order. Record values are rendered in DAG-JSON shape, so
+they decode against the generated models exactly as the XRPC record
+endpoints do. This recovers every record across all collections in one
+round trip:
+
+```python
+with PdsClient(resolution.pds_endpoint) as client:
+    for envelope in client.get_repo(resolution.did):
+        ...  # every record in the repo, decoded the same way
+```
+
+The module-level `get_repo` wraps this over a throwaway client.
 
 ## Decode envelopes into models
 
@@ -173,6 +209,30 @@ with AppviewClient("https://appview.example") as appview:
 envelopes across pages, reading the records array from `results_key`
 (default `records`) and following the cursor. `query` returns the raw
 decoded response body when neither shape fits.
+
+## Read a corpus
+
+The `lairs.data` layer reads `pub.layers.*` collections from a PDS and
+joins them into a `Corpus`, a graph of records linked by AT-URI.
+`lairs.data.corpus.load_corpus(uri, source=..., pds_client=...)` is the
+entry point: it takes the AT-URI of a corpus, enumerates its authority's
+Layers collections through `PdsClient.list_records`, and builds the
+joined graph.
+
+```python
+from lairs.atproto.pds import PdsClient
+from lairs.data import load_corpus
+
+with PdsClient(resolution.pds_endpoint) as client:
+    corpus = load_corpus("at://did:plc:.../pub.layers.corpus.corpus/3k...",
+                         source="pds", pds_client=client)
+```
+
+`source` takes `"pds"`, `"appview"`, or `"auto"`. Reading currently goes
+through an injected `pds_client`: the `pds` and `auto` sources both load
+from the PDS when a client is supplied, while `appview` (and any source
+without a client) raises `NotImplementedError` until endpoint discovery
+lands.
 
 ## See also
 

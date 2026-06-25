@@ -4,8 +4,10 @@ This guide covers the `Exporter` port and the bundled exporters that turn a
 flattened Arrow view into a framework-native dataset: HuggingFace `datasets`, the
 Hub push/pull, PyTorch, tf.data, and WebDataset. It notes which extra each needs.
 
-An exporter consumes an Arrow view (produced by `Dataset.to_arrow` or
-`Corpus.materialize`) and emits a target-framework object. The `Exporter`
+An exporter consumes an Arrow view (a `pyarrow.Table`, produced by
+`Dataset.to_arrow`) and emits a target-framework object. (`Corpus.materialize`
+instead writes Parquet view files to disk and returns their paths, so it is not a
+source for `export`.) The `Exporter`
 protocol in `lairs.integrations.ports` is generic over the view, the export
 specification, and the returned object. The one method is
 `export(view, *, spec=None)`. Because the Arrow flattening already resolves the
@@ -89,12 +91,12 @@ ds = load_from_hub("org/my-corpus", revision="main")
 
 The `ProvenanceBundle` records the corpus AT-URI, the Repository revision or tag,
 the vendored lexicon manifest hash and Layers version (filled from the manifest
-packaged with lairs), the license, and the corpus name. The `license` field is a
-flat SPDX facet (a slug such as `CC-BY-4.0`, or an expression such as
-`MIT OR Apache-2.0`), the same facet a discovery listing carries, projected from
-the corpus record's structured `licensing` embed rather than copied from a license
-string the record no longer has. `dataset_card(bundle)`
-renders the markdown card, where only set fields appear. `push_to_hub` needs both
+packaged with lairs), the license, and the corpus name. The lexicon manifest hash
+and Layers version are read from the vendored manifest; the remaining fields,
+including `license`, are supplied by the caller from the corpus record. The
+`license` field is a plain license-identifier string the caller passes through (a
+slug such as `CC-BY-4.0`, or an expression such as `MIT OR Apache-2.0`).
+`dataset_card(bundle)` renders the markdown card, where only set fields appear. `push_to_hub` needs both
 `datasets` and `huggingface_hub` from `lairs[hf]`, and `load_from_hub` needs
 `datasets`. Each raises a clear `ImportError` when absent. Hub authentication is
 the caller's responsibility (the usual `huggingface_hub` login).
@@ -121,9 +123,10 @@ values. When `tensor_columns` is unset, the numeric columns are inferred from th
 Arrow schema. The flat view carries no blob payloads, so media bytes are not
 materialized here. `spec.resolve_media` is recorded on the result for a
 downstream loader transform (which owns the media resolver) to act on. The
-column-selection and batching logic is pure Python, and only stacking a tensor
-column imports `torch`. `torch` comes from the `lairs[torch]` extra, and a missing
-column named in the spec raises `KeyError`.
+column-selection helpers are pure Python, but `export` always imports `torch`,
+because both the map-style and iterable datasets it builds subclass
+`torch.utils.data.Dataset` / `IterableDataset`. `torch` comes from the
+`lairs[torch]` extra, and a missing column named in the spec raises `KeyError`.
 
 ## tf.data
 
@@ -181,8 +184,8 @@ lazily. Calling it without the library raises a clear `ImportError`.
 
 | Exporter | Extra | Works without the extra |
 |---|---|---|
-| `hf` | `lairs[hf]` (`datasets`, `huggingface_hub`) | task-template selection, feature derivation |
-| `torch` | `lairs[torch]` | column selection, batching, collate without tensor columns |
+| `hf` | `lairs[hf]` (`datasets`, `huggingface_hub`) | task-template selection |
+| `torch` | `lairs[torch]` (`export` always needs it) | the standalone column-selection helpers, and collate without tensor columns |
 | `tfdata` | `lairs[tf]` (Python `< 3.14`) | feature-spec derivation from the schema |
 | `webdataset` | `lairs[webdataset]` for read-back | tar sharding (write path) |
 

@@ -15,7 +15,7 @@ __all__ = ["Candidate", "Edge", "Entity"]
 class Entity(dx.Model):
     """A resolved knowledge-base entity.
 
-    Parameters
+    Attributes
     ----------
     ref : str
         The canonical identifier or URI of the entity.
@@ -45,7 +45,7 @@ class Entity(dx.Model):
 class Candidate(dx.Model):
     """A ranked entity-linking candidate.
 
-    Parameters
+    Attributes
     ----------
     ref : str
         The candidate identifier or URI.
@@ -63,7 +63,7 @@ class Candidate(dx.Model):
 class Edge(dx.Model):
     """A directed edge in a knowledge-base neighbourhood.
 
-    Parameters
+    Attributes
     ----------
     source : str
         The source entity identifier or URI.

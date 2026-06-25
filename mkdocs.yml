@@ -78,6 +78,7 @@ nav:
     - Knowledge bases: guide/knowledge-bases.md
     - Exporters: guide/exporters.md
     - Experiment tracking: guide/tracking.md
+    - The explorer TUI: guide/explorer.md
     - The CLI: guide/cli.md
   - Concepts:
     - concepts/index.md
@@ -91,6 +92,7 @@ nav:
     - reference/index.md
     - Records: reference/records.md
     - ATProto access: reference/atproto.md
+    - Dataset discovery: reference/discovery.md
     - Store: reference/store.md
     - Media: reference/media.md
     - Code generation: reference/codegen.md
@@ -103,6 +105,7 @@ nav:
     - Knowledge bases: reference/kb.md
     - Exporters: reference/exporters.md
     - Experiment tracking: reference/tracking.md
+    - Explorer TUI: reference/explorer.md
     - CLI: reference/cli.md
   - Project:
     - project/stability.md
