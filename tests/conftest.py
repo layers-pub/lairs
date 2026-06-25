@@ -12,6 +12,7 @@ import json
 import os
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -120,9 +121,23 @@ def pytest_collection_modifyitems(
 
 
 _PDS_COMPOSE = Path(__file__).parent / "pds" / "docker-compose.yml"
-_PDS_PORT = int(os.environ.get("LAIRS_PDS_PORT", "3000"))
-_PDS_ENDPOINT = f"http://localhost:{_PDS_PORT}"
 _PDS_HEALTH_TIMEOUT_S = 90.0
+
+
+def _pds_port() -> int:
+    """Return the PDS port: an explicit ``LAIRS_PDS_PORT`` or a free one.
+
+    Binding the published, listen, and advertised port to one value keeps the
+    endpoint the PDS writes into its DID document equal to the one the host
+    reaches it on. Choosing a free port by default lets the integration suite
+    run even when another service already holds the conventional 3000.
+    """
+    override = os.environ.get("LAIRS_PDS_PORT")
+    if override:
+        return int(override)
+    with socket.socket() as probe:
+        probe.bind(("", 0))
+        return int(probe.getsockname()[1])
 
 
 class PdsServer(dx.Model):
@@ -272,9 +287,12 @@ def pds_server() -> Iterator[PdsServer]:
     """
     if not _docker_available():
         pytest.skip("docker is not available")
+    port = _pds_port()
+    endpoint = f"http://localhost:{port}"
     admin_password = secrets.token_hex(16)
     env = {
         **os.environ,
+        "LAIRS_PDS_PORT": str(port),
         "PDS_JWT_SECRET": secrets.token_hex(16),
         "PDS_ADMIN_PASSWORD": admin_password,
         "PDS_PLC_ROTATION_KEY_K256_PRIVATE_KEY_HEX": secrets.token_hex(32),
@@ -284,10 +302,10 @@ def pds_server() -> Iterator[PdsServer]:
         detail = started.stderr.decode()[:300]
         pytest.skip(f"could not start the pds container: {detail}")
     try:
-        if not _wait_healthy(_PDS_ENDPOINT, _PDS_HEALTH_TIMEOUT_S):
+        if not _wait_healthy(endpoint, _PDS_HEALTH_TIMEOUT_S):
             pytest.skip("the pds container did not become healthy in time")
         try:
-            server = _create_account(_PDS_ENDPOINT, admin_password)
+            server = _create_account(endpoint, admin_password)
         except httpx.HTTPError as exc:
             pytest.skip(f"could not create a test account: {exc}")
         yield server

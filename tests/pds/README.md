@@ -36,8 +36,13 @@ creation and handle-to-DID resolution depend on the PLC.
 | Variable | Default | Purpose |
 |---|---|---|
 | `LAIRS_PDS_IMAGE` | `ghcr.io/bluesky-social/pds:0.4` | PDS image and tag |
-| `LAIRS_PDS_PORT` | `3000` | host port the PDS is published on |
+| `LAIRS_PDS_PORT` | a free port | host port the PDS is published on; the fixture picks a free one unless this is set |
 | `PDS_DID_PLC_URL` | `https://plc.directory` | PLC directory used at account creation |
+
+The `pds_server` fixture selects a free host port automatically, so the
+integration suite runs even when another service already holds 3000. Set
+`LAIRS_PDS_PORT` to pin a specific port (the compose file alone, run by hand,
+still defaults to 3000).
 
 The fixture generates `PDS_JWT_SECRET`, `PDS_ADMIN_PASSWORD`, and
 `PDS_PLC_ROTATION_KEY_K256_PRIVATE_KEY_HEX` per session and passes them to the

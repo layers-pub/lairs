@@ -104,10 +104,15 @@ def test_spec_defaults() -> None:
     assert spec.drop_remainder is False
 
 
-def test_export_without_tensorflow_raises_clear_error() -> None:
-    """Without tensorflow, export raises an ImportError naming the extra."""
-    if "tensorflow" in sys.modules:
-        pytest.skip("tensorflow is installed; the lazy-import error cannot fire")
+def test_export_without_tensorflow_raises_clear_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without tensorflow, export raises an ImportError naming the extra.
+
+    The absence is simulated by blocking the import so the error path is
+    exercised whether or not tensorflow is installed in the environment.
+    """
+    monkeypatch.setitem(sys.modules, "tensorflow", None)
     table = pa.table({"a": [1, 2]})
     with pytest.raises(ImportError, match=r"lairs\[tf\]"):
         TfDataExporter().export(table)
