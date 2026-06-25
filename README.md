@@ -1,4 +1,30 @@
-# lairs
+<h1 align="center">lairs</h1>
+
+<p align="center">
+  <em>A read/write dataset client for the Layers format, built on didactic.</em>
+</p>
+
+<p align="center">
+  <a href="https://github.com/layers-pub/lairs/actions/workflows/ci.yml"><img src="https://github.com/layers-pub/lairs/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://layers-pub.github.io/lairs/"><img src="https://img.shields.io/badge/docs-online-blue" alt="Docs"></a>
+  <a href="https://pypi.org/project/lairs/"><img src="https://img.shields.io/pypi/v/lairs" alt="PyPI"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.14%2B-blue" alt="Python 3.14+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
+</p>
+
+<p align="center">
+  <a href="https://layers-pub.github.io/lairs/tutorial/"><strong>Tutorial</strong></a>
+  ·
+  <a href="https://layers-pub.github.io/lairs/guide/"><strong>Guides</strong></a>
+  ·
+  <a href="https://layers-pub.github.io/lairs/concepts/"><strong>Concepts</strong></a>
+  ·
+  <a href="https://layers-pub.github.io/lairs/reference/"><strong>API</strong></a>
+  ·
+  <a href="https://layers-pub.github.io/lairs/development/"><strong>Development</strong></a>
+</p>
+
+---
 
 `lairs` is a Python client for reading and writing data in the
 [Layers](https://github.com/layers-pub) format. It downloads `pub.layers.*`
@@ -15,7 +41,7 @@ The mental model: `datasets` and `git` for decentralised linguistic annotation.
 `lairs` is built on [didactic](https://github.com/panproto/didactic), which is
 built on [panproto](https://github.com/panproto/phrom). Every structured value
 in `lairs` is a `didactic` model. The project never uses dataclasses, pydantic,
-or ad-hoc classes for its data, and type hints never use `Any` or `object`.
+or ad-hoc classes for its data, and type hints never use `Any`.
 
 The ATProto lexicons are the single source of truth. The `pub.layers.*` models
 are not written by hand. They are generated from the vendored lexicons and
