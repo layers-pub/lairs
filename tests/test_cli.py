@@ -66,6 +66,7 @@ def test_help_lists_every_subcommand(capsys: pytest.CaptureFixture[str]) -> None
         "toc",
         "search",
         "index",
+        "tui",
         "login",
         "logout",
         "whoami",

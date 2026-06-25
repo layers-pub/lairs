@@ -134,6 +134,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_toc(subparsers)
     _add_search(subparsers)
     _add_index(subparsers)
+    _add_tui(subparsers)
     _add_login(subparsers)
     _add_logout(subparsers)
     _add_whoami(subparsers)
@@ -1334,4 +1335,63 @@ def _run_whoami(args: argparse.Namespace) -> int:
     print(session.handle or session.did)
     print(f"  did: {session.did}")
     print(f"  pds: {session.pds_endpoint}")
+    return 0
+
+
+def _add_tui(subparsers: _Subparsers) -> None:
+    """Register the ``tui`` subcommand."""
+    sub = subparsers.add_parser(
+        "tui",
+        help="launch the interactive data explorer",
+        description=(
+            "Open the Layers explorer: a colorful terminal UI with an Explore tab "
+            "that browses and filters the discovery index, a Browse tab that "
+            "explores every record type in a local repository (corpora, "
+            "ontologies, experiments, resource collections, relation graphs, "
+            "media, and more) through type-aware views, and a Query tab that "
+            "runs DuckDB SQL, KWIC concordance, and CQL token-pattern searches "
+            "over materialized data."
+        ),
+    )
+    sub.add_argument(
+        "--index",
+        default=None,
+        help="discovery index directory to open on the Explore tab",
+    )
+    sub.add_argument(
+        "--repo",
+        default=None,
+        help=(
+            "local repository directory to open on the Browse tab "
+            "(also feeds the Query tab unless --data is given)"
+        ),
+    )
+    sub.add_argument(
+        "--data",
+        default=None,
+        help="materialized Parquet directory to open on the Query tab",
+    )
+    sub.set_defaults(handler=_run_tui)
+
+
+def _run_tui(args: argparse.Namespace) -> int:
+    """Handle ``lairs tui``: launch the interactive explorer.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments, carrying optional ``index``, ``repo``, and ``data``
+        paths.
+
+    Returns
+    -------
+    int
+        ``0`` after the UI exits, ``1`` when the terminal stack is unavailable.
+    """
+    try:
+        from lairs.tui import run_tui  # noqa: PLC0415
+    except ImportError as error:
+        print(f"the TUI requires the 'textual' dependency: {error}")
+        return 1
+    run_tui(index_path=args.index, data_path=args.data, repo_path=args.repo)
     return 0

@@ -1,0 +1,219 @@
+/* Colorful, modern styling for the lairs explorer TUI.
+   Colors are drawn from the active Textual theme palette so the look adapts to
+   whichever theme is selected (Ctrl+T cycles them). */
+
+Screen {
+    background: $background;
+}
+
+TabbedContent {
+    height: 1fr;
+}
+
+Tabs {
+    background: $panel;
+}
+
+Tab {
+    text-style: bold;
+}
+
+/* ---- Explore ---------------------------------------------------------- */
+
+#explore-pane,
+#query-pane {
+    height: 1fr;
+    padding: 1 1 0 1;
+}
+
+.filterbar {
+    height: auto;
+    padding: 1 1;
+    margin-bottom: 1;
+    background: $panel;
+    border: round $primary;
+}
+
+.filterbar Input {
+    width: 1fr;
+    margin: 0 1;
+    border: tall $boost;
+}
+
+.filterbar Input:focus {
+    border: tall $accent;
+}
+
+#explore-body {
+    height: 1fr;
+}
+
+#results,
+#qresults {
+    width: 1fr;
+    height: 1fr;
+    border: round $accent;
+    border-title-color: $accent;
+    border-title-style: bold;
+}
+
+#detail-wrap {
+    width: 44%;
+    border: round $secondary;
+    border-title-color: $secondary;
+    border-title-style: bold;
+    padding: 0 1;
+    background: $surface;
+}
+
+DataTable > .datatable--header {
+    background: $accent 20%;
+    color: $accent;
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: $primary;
+    color: $text;
+}
+
+DataTable > .datatable--hover {
+    background: $boost;
+}
+
+/* ---- Browse ----------------------------------------------------------- */
+
+#browse-pane {
+    height: 1fr;
+    padding: 1 1 0 1;
+    layout: horizontal;
+}
+
+#types-wrap {
+    width: 28;
+    min-width: 22;
+    height: 1fr;
+    margin-right: 1;
+    border: round $secondary;
+    border-title-color: $secondary;
+    border-title-style: bold;
+    background: $surface;
+}
+
+#records-col {
+    width: 1fr;
+    height: 1fr;
+    margin-right: 1;
+}
+
+#rfilter {
+    height: auto;
+    margin-bottom: 1;
+    border: tall $boost;
+}
+
+#rfilter:focus {
+    border: tall $accent;
+}
+
+#records {
+    width: 1fr;
+    height: 1fr;
+    border: round $accent;
+    border-title-color: $accent;
+    border-title-style: bold;
+}
+
+#rdetail-wrap {
+    width: 46%;
+    height: 1fr;
+    border: round $secondary;
+    border-title-color: $secondary;
+    border-title-style: bold;
+    padding: 0 1;
+    background: $surface;
+}
+
+/* ---- Query ------------------------------------------------------------ */
+
+#query-pane {
+    layout: horizontal;
+}
+
+#schema-wrap {
+    width: 30;
+    min-width: 24;
+    height: 1fr;
+    margin-right: 1;
+    border: round $secondary;
+    border-title-color: $secondary;
+    border-title-style: bold;
+    background: $surface;
+}
+
+#qmain {
+    width: 1fr;
+    height: 1fr;
+}
+
+.modebar {
+    height: auto;
+    padding: 0 1;
+    background: $panel;
+    border: round $primary;
+}
+
+.modebar RadioButton {
+    margin-right: 2;
+}
+
+#editor {
+    height: 9;
+    margin-top: 1;
+    border: tall $boost;
+}
+
+#editor:focus {
+    border: tall $accent;
+}
+
+.qactions {
+    height: auto;
+    margin: 1 0;
+    align-vertical: middle;
+}
+
+#run {
+    margin-right: 2;
+}
+
+#qstatus {
+    width: 1fr;
+    height: 1;
+    color: $text-muted;
+    content-align: left middle;
+}
+
+.empty {
+    width: 1fr;
+    height: 1fr;
+    color: $text-muted;
+    content-align: center middle;
+    text-align: center;
+}
+
+/* ---- Help modal ------------------------------------------------------- */
+
+HelpScreen {
+    align: center middle;
+}
+
+#help-box {
+    width: 78;
+    max-width: 90%;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    border: thick $accent;
+    background: $surface;
+}

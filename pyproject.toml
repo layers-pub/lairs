@@ -17,6 +17,8 @@ dependencies = [
     # part of the shipped feature set, so their runtime deps are not optional.
     "websockets>=13",
     "duckdb",
+    # the interactive explorer (`lairs tui`) is a shipped feature too.
+    "textual>=8",
 ]
 
 [project.optional-dependencies]
