@@ -5,6 +5,7 @@ from __future__ import annotations
 import secrets
 import threading
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
@@ -224,6 +225,7 @@ def test_subscribe_repos_reconnects_from_highest_seq(
     monkeypatch.setattr(firehose, "connect", fake_connect)
     stream = firehose.subscribe_repos("ws://relay.example", reconnect=True)
     collected = [next(stream).seq for _ in range(3)]
+    assert isinstance(stream, Generator)
     stream.close()
     assert collected == [5, 6, 7]
     # the first dial carries no cursor; the reconnect resumes from seq 6.

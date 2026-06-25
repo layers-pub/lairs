@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Self
 
 import httpx
 
-from lairs.atproto.identity import IdentityResolution
+from lairs.atproto.identity import IdentityResolution, IdentityResolver
 from lairs.atproto.pds import PdsClient
 from lairs.discovery import federated
 from lairs.discovery.federated import datasets_using_ontology, discover_datasets
@@ -100,7 +100,7 @@ def test_datasets_using_ontology_filters_by_ref() -> None:
     assert {row.uri for row in rows} == {f"at://did:plc:a/{_CORPUS_NSID}/a"}
 
 
-class _CountingResolver:
+class _CountingResolver(IdentityResolver):
     """A fake resolver that records construction and per-actor resolution."""
 
     instances = 0
@@ -115,9 +115,9 @@ class _CountingResolver:
 
     def __exit__(
         self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
+        _exc_type: type[BaseException] | None,
+        _exc: BaseException | None,
+        _tb: TracebackType | None,
     ) -> None:
         self.closed = True
 
@@ -171,7 +171,7 @@ def test_discover_datasets_reuses_injected_resolver_without_closing(
         discover_datasets(
             ["a.test"],
             source="pds",
-            resolver=injected,  # type: ignore[arg-type]
+            resolver=injected,
             pds_client=client,
         )
     # an injected resolver is reused as is and is NOT closed by the sweep.

@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import didactic.api as dx
 
 from lairs.records import views
 from lairs.records._generated import annotation, defs
+
+if TYPE_CHECKING:
+    from lairs._types import JsonValue
 
 
 def _token_anchor(index: int) -> defs.Anchor:
@@ -94,12 +98,15 @@ def test_anchor_kind_none_for_non_mapping_row() -> None:
 def test_anchor_kind_falls_back_to_unknown_property() -> None:
     # an anchor row that sets only a property outside the known anchor set
     # still names a kind via the tolerant sorted-keys fallback
-    row = {"futureKind": {"value": 1}, "zlast": None}
+    row: JsonValue = {"futureKind": {"value": 1}, "zlast": None}
     assert views._anchor_kind_of_row(row) == "futureKind"
 
 
 def test_anchor_kind_known_property_wins_over_fallback() -> None:
-    row = {"futureKind": {"value": 1}, "textSpan": {"byteStart": 0, "byteEnd": 1}}
+    row: JsonValue = {
+        "futureKind": {"value": 1},
+        "textSpan": {"byteStart": 0, "byteEnd": 1},
+    }
     assert views._anchor_kind_of_row(row) == "textSpan"
 
 

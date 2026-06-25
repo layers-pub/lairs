@@ -10,10 +10,18 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import DataTable, Input, Markdown, TabbedContent, Tree
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from textual.widgets.tree import TreeNode
+
+    from lairs._types import JsonValue
 
 import lairs.tui as lairs_tui
 from lairs.author.publish import _RECORD_MODELS as PUBLISH_MODELS
@@ -57,7 +65,9 @@ def _first(browser: RepoBrowser, nsid: str) -> str:
     return render_record(browser, nsid, uri, raw)
 
 
-def _pick(browser: RepoBrowser, nsid: str, **match: str) -> tuple[str, object]:
+def _pick(
+    browser: RepoBrowser, nsid: str, **match: str
+) -> tuple[str, Mapping[str, JsonValue]]:
     """Return the first ``(uri, raw)`` of a collection matching field values."""
     for uri, raw in browser.records_raw(nsid):
         if all(raw.get(key) == value for key, value in match.items()):
@@ -288,7 +298,7 @@ def test_summarize_is_type_appropriate(repo_dir: Path) -> None:
 def test_render_generic_formats_scalars_nested_and_skips_empty() -> None:
     """The generic view lists scalar fields, headers nested ones, and skips empty."""
     uri = "at://did:plc:x/pub.layers.thing/r"
-    data = {
+    data: Mapping[str, JsonValue] = {
         "name": "widget",
         "count": 3,
         "empty_str": "",
@@ -414,8 +424,12 @@ def test_materialize_for_query_cleans_up_on_failure(
     created: list[Path] = []
     real_mkdtemp = lairs_tui.tempfile.mkdtemp
 
-    def _record_mkdtemp(*args: object, **kwargs: object) -> str:
-        path = real_mkdtemp(*args, **kwargs)
+    def _record_mkdtemp(
+        suffix: str | None = None,
+        prefix: str | None = None,
+        dir_: str | None = None,
+    ) -> str:
+        path = real_mkdtemp(suffix, prefix, dir_)
         created.append(Path(path))
         return path
 
@@ -434,9 +448,9 @@ def test_materialize_for_query_cleans_up_on_failure(
 # ---- Browse pane in the app -----------------------------------------------
 
 
-def _leaves(app: LairsApp) -> list[Tree.NodeID]:
+def _leaves(app: LairsApp) -> list[TreeNode[str | None]]:
     """Return the type-tree leaf nodes (the record-type entries)."""
-    tree = app.query_one("#types", Tree)
+    tree: Tree[str | None] = app.query_one("#types", Tree)
     return [leaf for ns in tree.root.children for leaf in ns.children]
 
 
@@ -461,7 +475,7 @@ def test_type_tree_groups_by_namespace(repo_dir: Path) -> None:
         app = LairsApp(repo_path=str(repo_dir))
         async with app.run_test(size=(160, 48)) as pilot:
             await pilot.pause()
-            tree = app.query_one("#types", Tree)
+            tree: Tree[str | None] = app.query_one("#types", Tree)
             namespaces = {str(node.label) for node in tree.root.children}
             assert "ontology" in namespaces
             assert "graph" in namespaces

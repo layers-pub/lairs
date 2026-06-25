@@ -14,7 +14,10 @@ from lairs.tui import viz
 from lairs.tui.browse import RepoBrowser
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
+
+    from lairs._types import JsonValue
 
 _S1 = "at://did:plc:browsefixture/pub.layers.expression.expression/s1"
 _SEG = "at://did:plc:browsefixture/pub.layers.segmentation.segmentation/seg1"
@@ -113,8 +116,11 @@ def test_tier_timeline_lays_out_lanes() -> None:
 
 
 def test_graph_edges_resolve_node_labels() -> None:
-    nodes = {"at://n/1": {"label": "eat"}, "at://n/2": {"label": "apple"}}
-    edges = [
+    nodes: Mapping[str, Mapping[str, JsonValue]] = {
+        "at://n/1": {"label": "eat"},
+        "at://n/2": {"label": "apple"},
+    }
+    edges: list[Mapping[str, JsonValue]] = [
         {
             "source": {"recordRef": "at://n/1"},
             "target": {"recordRef": "at://n/2"},
@@ -137,13 +143,13 @@ def test_document_tags_render_chips_with_confidence() -> None:
 # ---- judgment distribution: one assertion per taskType ---------------------
 
 
-def _judgments(field: str, values: list) -> list[dict]:
+def _judgments(field: str, values: list[JsonValue]) -> list[Mapping[str, JsonValue]]:
     """Build judgment dicts populating one response field."""
     return [{field: value} for value in values]
 
 
 def test_ordinal_scale_likert() -> None:
-    experiment = {
+    experiment: Mapping[str, JsonValue] = {
         "measureType": "acceptability",
         "taskType": "ordinal-scale",
         "scaleMin": 1,
@@ -158,7 +164,7 @@ def test_ordinal_scale_likert() -> None:
 
 
 def test_magnitude_uses_geometric_mean() -> None:
-    experiment = {
+    experiment: Mapping[str, JsonValue] = {
         "measureType": "inference",
         "taskType": "magnitude",
         "scaleMin": 0,
@@ -171,7 +177,10 @@ def test_magnitude_uses_geometric_mean() -> None:
 
 
 def test_forced_choice_2afc_proportions() -> None:
-    experiment = {"measureType": "preference", "taskType": "forced-choice"}
+    experiment: Mapping[str, JsonValue] = {
+        "measureType": "preference",
+        "taskType": "forced-choice",
+    }
     out = viz.judgment_distribution(
         experiment, _judgments("categoricalValue", ["A", "A", "B", "A"])
     )
@@ -181,7 +190,10 @@ def test_forced_choice_2afc_proportions() -> None:
 
 
 def test_odd_man_out_marks_outlier() -> None:
-    experiment = {"measureType": "similarity", "taskType": "forced-choice"}
+    experiment: Mapping[str, JsonValue] = {
+        "measureType": "similarity",
+        "taskType": "forced-choice",
+    }
     out = viz.judgment_distribution(
         experiment, _judgments("categoricalValue", ["x3", "x3", "x1", "x3", "x2"])
     )
@@ -190,7 +202,10 @@ def test_odd_man_out_marks_outlier() -> None:
 
 
 def test_binary_distribution() -> None:
-    experiment = {"measureType": "comprehension", "taskType": "binary"}
+    experiment: Mapping[str, JsonValue] = {
+        "measureType": "comprehension",
+        "taskType": "binary",
+    }
     out = viz.judgment_distribution(
         experiment, _judgments("categoricalValue", ["yes", "no", "yes"])
     )
@@ -199,7 +214,10 @@ def test_binary_distribution() -> None:
 
 
 def test_categorical_distribution() -> None:
-    experiment = {"measureType": "production", "taskType": "categorical"}
+    experiment: Mapping[str, JsonValue] = {
+        "measureType": "production",
+        "taskType": "categorical",
+    }
     out = viz.judgment_distribution(
         experiment, _judgments("categoricalValue", ["pos", "neg", "pos", "neu"])
     )
@@ -208,7 +226,10 @@ def test_categorical_distribution() -> None:
 
 
 def test_free_text_lists_responses() -> None:
-    experiment = {"measureType": "production", "taskType": "free-text"}
+    experiment: Mapping[str, JsonValue] = {
+        "measureType": "production",
+        "taskType": "free-text",
+    }
     out = viz.judgment_distribution(
         experiment,
         _judgments("freeText", ["A believed C", "A believed C", "C is true"]),
@@ -217,7 +238,10 @@ def test_free_text_lists_responses() -> None:
 
 
 def test_unknown_task_falls_back_to_scalar() -> None:
-    experiment = {"measureType": "custom", "taskType": "reaction-norming"}
+    experiment: Mapping[str, JsonValue] = {
+        "measureType": "custom",
+        "taskType": "reaction-norming",
+    }
     out = viz.judgment_distribution(experiment, _judgments("scalarValue", [4, 5, 4, 6]))
     assert "mean" in out
 
@@ -258,7 +282,7 @@ def test_pack_lanes_separates_overlaps_and_shares_disjoint() -> None:
 
 
 def test_feature_map_flattens_entries() -> None:
-    value = {
+    value: JsonValue = {
         "entries": [{"key": "tense", "value": "past"}, {"key": "num", "value": "sg"}]
     }
     assert viz.feature_map(value) == {"tense": "past", "num": "sg"}
@@ -274,9 +298,11 @@ def test_anchor_byte_span_text_and_page_and_none() -> None:
 
 
 def test_anchor_tokenization_reads_token_anchors() -> None:
-    anchor = {"tokenRef": {"tokenIndex": 0, "tokenizationId": {"value": "tok/x"}}}
+    anchor: JsonValue = {
+        "tokenRef": {"tokenIndex": 0, "tokenizationId": {"value": "tok/x"}}
+    }
     assert viz.anchor_tokenization(anchor) == "tok/x"
-    seq = {
+    seq: JsonValue = {
         "tokenRefSequence": {"tokenIndexes": [0, 1], "tokenizationId": {"value": "t"}}
     }
     assert viz.anchor_tokenization(seq) == "t"
@@ -289,7 +315,7 @@ def test_anchor_tokenization_reads_token_anchors() -> None:
 def test_ordinal_counts_out_of_range_responses() -> None:
     # a response of 5 outside a declared 1..3 scale must still be counted in the
     # bars and the n, not silently dropped while inflating the mean.
-    experiment = {
+    experiment: Mapping[str, JsonValue] = {
         "measureType": "acceptability",
         "taskType": "ordinal-scale",
         "scaleMin": 1,
@@ -376,7 +402,7 @@ def test_token_tag_interlinear_aligns_tags(repo_dir: Path) -> None:
 def test_span_layer_overlay_positions_byte_spans(repo_dir: Path) -> None:
     # a real span-kind layer with byte-anchored annotations over s1's text.
     browser = RepoBrowser.open(repo_dir)
-    layer = {
+    layer: Mapping[str, JsonValue] = {
         "kind": "span",
         "annotations": [
             {
@@ -393,7 +419,7 @@ def test_span_layer_overlay_positions_byte_spans(repo_dir: Path) -> None:
 
 def test_alignment_bitext_links_source_to_target(repo_dir: Path) -> None:
     browser = RepoBrowser.open(repo_dir)
-    data = {
+    data: Mapping[str, JsonValue] = {
         "expression": _S1,
         "source": {"localId": {"value": "tok/s1/words"}},
         "target": {"localId": {"value": "tok/s1/words"}},

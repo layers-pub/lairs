@@ -13,7 +13,17 @@ from typing import TYPE_CHECKING
 
 from rich.text import Text
 from textual.containers import VerticalScroll
-from textual.widgets import DataTable, RadioSet, Static, TabbedContent, TextArea, Tree
+from textual.coordinate import Coordinate
+from textual.widgets import (
+    DataTable,
+    Markdown,
+    RadioButton,
+    RadioSet,
+    Static,
+    TabbedContent,
+    TextArea,
+    Tree,
+)
 
 from lairs.tui.app import LairsApp
 from lairs.tui.screens.browse import BrowsePane
@@ -22,13 +32,15 @@ from lairs.tui.screens.query import QueryPane
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from textual.widgets.tree import TreeNode
+
 
 # ---- helpers ---------------------------------------------------------------
 
 
-def _browse_leaves(app: LairsApp) -> list[Tree.NodeID]:
+def _browse_leaves(app: LairsApp) -> list[TreeNode[str]]:
     """Return the Browse type-tree leaf nodes."""
-    tree = app.query_one("#types", Tree)
+    tree: Tree[str] = app.query_one("#types", Tree)
     return [leaf for ns in tree.root.children for leaf in ns.children]
 
 
@@ -40,12 +52,13 @@ def _browse_select(app: LairsApp, nsid: str) -> None:
 
 def _set_mode(app: LairsApp, index: int) -> None:
     """Select a Query mode radio button by index."""
-    app.query_one("#mode", RadioSet).query("RadioButton")[index].value = True
+    app.query_one("#mode", RadioSet).query(RadioButton)[index].value = True
 
 
-def _first_column_node(app: LairsApp) -> Tree.NodeID:
+def _first_column_node(app: LairsApp) -> TreeNode[str]:
     """Return the first column node under the first table in the schema tree."""
-    return app.query_one("#schema", Tree).root.children[0].children[0]
+    tree: Tree[str] = app.query_one("#schema", Tree)
+    return tree.root.children[0].children[0]
 
 
 # ---- Browse: drive every view of every record type -------------------------
@@ -60,7 +73,7 @@ def test_browse_drives_every_view_without_error(repo_dir: Path) -> None:
             await pilot.pause()
             pane = app.query_one(BrowsePane)
             wrap = app.query_one("#rdetail-wrap", VerticalScroll)
-            detail = app.query_one("#rdetail")
+            detail = app.query_one("#rdetail", Markdown)
             visited = 0
             for leaf in _browse_leaves(app):
                 pane.on_tree_node_selected(Tree.NodeSelected(leaf))
@@ -142,10 +155,10 @@ def test_browse_treats_record_content_as_literal(markup_repo: Path) -> None:
             _browse_select(app, "pub.layers.corpus.corpus")
             await pilot.pause()
             table = app.query_one("#records", DataTable)
-            cell = table.get_cell_at((0, 0))
+            cell = table.get_cell_at(Coordinate(0, 0))
             assert isinstance(cell, Text)
             assert cell.plain == "[bold]Tricky[/bold]"
-            detail = app.query_one("#rdetail")
+            detail = app.query_one("#rdetail", Markdown)
             assert "Tricky" in detail._markdown
 
     asyncio.run(scenario())
@@ -160,7 +173,7 @@ def test_browse_renders_markup_expression_text(markup_repo: Path) -> None:
             await pilot.pause()
             _browse_select(app, "pub.layers.expression.expression")
             await pilot.pause()
-            detail = app.query_one("#rdetail")
+            detail = app.query_one("#rdetail", Markdown)
             assert "[1]" in detail._markdown
             assert "[/red]" in detail._markdown
 
@@ -302,7 +315,7 @@ def test_query_result_cells_are_literal(corpus_dir: Path) -> None:
             ).text = "SELECT '[x]' AS c FROM expressions LIMIT 1"
             pane.action_run()
             await pilot.pause()
-            cell = app.query_one("#qresults", DataTable).get_cell_at((0, 0))
+            cell = app.query_one("#qresults", DataTable).get_cell_at(Coordinate(0, 0))
             assert isinstance(cell, Text)
             assert cell.plain == "[x]"
 

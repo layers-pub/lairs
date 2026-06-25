@@ -11,7 +11,15 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
-from textual.widgets import DataTable, Input, RadioSet, TabbedContent, TextArea, Tree
+from textual.widgets import (
+    DataTable,
+    Input,
+    RadioButton,
+    RadioSet,
+    TabbedContent,
+    TextArea,
+    Tree,
+)
 
 from lairs.discovery.cards import CardFreshness, CardProvenance, DatasetCard
 from lairs.discovery.models import DatasetSummary
@@ -222,7 +230,7 @@ def test_explore_highlight_tracks_cards(index_path: str) -> None:
 
 def _select_mode(app: LairsApp, mode: int) -> None:
     """Select a query mode radio button by index."""
-    app.query_one("#mode", RadioSet).query("RadioButton")[mode].value = True
+    app.query_one("#mode", RadioSet).query(RadioButton)[mode].value = True
 
 
 def test_query_schema_tree_populated(corpus_dir: Path) -> None:

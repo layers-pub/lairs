@@ -1067,7 +1067,9 @@ def test_publish_blob_record_is_idempotent_live(
         stored_blob = env.value["blob"]
         assert isinstance(stored_blob, dict)
         assert stored_blob["$type"] == "blob"
-        assert stored_blob["ref"]["$link"] == blob_cid
+        ref = stored_blob["ref"]
+        assert isinstance(ref, dict)
+        assert ref["$link"] == blob_cid
         # re-publishing the unchanged revision is a no-op.
         again = publish.publish(
             repo,

@@ -13,7 +13,7 @@ from lairs.data.features import Features
 from lairs.records._generated.expression import Expression
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Sequence
 
 _NOW = datetime(2024, 1, 1, tzinfo=UTC)
 
@@ -93,7 +93,7 @@ def test_map_takes_model_for_reshaped_output() -> None:
 def test_map_batched_receives_whole_batch() -> None:
     seen: list[int] = []
 
-    def dedupe(batch: tuple[Expression, ...]) -> list[Expression]:
+    def dedupe(batch: Sequence[Expression]) -> list[Expression]:
         seen.append(len(batch))
         # collapse each batch to a single representative record.
         return [batch[0]]
@@ -109,7 +109,7 @@ def test_map_batched_receives_whole_batch() -> None:
 def test_map_batched_is_lazy() -> None:
     calls: list[int] = []
 
-    def grow(batch: tuple[Expression, ...]) -> tuple[Expression, ...]:
+    def grow(batch: Sequence[Expression]) -> Sequence[Expression]:
         calls.append(len(batch))
         return batch
 

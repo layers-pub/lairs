@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 pytest.importorskip("didactic")
@@ -12,6 +14,9 @@ from lairs.atproto.pds import RecordEnvelope, decode
 from lairs.records._generated import media
 from lairs.records.blobref import BlobRef, normalize_blob_refs
 
+if TYPE_CHECKING:
+    from lairs._types import JsonValue
+
 
 def test_blobref_is_didactic_model() -> None:
     assert issubclass(BlobRef, dx.Model)
@@ -19,7 +24,7 @@ def test_blobref_is_didactic_model() -> None:
 
 def test_normalize_blob_refs_rewrites_wire_form() -> None:
     """An ATProto blob wire object becomes BlobRef-shaped, nested ones too."""
-    wire = {
+    wire: JsonValue = {
         "kind": "audio",
         "blob": {
             "$type": "blob",
@@ -30,8 +35,13 @@ def test_normalize_blob_refs_rewrites_wire_form() -> None:
         "items": [{"b": {"$type": "blob", "ref": {"$link": "bafkre2"}}}],
     }
     out = normalize_blob_refs(wire)
+    assert isinstance(out, dict)
     assert out["blob"] == {"cid": "bafkreiabc", "mime_type": "audio/wav", "size": 4096}
-    assert out["items"][0]["b"] == {"cid": "bafkre2", "mime_type": None, "size": None}
+    items = out["items"]
+    assert isinstance(items, list)
+    nested = items[0]
+    assert isinstance(nested, dict)
+    assert nested["b"] == {"cid": "bafkre2", "mime_type": None, "size": None}
     assert out["kind"] == "audio"
 
 
@@ -45,7 +55,7 @@ def test_normalize_blob_refs_passes_through_non_blobs() -> None:
 
 def test_blob_record_round_trips_through_decode() -> None:
     """A PDS-wire blob record decodes back into its model's BlobRef field."""
-    value = {
+    value: JsonValue = {
         "$type": "pub.layers.media.media",
         "kind": "audio",
         "createdAt": "2026-06-18T00:00:00Z",

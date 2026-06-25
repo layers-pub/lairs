@@ -22,7 +22,9 @@ import pyarrow as pa
 import pyarrow.types as pat
 
 if TYPE_CHECKING:
-    import tensorflow as tf  # ty: ignore[unresolved-import]
+    from types import ModuleType
+
+    import tensorflow as tf
 
 type _FeedScalar = str | bytes | int | float | bool | None
 """A scalar Arrow value on its way into a tensorflow tensor.
@@ -218,7 +220,7 @@ def feature_specs_of(
     return tuple(specs)
 
 
-def _require_tensorflow() -> tf:
+def _require_tensorflow() -> ModuleType:
     """Import tensorflow lazily, raising a clear error when it is absent.
 
     Returns
@@ -232,7 +234,7 @@ def _require_tensorflow() -> tf:
         When tensorflow is not installed.
     """
     try:
-        import tensorflow as tf  # ty: ignore[unresolved-import]  # noqa: PLC0415
+        import tensorflow as tf  # noqa: PLC0415
     except ImportError as error:  # pragma: no cover - exercised only without tf
         message = (
             "the tfdata exporter requires tensorflow; install the optional "
@@ -242,7 +244,7 @@ def _require_tensorflow() -> tf:
     return tf
 
 
-def _dtype_for(token: str, tf: tf) -> tf.dtypes.DType:
+def _dtype_for(token: str, tf: ModuleType) -> tf.dtypes.DType:
     """Resolve a dtype token to a concrete ``tf.dtypes.DType``.
 
     Parameters

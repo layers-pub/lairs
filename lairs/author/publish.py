@@ -1032,7 +1032,25 @@ def _value_with_type(value: JsonValue, collection: str) -> JsonValue:
     return typed
 
 
-def _dag_cbor_links(value: JsonValue) -> JsonValue:
+type _DagCborValue = (
+    str
+    | int
+    | float
+    | bool
+    | None
+    | bytes
+    | list[_DagCborValue]
+    | dict[str, _DagCborValue]
+)
+"""A DAG-CBOR encoding input: a JSON value extended with raw ``bytes`` leaves.
+
+This is the shape ``libipld.encode_dag_cbor`` consumes once cid-link maps have
+been rewritten to raw CID bytes. It is a :data:`JsonValue` plus ``bytes``, which
+DAG-CBOR encodes as a CID link (CBOR tag 42).
+"""
+
+
+def _dag_cbor_links(value: JsonValue) -> _DagCborValue:
     """Rewrite cid-link maps so DAG-CBOR encodes them as CID links.
 
     In the JSON form of a record, a CID link (including the ``ref`` of every
@@ -1049,7 +1067,7 @@ def _dag_cbor_links(value: JsonValue) -> JsonValue:
 
     Returns
     -------
-    JsonValue
+    _DagCborValue
         The value with every cid-link map replaced by its raw CID bytes.
     """
     if isinstance(value, dict):

@@ -27,6 +27,8 @@ from lairs.store.repository import Repository
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from lairs._types import JsonValue
+
 
 class _Span(dx.Model):
     """A throwaway byte-span anchor."""
@@ -60,7 +62,7 @@ _EXPR_URI = "at://did:plc:abc/pub.layers.expression.expression/e1"
 _LAYER_URI = "at://did:plc:abc/pub.layers.annotation.annotationLayer/l1"
 
 
-def _flatten_real(anchor: Anchor) -> dict[str, object]:
+def _flatten_real(anchor: Anchor) -> dict[str, JsonValue]:
     """Flatten a real generated Anchor through its JSON dump."""
     return arrow.flatten_anchor(json.loads(anchor.model_dump_json()))
 
