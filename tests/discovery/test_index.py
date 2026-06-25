@@ -66,6 +66,42 @@ def test_card_pool_keys_by_index_uri(tmp_path: Path) -> None:
     assert len(pool) == 1
 
 
+@pytest.mark.integration
+def test_remove_card_removes_from_index(tmp_path: Path) -> None:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    index.put_card(_card(_URI_A, "a"))
+    index.commit("seed")
+    assert index.get_card(_URI_A) is not None
+    assert index.remove_card(_URI_A) is True
+    assert index.get_card(_URI_A) is None
+    assert index.cards() == []
+
+
+@pytest.mark.integration
+def test_remove_card_absent_is_noop(tmp_path: Path) -> None:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    index.put_card(_card(_URI_A, "a"))
+    index.commit("seed")
+    assert index.remove_card(_URI_B) is False
+    assert index.get_card(_URI_A) is not None
+
+
+@pytest.mark.integration
+def test_diff_cards_reports_removed(tmp_path: Path) -> None:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    index.put_card(_card(_URI_A, "a"))
+    base = index.commit("first snapshot")
+    assert index.remove_card(_URI_A) is True
+    head = index.commit("drop a")
+    diff = index.diff_cards(base, head)
+    # a removed card is absent from the live index, so it falls back to the
+    # card's own index URI (documented CardDiff behavior).
+    assert len(diff.removed) == 1
+    assert diff.removed[0].startswith("at://did:lairs:index/lairs.index.datasetCard/")
+    assert diff.added == ()
+    assert diff.changed == ()
+
+
 def test_cursor_round_trip(tmp_path: Path) -> None:
     index = DiscoveryIndex.init(tmp_path / "idx")
     assert index.get_cursor("wss://relay.example") is None

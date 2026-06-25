@@ -14,6 +14,10 @@ are read back through ``data_at`` under their AT-URI keys, so a tag pins an
 exact, byte-reproducible set of values, and a revision-to-revision diff compares
 the values folded over each revision's commit ancestry.
 
+Removal is representable: ``forget`` stages a tombstone under a record's AT-URI,
+which the ancestry fold drops, so a record present at a base revision can be
+absent at a descendant head and a diff reports it in ``removed``.
+
 didactic 0.9.0 exposes tag creation (``create_tag`` and friends), the
 committed-data write (``add_data``), and the committed-data read (``data_at``)
 on the public Repository surface, all of which this wrapper uses directly.
@@ -21,6 +25,7 @@ on the public Repository surface, all of which this wrapper uses directly.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -39,6 +44,9 @@ _RECORDS_DIR = "records"
 _INDEX_FILE = "index.json"
 # the default commit author when a caller does not supply one.
 _DEFAULT_AUTHOR = "lairs <lairs@layers.pub>"
+# the committed-data payload that marks a record as deleted at a revision, so
+# the ancestry fold in _state_at drops the key rather than carrying it forward.
+_TOMBSTONE = b'{"$tombstone":true}'
 
 
 def _nsid_of(uri: str) -> str:
@@ -68,7 +76,13 @@ def _nsid_of(uri: str) -> str:
 
 
 def _safe_name(uri: str) -> str:
-    """Return a filesystem-safe file stem for an AT-URI.
+    """Return a collision-free filesystem-safe file stem for an AT-URI.
+
+    The stem is the SHA-256 hex digest of the UTF-8 AT-URI, which is injective
+    for distinct URIs and free of path separators or other reserved characters.
+    The working-tree index maps each AT-URI back to its stem, so the stem need
+    not be human-readable, and two distinct AT-URIs can never share a record
+    file.
 
     Parameters
     ----------
@@ -78,9 +92,9 @@ def _safe_name(uri: str) -> str:
     Returns
     -------
     str
-        A reversible-enough, slash-free stem suitable for a file name.
+        A slash-free, collision-free stem suitable for a file name.
     """
-    return uri.replace("at://", "").replace("/", "__").replace(":", "_")
+    return hashlib.sha256(uri.encode("utf-8")).hexdigest()
 
 
 class RecordDiff(dx.Model):
@@ -220,12 +234,49 @@ class Repository:
         except panproto.VcsError as exc:
             # re-staging a record type whose schema is already committed and
             # unchanged is a no-op for the schema VCS. the staged record value is
-            # the real change the commit captures.
-            if "no changes detected" not in str(exc):
+            # the real change the commit captures. didactic surfaces this as a
+            # VcsError with no dedicated subtype, so it is discriminated by its
+            # message; any other VcsError is a real failure and re-raised.
+            if "no changes detected" not in str(exc).lower():
                 raise
         # stage the value as committed data keyed by AT-URI, so a revision pins
         # the exact value and data_at reads it back under that key.
         self.inner.add_data(str(record_path), key=uri)
+
+    def forget(self, uri: str) -> None:
+        """Stage a record's removal for the next commit.
+
+        Removes the AT-URI from the working-tree index and its JSON file, and
+        stages a tombstone as committed data under the same key. The tombstone
+        is folded by :meth:`_state_at`, so the record is absent from the
+        reconstructed value set at the committed revision and a
+        revision-to-revision :meth:`diff` reports it in ``removed``.
+
+        Staging a tombstone requires a schema to bind to, so the repository must
+        already have at least one commit (the record's type schema was committed
+        when it was first saved).
+
+        Parameters
+        ----------
+        uri : str
+            The AT-URI of the record to remove.
+
+        Raises
+        ------
+        KeyError
+            If the AT-URI is not present in the working tree.
+        """
+        index = self._read_index()
+        stem = index.pop(uri, None)
+        if stem is None:
+            msg = f"cannot forget a record not in the working tree: {uri}"
+            raise KeyError(msg)
+        record_path = self._records_dir() / f"{stem}.json"
+        record_path.unlink(missing_ok=True)
+        self._write_index(index)
+        tombstone_path = self._records_dir() / f"{stem}.tombstone.json"
+        tombstone_path.write_bytes(_TOMBSTONE)
+        self.inner.add_data(str(tombstone_path), key=uri)
 
     def staged_uris(self) -> list[str]:
         """Return the AT-URIs currently present in the working tree.
@@ -448,7 +499,11 @@ class Repository:
         state: dict[str, bytes] = {}
         for cid in order:
             for dataset in self.inner.data_at(cid):
-                if dataset.key is not None:
+                if dataset.key is None:
+                    continue
+                if dataset.data == _TOMBSTONE:
+                    state.pop(dataset.key, None)
+                else:
                     state[dataset.key] = dataset.data
         return state
 

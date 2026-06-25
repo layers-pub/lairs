@@ -177,8 +177,21 @@ class BrowsePane(Horizontal):
         position = f"{self._mode + 1}/{len(self._views)}"
         hint = "  ·  v: switch view" if len(self._views) > 1 else ""
         wrap.border_title = f"{label}  ·  {position}{hint}"
-        detail.update(render())
+        detail.update(self._safe_render(label, render))
         wrap.scroll_home(animate=False)
+
+    def _safe_render(self, label: str, render: Callable[[], str]) -> str:
+        """Render a view, degrading to an error note instead of crashing the tab.
+
+        The visualizers degrade gracefully on the malformed inputs probed in
+        testing, but a renderer that raises over an unanticipated record shape
+        would otherwise propagate out of the highlight handler and crash the
+        Browse tab. The error is shown in the detail panel instead.
+        """
+        try:
+            return render()
+        except (ValueError, KeyError, TypeError, IndexError, AttributeError) as error:
+            return f"*Could not render the {label} view:*\n\n```\n{error}\n```"
 
     def action_cycle_view(self, step: int = 1) -> None:
         """Flip to the next (or previous) view of the current record."""

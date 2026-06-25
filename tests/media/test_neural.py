@@ -99,11 +99,44 @@ def test_align_events_to_windows() -> None:
 
 
 def test_decode_signal_rejects_empty_handle() -> None:
-    handle = MediaHandle(
-        cid="bafy", mime_type="application/octet-stream", modality="audio"
-    )
+    handle = MediaHandle(cid="bafy", mime_type="application/x-fif", modality="audio")
     with pytest.raises(ValueError, match="no bytes to decode"):
         decode_signal(handle)
+
+
+def test_decode_signal_rejects_unknown_format() -> None:
+    handle = MediaHandle(
+        cid="bafy",
+        mime_type="application/octet-stream",
+        modality="audio",
+        data=b"not a recognised signal",
+    )
+    with pytest.raises(ValueError, match="no signal reader"):
+        decode_signal(handle)
+
+
+@pytest.mark.parametrize(
+    ("mime_type", "reader", "suffix"),
+    [
+        ("application/x-fif", "read_raw_fif", "_raw.fif"),
+        ("application/x-edf", "read_raw_edf", ".edf"),
+        ("application/x-bdf", "read_raw_bdf", ".bdf"),
+        ("application/x-eeglab", "read_raw_eeglab", ".set"),
+        ("application/x-brainvision", "read_raw_brainvision", ".vhdr"),
+        # generic octet-stream carrying only the format name in the subtype
+        ("application/edf", "read_raw_edf", ".edf"),
+        ("application/x-vhdr", "read_raw_brainvision", ".vhdr"),
+    ],
+)
+def test_reader_for_dispatches_by_mime_type(
+    mime_type: str, reader: str, suffix: str
+) -> None:
+    assert neural._reader_for(mime_type) == (reader, suffix)
+
+
+def test_reader_for_rejects_unknown_format() -> None:
+    with pytest.raises(ValueError, match="no signal reader"):
+        neural._reader_for("application/octet-stream")
 
 
 @pytest.mark.integration
@@ -121,7 +154,7 @@ def test_decode_signal_live() -> None:
         fif_bytes = path.read_bytes()
     handle = MediaHandle(
         cid="bafy",
-        mime_type="application/octet-stream",
+        mime_type="application/x-fif",
         modality="audio",
         data=fif_bytes,
     )

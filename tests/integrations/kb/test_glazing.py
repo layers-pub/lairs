@@ -12,6 +12,7 @@ from lairs.integrations.kb.glazing import (
     GlazingKB,
     GlazingNotInstalledError,
     _confidence_for,
+    _link_targets,
 )
 from lairs.integrations.ports import KnowledgeBase
 
@@ -204,6 +205,57 @@ def test_confidence_for_reads_nested_score() -> None:
         "confidence_scores": {"verbnet_classes": {"x": 0.5}},
     }
     assert _confidence_for(links, "verbnet_classes", "x") == 0.5
+
+
+def test_link_targets_normalises_scalar_relation() -> None:
+    # a one-to-one relation may be returned as a bare string rather than a list;
+    # it is normalised to a single-element list instead of being dropped.
+    links: XrefLinks = {"wordnet_sense": "give%2:40:00::"}
+    assert _link_targets(links, "wordnet_sense") == ["give%2:40:00::"]
+
+
+def test_link_targets_ignores_confidence_dict() -> None:
+    links: XrefLinks = {"confidence_scores": {"verbnet_classes": {"x": 0.5}}}
+    assert _link_targets(links, "confidence_scores") == []
+
+
+def test_resolve_includes_scalar_cross_reference() -> None:
+    kb, _fake = _kb_with_index({"wordnet_sense": "give%2:40:00::"})
+    entity = kb.resolve("propbank:give.01")
+    assert "wordnet_sense:give%2:40:00::" in entity.same_as
+
+
+def test_neighbors_is_cached() -> None:
+    kb, fake = _kb_with_index({"verbnet_classes": ["give-13.1"]})
+    kb.neighbors("propbank:give.01")
+    kb.neighbors("propbank:give.01")
+    assert len(fake.calls) == 1
+
+
+def test_neighbors_rel_filter_uses_cache() -> None:
+    # a filtered neighbors() call reuses the cached unfiltered expansion rather
+    # than re-resolving, and folds-in confidence labels match against the bare
+    # relation name.
+    kb, fake = _kb_with_index(
+        {
+            "verbnet_classes": ["give-13.1"],
+            "framenet_frames": ["Giving"],
+            "confidence_scores": {"verbnet_classes": {"give-13.1": 0.85}},
+        },
+    )
+    kb.neighbors("propbank:give.01")
+    edges = kb.neighbors("propbank:give.01", rels=["verbnet_classes"])
+    assert len(fake.calls) == 1
+    assert [edge.target for edge in edges] == ["give-13.1"]
+    assert edges[0].relation == "verbnet_classes@0.85"
+
+
+def test_default_source_is_configurable() -> None:
+    kb = GlazingKB(default_source="verbnet")
+    fake = _FakeIndex({"framenet_frames": ["Giving"]})
+    kb._xref = fake
+    kb.resolve("give-13.1")
+    assert fake.calls == [("give-13.1", "verbnet")]
 
 
 def test_search_with_real_glazing_data(

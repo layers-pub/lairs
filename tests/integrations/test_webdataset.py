@@ -148,6 +148,78 @@ def test_export_resolves_media_record_cell(tmp_path: Path) -> None:
     assert _read(shards[0], "s0.wav") == b"WAVE-bytes"
 
 
+def test_export_rejects_external_only_media(tmp_path: Path) -> None:
+    # a media cell that references externally-hosted media with no inline bytes
+    # cannot be embedded into a self-contained shard; the exporter raises rather
+    # than silently producing a json-only sample with the media dropped.
+    record = {"cid": "bafy123", "mimeType": "audio/wav", "externalUri": "https://x/y"}
+    table = pa.table(
+        {
+            "id": pa.array(["s0"], type=pa.string()),
+            "media": pa.array([record]),
+        }
+    )
+    spec = WebDatasetSpec(
+        output_dir=str(tmp_path),
+        key_column="id",
+        media_column="media",
+    )
+    with pytest.raises(ValueError, match="externally-hosted media"):
+        WebDatasetExporter().export(table, spec=spec)
+
+
+def test_export_skips_fully_empty_media_cell(tmp_path: Path) -> None:
+    # a placeholder cell with no bytes, cid, or URI references no media at all,
+    # so it is skipped quietly: nothing was dropped.
+    record = {"cid": "", "mimeType": "application/octet-stream"}
+    table = pa.table(
+        {
+            "id": pa.array(["s0"], type=pa.string()),
+            "media": pa.array([record]),
+        }
+    )
+    spec = WebDatasetSpec(
+        output_dir=str(tmp_path),
+        key_column="id",
+        media_column="media",
+    )
+    shards = WebDatasetExporter().export(table, spec=spec)
+    assert _members(shards[0]) == ["s0.json"]
+
+
+def test_json_default_renders_bytes_placeholder() -> None:
+    # opaque bytes in a non-media scalar field are rendered as a short byte-count
+    # placeholder rather than crashing the json encoder.
+    assert WebDatasetExporter._json_default(b"abcd") == "<4 bytes>"
+    # the handler also accepts bytearray at runtime; its declared param is bytes.
+    assert (
+        WebDatasetExporter._json_default(bytearray(b"xy"))  # ty: ignore[invalid-argument-type]
+        == "<2 bytes>"
+    )
+
+
+def test_json_default_rejects_non_bytes() -> None:
+    # a genuinely unserialisable, non-bytes value surfaces a real TypeError.
+    with pytest.raises(TypeError, match="not JSON serialisable"):
+        WebDatasetExporter._json_default(object())  # ty: ignore[invalid-argument-type]
+
+
+def test_export_renders_bytes_scalar_field_as_placeholder(tmp_path: Path) -> None:
+    # a non-media bytes scalar field is serialised into the json member as the
+    # byte-count placeholder, leaving the rest of the metadata intact.
+    table = pa.table(
+        {
+            "id": pa.array(["s0"], type=pa.string()),
+            "blob": pa.array([b"1234"], type=pa.binary()),
+            "text": pa.array(["hi"], type=pa.string()),
+        }
+    )
+    spec = WebDatasetSpec(output_dir=str(tmp_path), key_column="id")
+    shards = WebDatasetExporter().export(table, spec=spec)
+    payload = json.loads(_read(shards[0], "s0.json"))
+    assert payload == {"id": "s0", "blob": "<4 bytes>", "text": "hi"}
+
+
 def test_export_skips_empty_media(tmp_path: Path) -> None:
     table = pa.table({"id": ["s0", "s1"], "audio": [b"", b"data"]})
     spec = WebDatasetSpec(

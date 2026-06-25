@@ -38,11 +38,12 @@ _LEXICAL_EXTRA_HINT = (
 _CONFIDENCE_KEY = "confidence_scores"
 """The key under which the cross-reference index returns per-link confidences."""
 
-type XrefLinks = dict[str, list[str] | dict[str, dict[str, float]]]
+type XrefLinks = dict[str, str | list[str] | dict[str, dict[str, float]]]
 """The shape of a glazing cross-reference resolution.
 
-Most keys map a target-resource name to a list of resolved identifiers; the
-``confidence_scores`` key maps each relation to a per-target score mapping.
+Most keys map a target-resource name to a list of resolved identifiers (or a
+single identifier string for a one-to-one relation); the ``confidence_scores``
+key maps each relation to a per-target score mapping.
 """
 
 
@@ -126,8 +127,10 @@ class _CrossReferenceIndex(Protocol):
 def _link_targets(links: XrefLinks, relation: str) -> list[str]:
     """Return the resolved identifiers for one cross-reference relation.
 
-    The ``confidence_scores`` key holds a nested mapping rather than a list of
-    targets, so it is never treated as a relation here.
+    A relation value may be a list of identifiers or, for a one-to-one
+    relation, a single identifier string; both are normalised to a list. The
+    ``confidence_scores`` key holds a nested mapping rather than targets and is
+    never treated as a relation here, so its ``dict`` value yields no targets.
 
     Parameters
     ----------
@@ -142,8 +145,10 @@ def _link_targets(links: XrefLinks, relation: str) -> list[str]:
         The resolved target identifiers, or an empty list if absent.
     """
     targets = links.get(relation)
+    if isinstance(targets, str):
+        return [targets]
     if isinstance(targets, list):
-        return targets
+        return [target for target in targets if isinstance(target, str)]
     return []
 
 
@@ -187,6 +192,12 @@ class GlazingKB:
     data_dir : str or None, optional
         The local glazing data directory; defaults to the glazing default
         established by ``glazing init``.
+    default_source : str, optional
+        The resource a bare identifier (one without a ``resource:`` prefix) is
+        attributed to in :meth:`resolve`, :meth:`neighbors`, and the
+        resource-prefix split of :meth:`search`. Defaults to ``propbank``; set
+        it to ``verbnet``, ``framenet``, or ``wordnet`` when working with bare
+        identifiers from another resource.
 
     Raises
     ------
@@ -198,12 +209,19 @@ class GlazingKB:
 
     name = "glazing"
 
-    def __init__(self, data_dir: str | None = None) -> None:
+    def __init__(
+        self,
+        data_dir: str | None = None,
+        *,
+        default_source: str = "propbank",
+    ) -> None:
         self.data_dir = data_dir
+        self.default_source = default_source
         self._search: _UnifiedSearch | None = None
         self._xref: _CrossReferenceIndex | None = None
         self._entity_cache: dict[str, Entity] = {}
         self._search_cache: dict[str, list[Candidate]] = {}
+        self._neighbor_cache: dict[str, list[Edge]] = {}
 
     def __enter__(self) -> Self:
         """Enter the connector as a context manager.
@@ -336,7 +354,8 @@ class GlazingKB:
         ----------
         ref : str
             The lexical identifier, optionally ``resource:id`` (for example
-            ``propbank:give.01``); a bare id defaults to PropBank.
+            ``propbank:give.01``); a bare id is attributed to the connector's
+            ``default_source``.
 
         Returns
         -------
@@ -398,24 +417,28 @@ class GlazingKB:
         GlazingNotInstalledError
             If the glazing library is not installed.
         """
-        source, ident = self._split(ref)
-        links = self._index().resolve(ident, source=source)
-        allowed = set(rels) if rels is not None else None
-        edges: list[Edge] = []
-        for relation in links:
-            if relation == _CONFIDENCE_KEY:
-                continue
-            if allowed is not None and relation not in allowed:
-                continue
-            for target in _link_targets(links, relation):
-                confidence = _confidence_for(links, relation, target)
-                label = relation if confidence >= 1.0 else f"{relation}@{confidence:g}"
-                edges.append(Edge(source=ref, relation=label, target=target))
-        return edges
+        cached = self._neighbor_cache.get(ref)
+        if cached is None:
+            source, ident = self._split(ref)
+            links = self._index().resolve(ident, source=source)
+            cached = []
+            for relation in links:
+                if relation == _CONFIDENCE_KEY:
+                    continue
+                for target in _link_targets(links, relation):
+                    confidence = _confidence_for(links, relation, target)
+                    label = (
+                        relation if confidence >= 1.0 else f"{relation}@{confidence:g}"
+                    )
+                    cached.append(Edge(source=ref, relation=label, target=target))
+            self._neighbor_cache[ref] = cached
+        if rels is None:
+            return list(cached)
+        allowed = set(rels)
+        return [edge for edge in cached if edge.relation.split("@", 1)[0] in allowed]
 
-    @staticmethod
-    def _split(ref: str) -> tuple[str, str]:
-        """Split a ``resource:id`` reference, defaulting to PropBank.
+    def _split(self, ref: str) -> tuple[str, str]:
+        """Split a ``resource:id`` reference, defaulting to ``default_source``.
 
         Parameters
         ----------
@@ -430,7 +453,7 @@ class GlazingKB:
         if ":" in ref:
             source, ident = ref.split(":", 1)
             return source, ident
-        return "propbank", ref
+        return self.default_source, ref
 
 
 def _import_glazing(name: str) -> ModuleType:

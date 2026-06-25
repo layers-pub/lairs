@@ -619,6 +619,26 @@ def _byte_to_char(text: str) -> dict[int, int]:
     return mapping
 
 
+def _byte_to_char_at(byte_char: Mapping[int, int], offset: int, length: int) -> int:
+    """Map a byte offset to a character offset, snapping off-boundary offsets.
+
+    When ``offset`` lands on a UTF-8 character boundary the mapped character
+    offset is exact. When it falls inside a multi-byte codepoint (a malformed
+    anchor) it snaps to the boundary of the codepoint that contains it rather
+    than collapsing to ``0`` or ``length``, so a bad byte offset shifts the span
+    by at most one character instead of stretching it across the whole text.
+    """
+    direct = byte_char.get(offset)
+    if direct is not None:
+        return direct
+    clamped = max(0, min(offset, max(byte_char, default=0)))
+    candidates = [b for b in byte_char if b <= clamped]
+    if not candidates:
+        return 0
+    nearest = byte_char[max(candidates)]
+    return min(nearest, length)
+
+
 def span_overlay(text: str, spans: list[tuple[int, int, str]]) -> str:
     """Render labeled character spans as brat-style underlines over the text.
 
@@ -675,14 +695,15 @@ def span_layer_overlay(
         label = _str(ann.get("label")) or _str(ann.get("value"))
         indexes = [i for i in anchor_token_indexes(ann.get("anchor")) if i in tokens]
         if indexes:
-            start = byte_char.get(min(tokens[i].byte_start for i in indexes), 0)
-            end = byte_char.get(max(tokens[i].byte_end for i in indexes), len(text))
+            byte_start = min(tokens[i].byte_start for i in indexes)
+            byte_end = max(tokens[i].byte_end for i in indexes)
         else:
             byte_span = anchor_byte_span(ann.get("anchor"))
             if byte_span is None:
                 continue
-            start = byte_char.get(byte_span[0], 0)
-            end = byte_char.get(byte_span[1], len(text))
+            byte_start, byte_end = byte_span
+        start = _byte_to_char_at(byte_char, byte_start, len(text))
+        end = _byte_to_char_at(byte_char, byte_end, len(text))
         spans.append((start, end, label))
     return span_overlay(text, spans)
 
@@ -722,11 +743,16 @@ def tier_timeline(
 
 
 def document_tags(anns: list[Mapping[str, JsonValue]]) -> str:
-    """Render document-level annotations as labeled chips."""
+    """Render document-level annotations as labeled chips.
+
+    Confidence is the lexicon's integer score scaled 0-1000 (1000 = maximum) and
+    is shown as a percentage of that range.
+    """
     chips: list[str] = []
     for ann in anns:
         label = _str(ann.get("label")) or _str(ann.get("value"))
         confidence = ann.get("confidence")
+        # confidence is an int scaled 0..1000 per the lexicon; 1000 == 100%.
         if isinstance(confidence, int):
             label += f" {confidence / 1000:.0%}"
         if label:
@@ -857,11 +883,17 @@ def judgment_distribution(  # noqa: PLR0911 - one branch per taskType family
 
 
 def _ordinal(experiment: Mapping[str, JsonValue], scalars: list[int]) -> str:
-    """Render an ordinal (Likert) distribution as a per-level histogram."""
+    """Render an ordinal (Likert) distribution as a per-level histogram.
+
+    The histogram spans the declared ``scaleMin``/``scaleMax`` when present, but
+    is widened to include any responses that fall outside the declared scale so
+    every counted scalar appears in a bar. The summary mean, median, and ``n``
+    are then consistent with the bars and sparkline.
+    """
     low = experiment.get("scaleMin")
     high = experiment.get("scaleMax")
-    lo = low if isinstance(low, int) else min(scalars)
-    hi = high if isinstance(high, int) else max(scalars)
+    lo = min(low, *scalars) if isinstance(low, int) else min(scalars)
+    hi = max(high, *scalars) if isinstance(high, int) else max(scalars)
     counts = {level: scalars.count(level) for level in range(lo, hi + 1)}
     peak = max(counts.values(), default=0)
     rows = [
@@ -870,11 +902,24 @@ def _ordinal(experiment: Mapping[str, JsonValue], scalars: list[int]) -> str:
     ]
     ordered = [counts[level] for level in range(lo, hi + 1)]
     mean = sum(scalars) / len(scalars)
-    median = sorted(scalars)[len(scalars) // 2]
+    median = _median(scalars)
     summary = (
-        f"{sparkline(ordered)}  mean {mean:.1f}  median {median}  n {len(scalars)}"
+        f"{sparkline(ordered)}  mean {mean:.1f}  median {median:g}  n {len(scalars)}"
     )
     return _fence("\n".join([*rows, "", summary]))
+
+
+def _median(scalars: list[int]) -> float:
+    """Return the median of a non-empty list, averaging the two middle values.
+
+    For an even-length list the median is the mean of the two central order
+    statistics rather than the upper of the two.
+    """
+    ordered = sorted(scalars)
+    mid = len(ordered) // 2
+    if len(ordered) % 2 == 1:
+        return float(ordered[mid])
+    return (ordered[mid - 1] + ordered[mid]) / 2
 
 
 def _magnitude(scalars: list[int]) -> str:

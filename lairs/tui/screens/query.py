@@ -94,6 +94,16 @@ class QueryPane(Horizontal):
         if self._error is not None:
             self._set_status(self._error, error=True)
 
+    def on_unmount(self) -> None:
+        """Close the DuckDB connection held by the query engine, if any.
+
+        The pane owns the engine for its lifetime; closing on unmount releases
+        the DuckDB connection rather than leaking it until process exit.
+        """
+        if self._engine is not None:
+            self._engine.close()
+            self._engine = None
+
     def _load_engine(self) -> None:
         """Open the configured data directory, recording any error."""
         if self._data_path is None:

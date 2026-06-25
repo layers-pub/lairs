@@ -166,8 +166,18 @@ def new_uuid() -> Uuid:
 # anchor builders ----------------------------------------------------------
 
 
-def span(byte_start: int, byte_end: int) -> Anchor:
+def span(
+    byte_start: int,
+    byte_end: int,
+    *,
+    char_start: int | None = None,
+    char_end: int | None = None,
+) -> Anchor:
     """Build a byte-span anchor.
+
+    Byte offsets are required (they are the lexicon's primary, encoding-stable
+    locator). Character offsets are optional and set together when supplied, so
+    a character-indexed span can be authored without bypassing the builder.
 
     Parameters
     ----------
@@ -175,6 +185,12 @@ def span(byte_start: int, byte_end: int) -> Anchor:
         The UTF-8 byte start offset (0-indexed, inclusive).
     byte_end : int
         The UTF-8 byte end offset (exclusive).
+    char_start : int or None, optional
+        The Unicode character start offset (0-indexed, inclusive). Must be
+        supplied together with ``char_end``.
+    char_end : int or None, optional
+        The Unicode character end offset (exclusive). Must be supplied together
+        with ``char_start``.
 
     Returns
     -------
@@ -184,14 +200,31 @@ def span(byte_start: int, byte_end: int) -> Anchor:
     Raises
     ------
     BuildError
-        If an offset is negative or the span is not well ordered.
+        If an offset is negative, a byte or character span is not well ordered,
+        or exactly one of ``char_start``/``char_end`` is supplied.
     """
     _check_minimum(Span, "byteStart", byte_start)
     _check_minimum(Span, "byteEnd", byte_end)
     if byte_end < byte_start:
         msg = f"span byte_end ({byte_end}) must be >= byte_start ({byte_start})"
         raise BuildError(msg)
-    return Anchor(textSpan=Span(byteStart=byte_start, byteEnd=byte_end))
+    if (char_start is None) != (char_end is None):
+        msg = "span char_start and char_end must be supplied together"
+        raise BuildError(msg)
+    if char_start is not None and char_end is not None:
+        _check_minimum(Span, "charStart", char_start)
+        _check_minimum(Span, "charEnd", char_end)
+        if char_end < char_start:
+            msg = f"span char_end ({char_end}) must be >= char_start ({char_start})"
+            raise BuildError(msg)
+    return Anchor(
+        textSpan=Span(
+            byteStart=byte_start,
+            byteEnd=byte_end,
+            charStart=char_start,
+            charEnd=char_end,
+        ),
+    )
 
 
 def token_ref(tokenization_id: str, token_index: int) -> Anchor:

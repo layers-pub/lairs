@@ -101,6 +101,22 @@ def test_crop_to_bbox_rejects_out_of_bounds() -> None:
         crop_to_bbox(frame, BoundingBox(x=0.0, y=0.0, width=10.0, height=10.0))
 
 
+def test_crop_to_bbox_rejects_truncated_payload() -> None:
+    # a 4x2 rgb24 frame needs 24 bytes; a 12-byte payload is truncated.
+    frame = VideoFrame(index=0, width=4, height=2, pixels=bytes(range(12)))
+    with pytest.raises(ValueError, match="pixel payload"):
+        crop_to_bbox(frame, BoundingBox(x=0.0, y=0.0, width=2.0, height=1.0))
+
+
+def test_crop_to_bbox_allows_empty_payload() -> None:
+    # a metadata-only frame (no pixels) crops to dimensions without slicing.
+    frame = VideoFrame(index=0, width=4, height=2)
+    cropped = crop_to_bbox(frame, BoundingBox(x=0.0, y=0.0, width=2.0, height=1.0))
+    assert cropped.width == 2
+    assert cropped.height == 1
+    assert cropped.pixels == b""
+
+
 def test_frame_at_ms_rejects_empty_handle() -> None:
     handle = MediaHandle(cid="bafy", mime_type="video/mp4", modality="video")
     with pytest.raises(ValueError, match="no bytes to decode"):
@@ -142,5 +158,38 @@ def test_frame_at_ms_live() -> None:
     assert decoded.index == 0
     assert decoded.width == 16
     assert decoded.height == 16
+    # the frame carries a presentation time set during decode, distinct from
+    # its ordinal index.
+    assert decoded.time_ms >= 0
     # row-major rgb24 payload for a 16x16 frame.
     assert len(decoded.pixels) == 16 * 16 * 3
+
+
+@pytest.mark.integration
+def test_frame_at_ms_rejects_streamless_container() -> None:
+    # an audio-only container has no video stream; decoding must raise a clear
+    # error rather than an opaque IndexError.
+    av = pytest.importorskip("av")
+    np = pytest.importorskip("numpy")
+    buffer = io.BytesIO()
+    with av.open(buffer, mode="w", format="wav") as out:
+        stream = out.add_stream("pcm_s16le", rate=8000)
+        stream.layout = "mono"
+        frame = av.AudioFrame.from_ndarray(
+            np.zeros((1, 800), dtype=np.int16),
+            format="s16",
+            layout="mono",
+        )
+        frame.sample_rate = 8000
+        for packet in stream.encode(frame):
+            out.mux(packet)
+        for packet in stream.encode():
+            out.mux(packet)
+    handle = MediaHandle(
+        cid="bafy",
+        mime_type="audio/wav",
+        modality="audio",
+        data=buffer.getvalue(),
+    )
+    with pytest.raises(ValueError, match="no video stream"):
+        frame_at_ms(handle, 0)

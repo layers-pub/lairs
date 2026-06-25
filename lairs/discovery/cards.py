@@ -226,6 +226,8 @@ class CrawlReport(dx.Model):
         The number of cards built or refreshed.
     cards_unchanged : int
         The number of cards that were already current (dedup hits).
+    cards_removed : int
+        The number of cards removed in response to a corpus-deletion commit.
     skipped : tuple of str
         Human-readable skip reasons, including any bound that was hit.
     revision : str or None
@@ -241,6 +243,10 @@ class CrawlReport(dx.Model):
     cards_unchanged: int = dx.field(
         default=0,
         description="cards already current (dedup hits)",
+    )
+    cards_removed: int = dx.field(
+        default=0,
+        description="cards removed in response to a corpus-deletion commit",
     )
     skipped: tuple[str, ...] = dx.field(
         default_factory=tuple,

@@ -202,6 +202,98 @@ def test_neighbors_without_extend_raises() -> None:
         kb.neighbors("Q42")
 
 
+def test_resolve_label_without_cross_references() -> None:
+    # an entity whose extend rows carry no entity ids still gets its label from
+    # the suggest service; label availability is decoupled from same_as.
+    empty_rows: JsonValue = {"rows": {"Q42": {}}}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.endswith("/suggest/entity"):
+            return httpx.Response(200, json=_SUGGEST_RESPONSE)
+        if request.method == "GET":
+            return httpx.Response(200, json=_MANIFEST)
+        return httpx.Response(200, json=empty_rows)
+
+    with _kb(handler) as kb:
+        entity = kb.resolve("Q42")
+    assert entity.same_as == ()
+    assert entity.label == "Douglas Adams"
+
+
+def test_manifest_fetched_once_per_resolve() -> None:
+    gets = {"manifest": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.endswith("/suggest/entity"):
+            return httpx.Response(200, json=_SUGGEST_RESPONSE)
+        if request.method == "GET":
+            gets["manifest"] += 1
+            return httpx.Response(200, json=_MANIFEST)
+        return httpx.Response(200, json=_EXTEND_RESPONSE)
+
+    with _kb(handler) as kb:
+        kb.resolve("Q42")
+    # resolve consults the manifest for both extend and suggest; the cache means
+    # it is fetched once, not once per consumer.
+    assert gets["manifest"] == 1
+
+
+def test_preview_label_without_suggest_service() -> None:
+    manifest_no_suggest: JsonValue = {
+        "extend": {"propose_properties": {"properties": [{"id": "P31"}]}},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json=manifest_no_suggest)
+        return httpx.Response(200, json=_EXTEND_RESPONSE)
+
+    with _kb(handler) as kb:
+        entity = kb.resolve("Q42")
+    assert entity.label == ""
+    assert "Q5" in entity.same_as
+
+
+def test_preview_label_on_non_200() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.endswith("/suggest/entity"):
+            return httpx.Response(503, text="unavailable")
+        if request.method == "GET":
+            return httpx.Response(200, json=_MANIFEST)
+        return httpx.Response(200, json=_EXTEND_RESPONSE)
+
+    with _kb(handler) as kb:
+        entity = kb.resolve("Q42")
+    assert entity.label == ""
+
+
+def test_preview_label_on_empty_result() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.endswith("/suggest/entity"):
+            return httpx.Response(200, json={"result": []})
+        if request.method == "GET":
+            return httpx.Response(200, json=_MANIFEST)
+        return httpx.Response(200, json=_EXTEND_RESPONSE)
+
+    with _kb(handler) as kb:
+        entity = kb.resolve("Q42")
+    assert entity.label == ""
+
+
+def test_preview_label_on_non_json_body() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.endswith("/suggest/entity"):
+            return httpx.Response(200, text="not json")
+        if request.method == "GET":
+            return httpx.Response(200, json=_MANIFEST)
+        return httpx.Response(200, json=_EXTEND_RESPONSE)
+
+    with _kb(handler) as kb:
+        entity = kb.resolve("Q42")
+    # a non-JSON suggest body degrades to an empty label rather than crashing.
+    assert entity.label == ""
+
+
 # a manifest without a suggest service, so resolve()'s best-effort label lookup
 # early-returns instead of reaching out to the fixture's external suggest url
 # (the suggest path is covered by the mock-transport unit test).

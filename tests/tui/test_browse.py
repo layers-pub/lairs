@@ -15,6 +15,7 @@ import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import DataTable, Input, Markdown, TabbedContent, Tree
 
+import lairs.tui as lairs_tui
 from lairs.author.publish import _RECORD_MODELS as PUBLISH_MODELS
 from lairs.tui import QueryEngine, _materialize_for_query
 from lairs.tui.app import LairsApp
@@ -22,8 +23,12 @@ from lairs.tui.browse import BrowseError, RepoBrowser, materialize_repo
 from lairs.tui.registry import RECORD_MODELS, label_of, namespace_of
 from lairs.tui.screens.browse import BrowsePane
 from lairs.tui.views import (
+    _ITEM_INDEX,
+    _item_index,
+    _render_generic,
     _span_text,
     columns_for,
+    record_views,
     render_record,
     render_view,
     summarize,
@@ -277,6 +282,73 @@ def test_summarize_is_type_appropriate(repo_dir: Path) -> None:
         assert len(summarize(nsid, uri, raw)) == len(columns_for(nsid))
 
 
+# ---- generic fallback renderer and view dispatch --------------------------
+
+
+def test_render_generic_formats_scalars_nested_and_skips_empty() -> None:
+    """The generic view lists scalar fields, headers nested ones, and skips empty."""
+    uri = "at://did:plc:x/pub.layers.thing/r"
+    data = {
+        "name": "widget",
+        "count": 3,
+        "empty_str": "",
+        "empty_list": [],
+        "missing": None,
+        "tags": ["a", "b"],
+        "meta": {"k": "v"},
+    }
+    md = _render_generic(uri, data)
+    assert "widget" in md
+    assert "## tags (2)" in md
+    assert "## meta" in md
+    # the empty-valued fields are skipped entirely.
+    assert "empty_str" not in md
+    assert "empty_list" not in md
+    assert "missing" not in md
+
+
+def test_render_generic_truncates_long_json() -> None:
+    """A long nested scalar is truncated rather than dumped in full."""
+    uri = "at://did:plc:x/pub.layers.thing/r"
+    md = _render_generic(uri, {"blob": {"text": "z" * 1000}})
+    assert "## blob" in md
+    assert "…" in md
+
+
+def test_render_view_unknown_mode_falls_back_to_first(repo_dir: Path) -> None:
+    """An unknown view label renders the record's first (default) view."""
+    browser = RepoBrowser.open(repo_dir)
+    uri, raw = browser.records_raw(_SEGMENTATION)[0]
+    first = record_views(browser, _SEGMENTATION, uri, raw)[0][0]
+    assert first == "Tokens"
+    fallback = render_view(browser, _SEGMENTATION, uri, raw, "NoSuchMode")
+    expected = render_view(browser, _SEGMENTATION, uri, raw, "Tokens")
+    assert fallback == expected
+
+
+def test_render_record_unknown_type_uses_generic(repo_dir: Path) -> None:
+    """A record type with no bespoke renderer falls through to the generic view."""
+    browser = RepoBrowser.open(repo_dir)
+    uri = "at://did:plc:x/pub.layers.unknown.thing/r"
+    data = {"name": "mystery", "flavor": "novel"}
+    md = render_record(browser, "pub.layers.unknown.thing", uri, data)
+    assert "mystery" in md
+    assert view_modes(browser, "pub.layers.unknown.thing", uri, data) == ["Detail"]
+
+
+def test_item_index_is_per_browser_and_isolated(repo_dir: Path) -> None:
+    """The judgment item index is cached per browser, not shared by id()."""
+    browser_a = RepoBrowser.open(repo_dir)
+    browser_b = RepoBrowser.open(repo_dir)
+    index_a = _item_index(browser_a)
+    assert browser_a in _ITEM_INDEX
+    # a second browser gets its own entry, not browser_a's cached one.
+    index_b = _item_index(browser_b)
+    assert index_b is not index_a
+    # the same browser returns the identical cached object.
+    assert _item_index(browser_a) is index_a
+
+
 # ---- materialization for the Query tab ------------------------------------
 
 
@@ -317,6 +389,46 @@ def test_materialize_for_query_round_trips(repo_dir: Path) -> None:
         assert "expressions" in engine.tables
     finally:
         engine.close()
+
+
+def test_materialize_for_query_registers_cleanup(
+    repo_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scratch directory is registered for removal at interpreter exit."""
+    registered: list[tuple[object, ...]] = []
+
+    def _capture(func: object, *args: object, **_kwargs: object) -> None:
+        registered.append((func, *args))
+
+    monkeypatch.setattr(lairs_tui.atexit, "register", _capture)
+    out = _materialize_for_query(str(repo_dir))
+    assert out is not None
+    # the created directory is passed to shutil.rmtree at exit.
+    assert any(Path(out) in call for call in registered)
+
+
+def test_materialize_for_query_cleans_up_on_failure(
+    repo_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A materialize failure removes the scratch directory and returns None."""
+    created: list[Path] = []
+    real_mkdtemp = lairs_tui.tempfile.mkdtemp
+
+    def _record_mkdtemp(*args: object, **kwargs: object) -> str:
+        path = real_mkdtemp(*args, **kwargs)
+        created.append(Path(path))
+        return path
+
+    monkeypatch.setattr(lairs_tui.tempfile, "mkdtemp", _record_mkdtemp)
+
+    def _boom(*_args: object, **_kwargs: object) -> list[Path]:
+        message = "disk full"
+        raise OSError(message)
+
+    monkeypatch.setattr(lairs_tui, "materialize_repo", _boom)
+    assert _materialize_for_query(str(repo_dir)) is None
+    assert created
+    assert not created[0].exists()
 
 
 # ---- Browse pane in the app -----------------------------------------------
@@ -383,6 +495,26 @@ def test_highlight_renders_type_aware_detail(repo_dir: Path) -> None:
             await pilot.pause()
             detail = app.query_one("#rdetail", Markdown)
             assert "Type hierarchy" in detail._markdown
+
+    asyncio.run(scenario())
+
+
+def test_browse_safe_render_catches_renderer_error(repo_dir: Path) -> None:
+    """A raising renderer degrades to an error note instead of crashing the tab."""
+
+    async def scenario() -> None:
+        app = LairsApp(repo_path=str(repo_dir))
+        async with app.run_test(size=(160, 48)) as pilot:
+            await pilot.pause()
+            pane = app.query_one(BrowsePane)
+
+            def _boom() -> str:
+                message = "malformed record"
+                raise ValueError(message)
+
+            rendered = pane._safe_render("Tree", _boom)
+            assert "Could not render the Tree view" in rendered
+            assert "malformed record" in rendered
 
     asyncio.run(scenario())
 

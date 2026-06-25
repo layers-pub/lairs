@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from lairs.integrations.ports import Exporter
 from lairs.integrations.torch import (
     TorchExporter,
     TorchExportResult,
@@ -37,6 +38,12 @@ def _sample_table() -> pa.Table:
 
 def test_name() -> None:
     assert TorchExporter.name == "torch"
+
+
+def test_binds_to_exporter_port() -> None:
+    # an instance satisfies the runtime-checkable Exporter protocol, matching the
+    # sibling tfdata and webdataset exporters.
+    assert isinstance(TorchExporter(), Exporter)
 
 
 def test_importing_does_not_import_torch(
@@ -132,6 +139,15 @@ def test_collate_empty_batch() -> None:
     assert collate_records([], ()) == {}
 
 
+def test_collate_rejects_null_in_tensor_column() -> None:
+    # a null in a tensor column would make torch.as_tensor raise an opaque
+    # framework error; the exporter reports a clear lairs error naming the column
+    # before torch is even imported, so the check runs without torch installed.
+    batch = [{"id": 1}, {"id": None}]
+    with pytest.raises(ValueError, match=r"tensor column 'id' carries a null"):
+        collate_records(batch, ("id",))  # ty: ignore[invalid-argument-type]
+
+
 # -- tests that need torch installed -----------------------------------------
 
 
@@ -207,3 +223,52 @@ def test_export_dataloader_round_trip() -> None:
     assert len(batches) == 2
     assert torch.is_tensor(batches[0]["id"])
     assert batches[0]["id"].tolist() == [1, 2]
+
+
+def test_iterable_dataset_shards_across_workers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # each worker must read a disjoint stride of the rows so no row is emitted
+    # more than once across the worker pool. the worker pool is simulated by
+    # patching torch.utils.data.get_worker_info (the real one is None outside a
+    # worker), since the closure-based dataset cannot be pickled for spawned
+    # workers and the stride logic is what matters here.
+    torch = pytest.importorskip("torch")
+    table = pa.table({"id": list(range(6))})
+    result = TorchExporter().export(table)
+
+    class _WorkerInfo:
+        def __init__(self, worker_id: int, num_workers: int) -> None:
+            self.id = worker_id
+            self.num_workers = num_workers
+
+    seen: list[int] = []
+    for worker_id in range(2):
+        monkeypatch.setattr(
+            torch.utils.data,
+            "get_worker_info",
+            lambda worker_id=worker_id: _WorkerInfo(worker_id, 2),
+        )
+        # the row value is typed JsonValue (the dataset is generic over it) but
+        # is an int here, so the int() narrowing is invisible to the checker.
+        seen.extend(
+            int(sample["id"])  # ty: ignore[invalid-argument-type]
+            for sample in result.iterable
+        )
+
+    # every row appears exactly once across the two workers, in disjoint strides.
+    assert sorted(seen) == list(range(6))
+    assert len(seen) == 6
+
+
+def test_iterable_dataset_single_worker_reads_all_rows() -> None:
+    # outside a worker pool (get_worker_info is None), the dataset reads every
+    # row, so the single-process path is unchanged.
+    pytest.importorskip("torch")
+    table = pa.table({"id": list(range(6))})
+    result = TorchExporter().export(table)
+    ids = [
+        int(sample["id"])  # ty: ignore[invalid-argument-type]
+        for sample in result.iterable
+    ]
+    assert ids == list(range(6))

@@ -186,6 +186,7 @@ class ReconciliationKB:
         self._search_cache: dict[
             tuple[str, str | None, tuple[str, ...]], list[Candidate]
         ] = {}
+        self._manifest_cache: dict[str, JsonValue] | None = None
 
     def __enter__(self) -> Self:
         """Enter the connector as a context manager.
@@ -224,6 +225,11 @@ class ReconciliationKB:
     def _manifest(self) -> dict[str, JsonValue]:
         """Fetch the service manifest describing the endpoint's capabilities.
 
+        The manifest is fetched once and cached for the connector's lifetime,
+        so a single ``resolve`` (which consults the manifest for both the
+        extend and suggest services) and repeated public calls do not re-fetch
+        it.
+
         Returns
         -------
         dict
@@ -234,9 +240,11 @@ class ReconciliationKB:
         httpx.HTTPStatusError
             If the endpoint returns a non-success status.
         """
-        response = self._client.get(self.endpoint)
-        response.raise_for_status()
-        return _as_object(response.json())
+        if self._manifest_cache is None:
+            response = self._client.get(self.endpoint)
+            response.raise_for_status()
+            self._manifest_cache = _as_object(response.json())
+        return self._manifest_cache
 
     def search(
         self,
@@ -290,8 +298,12 @@ class ReconciliationKB:
         """Resolve an identifier to an entity via the reconciliation service.
 
         Resolution uses the optional data-extension service to recover the
-        entity's label and any ``sameAs`` properties. The endpoint must
-        advertise a ``extend`` service in its manifest.
+        entity's ``sameAs`` properties; the endpoint must advertise an
+        ``extend`` service in its manifest. The label is fetched independently,
+        best-effort, from the suggest service (see :meth:`_preview_label`), so
+        an entity with a resolvable label but no cross-references still carries
+        its label, and an endpoint without a suggest service yields an empty
+        label rather than failing.
 
         Parameters
         ----------
@@ -359,15 +371,18 @@ class ReconciliationKB:
                 value = _as_object(cell).get("str") or _as_object(cell).get("id")
                 if isinstance(value, str) and value:
                     same_as.append(value)
-        label = self._preview_label(ref) if same_as else ""
         return Entity(
             ref=ref,
-            label=label,
+            label=self._preview_label(ref),
             same_as=tuple(dict.fromkeys(same_as)),
         )
 
     def _preview_label(self, ref: str) -> str:
         """Best-effort fetch of an entity's label via the suggest service.
+
+        This is a best-effort helper: an endpoint that advertises no suggest
+        service, a non-success response, a transport error, or a non-JSON body
+        all degrade to the empty string rather than failing :meth:`resolve`.
 
         Parameters
         ----------
@@ -385,13 +400,20 @@ class ReconciliationKB:
         service_path = _as_str(suggest.get("service_path"))
         if not service_url or not service_path:
             return ""
-        response = self._client.get(
-            f"{service_url}{service_path}",
-            params={"prefix": ref},
-        )
+        try:
+            response = self._client.get(
+                f"{service_url}{service_path}",
+                params={"prefix": ref},
+            )
+        except httpx.HTTPError:
+            return ""
         if response.status_code != httpx.codes.OK:
             return ""
-        result = _as_array(_as_object(response.json()).get("result"))
+        try:
+            payload = response.json()
+        except ValueError:
+            return ""
+        result = _as_array(_as_object(payload).get("result"))
         if not result:
             return ""
         return _as_str(_as_object(result[0]).get("name"))

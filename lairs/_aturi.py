@@ -3,6 +3,12 @@
 Small, dependency-free helpers for pulling the authority and collection segments
 out of an ``at://`` URI. Centralised here so the discovery, CLI, and data layers
 parse AT-URIs the same way.
+
+These helpers are positional string splitters, not validators. They assume a
+well-formed ``at://authority/collection/rkey`` URI and return an empty string
+for a missing segment; they do not check the ``at://`` scheme or the authority
+shape, so malformed input yields a best-effort segment rather than an error.
+Callers that need validation must do it before calling.
 """
 
 from __future__ import annotations

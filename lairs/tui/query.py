@@ -56,6 +56,8 @@ _DEFAULT_KWIC_WINDOW = 48
 _IDENT_RE = re.compile(r"[^0-9a-zA-Z_]")
 _CQL_BLOCK_RE = re.compile(r"\[([^\]]*)\]")
 _CQL_CONSTRAINT_RE = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)\s*(=|!=|~)\s*"([^"]*)"')
+# a repetition quantifier directly following a token block; unsupported in 0.1.0.
+_CQL_QUANTIFIER_RE = re.compile(r"\]\s*([*+?{])")
 _WHITESPACE_RE = re.compile(r"\s+")
 
 # a single scalar cell from a query result, rendered to a string for display.
@@ -355,7 +357,9 @@ class QueryEngine:
         Each constraint matches an annotation attribute (``=`` exact, ``!=``
         negated, ``~`` regular expression); an empty ``[]`` matches any token.
         Adjacent blocks are joined on consecutive ``token_index`` within the same
-        layer, so the pattern matches token sequences.
+        layer, so the pattern matches token sequences. Each block matches exactly
+        one token; repetition quantifiers (``*``, ``+``, ``?``, ``{...}``) are not
+        supported and a pattern that uses one raises :class:`CqlError`.
 
         Parameters
         ----------
@@ -465,8 +469,24 @@ def _parse_cql(
     Raises
     ------
     CqlError
-        When no blocks are present or a constraint is malformed or unknown.
+        When no blocks are present, a constraint is malformed or unknown, or a
+        repetition quantifier (``*``, ``+``, ``?``, ``{...}``) follows a block.
+
+    Notes
+    -----
+    Repetition quantifiers are not supported in this release. Each block matches
+    exactly one token, and adjacent blocks match consecutive token positions. A
+    quantifier following a block raises :class:`CqlError` rather than being
+    silently dropped, so an unsupported pattern fails loudly instead of running
+    with the quantifier ignored.
     """
+    quantifier = _CQL_QUANTIFIER_RE.search(query)
+    if quantifier is not None:
+        msg = (
+            f"repetition quantifier {quantifier.group(1)!r} is not supported; "
+            "each token block matches exactly one token"
+        )
+        raise CqlError(msg)
     blocks = _CQL_BLOCK_RE.findall(query)
     if not blocks:
         msg = 'no token blocks found; write a pattern like [label="VERB"]'

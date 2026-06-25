@@ -27,13 +27,13 @@ from types import ModuleType  # noqa: TC003  (runtime: return annotation)
 from typing import TYPE_CHECKING
 
 import didactic.api as dx
+import pyarrow as pa
 
 from lairs._types import JsonValue  # noqa: TC001  (runtime: model construction)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    import pyarrow as pa
     from torch import Tensor
     from torch.utils.data import (
         Dataset,
@@ -104,8 +104,6 @@ def _numeric_column_names(view: pa.Table) -> tuple[str, ...]:
     tuple of str
         The numeric column names, in schema order.
     """
-    import pyarrow as pa  # noqa: PLC0415
-
     names: list[str] = []
     for name in view.column_names:
         field_type = view.schema.field(name).type
@@ -244,17 +242,23 @@ def collate_records(
     for name in names:
         values = [row[name] for row in batch]
         if name in tensor_set:
-            columns[name] = _stack_tensor(values)
+            columns[name] = _stack_tensor(name, values)
         else:
             columns[name] = values
     return columns
 
 
-def _stack_tensor(values: list[JsonValue]) -> Tensor:
+def _stack_tensor(name: str, values: list[JsonValue]) -> Tensor:
     """Stack a column of scalar values into a one-dimensional tensor.
+
+    A tensor column must be free of nulls: ``torch.as_tensor`` cannot infer a
+    dtype for a ``None`` entry and would otherwise raise an opaque framework
+    error. A null is reported as a clear lairs error naming the column instead.
 
     Parameters
     ----------
+    name : str
+        The column the values belong to, used in the error message.
     values : list
         The per-row scalar values of one tensor column.
 
@@ -262,7 +266,19 @@ def _stack_tensor(values: list[JsonValue]) -> Tensor:
     -------
     torch.Tensor
         A one-dimensional tensor of the column's values.
+
+    Raises
+    ------
+    ValueError
+        When the column carries a null value, which cannot be stacked into a
+        tensor. Project the column out or fill its nulls before collating.
     """
+    if any(value is None for value in values):
+        msg = (
+            f"tensor column {name!r} carries a null value and cannot be stacked "
+            f"into a tensor; drop the column or fill its nulls before collating"
+        )
+        raise ValueError(msg)
     torch = _import_torch()
     return torch.as_tensor(values)
 
@@ -455,19 +471,27 @@ class TorchExporter:
         Returns
         -------
         torch.utils.data.IterableDataset
-            An iterable dataset yielding one row mapping at a time.
+            An iterable dataset yielding one row mapping at a time. Under a
+            multi-worker ``DataLoader`` each worker reads a disjoint stride of
+            the rows (via ``torch.utils.data.get_worker_info``), so no row is
+            emitted more than once.
         """
         torch = _import_torch()
 
         class _ArrowIterableDataset(torch.utils.data.IterableDataset):
-            """An iterable dataset streaming rows from an Arrow table."""
+            """An iterable dataset streaming a worker-disjoint stride of rows."""
 
             def __init__(self, table: pa.Table, columns: tuple[str, ...]) -> None:
                 self._table = table
                 self._columns = columns
 
             def __iter__(self) -> Iterator[dict[str, JsonValue]]:
-                for index in range(self._table.num_rows):
+                worker_info = torch.utils.data.get_worker_info()
+                if worker_info is None:
+                    start, step = 0, 1
+                else:
+                    start, step = worker_info.id, worker_info.num_workers
+                for index in range(start, self._table.num_rows, step):
                     yield _row_record(self._table, index, self._columns)
 
         return _ArrowIterableDataset(view, kept)

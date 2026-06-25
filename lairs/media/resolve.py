@@ -78,6 +78,13 @@ class BlobCache(Protocol):
 
     Component C (the store) supplies a concrete implementation; the media layer
     only depends on this shape.
+
+    Blob bytes are cached under their content identifier (CID), which is
+    content-addressed. External-URI bytes are cached under the URI itself, which
+    is *not* content-addressed: if the resource at a URI changes, a cached entry
+    can serve stale bytes until it is evicted. The media layer does not verify
+    fetched bytes against a CID; integrity checking, if required, is the
+    responsibility of the injected cache or fetcher.
     """
 
     def exists(self, cid: str) -> bool:
@@ -289,7 +296,12 @@ def _fetch_uri(
     uri_fetcher: UriFetcher | None,
     cache: BlobCache | None,
 ) -> bytes:
-    """Fetch and cache external bytes, returning empty when no fetcher is given."""
+    """Fetch and cache external bytes, returning empty when no fetcher is given.
+
+    External bytes are keyed by the URI (not a content hash), so a cached entry
+    can serve stale bytes if the resource at the URI changes. See
+    :class:`BlobCache` for the cache-keying contract.
+    """
     if cache is not None and cache.exists(uri):
         return cache.get(uri)
     if uri_fetcher is None:

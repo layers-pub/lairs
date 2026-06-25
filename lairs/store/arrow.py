@@ -8,14 +8,24 @@ The flattening is driven by generic model field access (``model_dump``), so it
 works against the abstract :class:`didactic.api.Model` interface today and
 against the real generated record models once they land. Polymorphic anchors are
 resolved into a fixed set of typed columns (``anchor_kind``, ``byte_start``,
-``byte_end``, ``token_id``, ``token_index``, ``t_start_ms``, ``t_end_ms``,
-``bbox_x``, ``bbox_y``, ``bbox_w``, ``bbox_h``) so a consumer can filter and
-scan without re-dispatching the union per row.
+``byte_end``, ``token_id``, ``token_index``, ``token_indexes``, ``t_start_ms``,
+``t_end_ms``, ``bbox_x``, ``bbox_y``, ``bbox_w``, ``bbox_h``, ``page``,
+``ext_source``) so a consumer can filter and scan without re-dispatching the
+union per row.
+
+Every one of the seven generated :class:`~lairs.records._generated.defs.Anchor`
+variants (``textSpan``, ``tokenRef``, ``tokenRefSequence``, ``temporalSpan``,
+``spatioTemporalAnchor``, ``pageAnchor``, ``externalTarget``) projects to a
+distinguishable ``anchor_kind`` so no variant collapses into an anchorless row.
 
 The view set mirrors the appview's normalization: an ``expressions`` table (one
 row per expression), an ``annotations`` table (one row per
 ``(layer_uri, annotation_index)`` produced by exploding each layer's
 ``annotations`` array), plus ``segmentations``, ``media``, and ``edges`` tables.
+Only top-level scalar fields and the flattened anchor columns reach these views;
+non-anchor nested arrays and objects (for example ``features`` or per-keyframe
+data) are intentionally dropped by the flatten-to-typed-columns boundary (see
+:func:`_scalar_columns`).
 """
 
 from __future__ import annotations
@@ -50,12 +60,15 @@ ANCHOR_COLUMNS: tuple[str, ...] = (
     "byte_end",
     "token_id",
     "token_index",
+    "token_indexes",
     "t_start_ms",
     "t_end_ms",
     "bbox_x",
     "bbox_y",
     "bbox_w",
     "bbox_h",
+    "page",
+    "ext_source",
 )
 
 
@@ -125,8 +138,10 @@ def _anchor_body(anchor: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
 
     The ``anchor`` object dumps all of its optional variant fields with exactly
     one populated. When the mapping is that wrapper, the populated variant
-    sub-object is returned. A bare variant object, or a single-key wrapper, is
-    returned unchanged for the caller to classify by the fields it carries.
+    sub-object is returned; a wrapper with no populated variant yields an empty
+    mapping so it classifies as anchorless. A bare variant object, or a
+    single-key wrapper, is returned unchanged for the caller to classify by the
+    fields it carries.
 
     Parameters
     ----------
@@ -143,7 +158,7 @@ def _anchor_body(anchor: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
             value = anchor.get(name)
             if isinstance(value, dict):
                 return value
-        return anchor
+        return {}
     if len(anchor) == 1:
         (only_value,) = anchor.values()
         if isinstance(only_value, dict):
@@ -151,14 +166,189 @@ def _anchor_body(anchor: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
     return anchor
 
 
+def _uuid_value(value: JsonValue) -> str | None:
+    """Return the string carried by an embedded ``Uuid`` model, else ``None``.
+
+    The generated ``tokenizationId`` field is an embedded
+    :class:`~lairs.records._generated.defs.Uuid` model that dumps to
+    ``{"value": "..."}`` rather than a bare string.
+
+    Parameters
+    ----------
+    value : JsonValue
+        A dumped ``tokenizationId`` value: an embedded ``Uuid`` mapping or, for
+        leniency, a bare string.
+
+    Returns
+    -------
+    str or None
+        The contained UUID string, or ``None`` when it cannot be extracted.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        inner = value.get("value")
+        if isinstance(inner, str):
+            return inner
+    return None
+
+
+def _fill_bounding_box(
+    columns: dict[str, JsonValue], bbox: Mapping[str, JsonValue]
+) -> None:
+    """Fill the ``bbox_*`` columns from a dumped ``BoundingBox`` mapping.
+
+    The generated :class:`~lairs.records._generated.defs.BoundingBox` model dumps
+    to ``{"height": ..., "width": ..., "x": ..., "y": ...}``.
+
+    Parameters
+    ----------
+    columns : dict
+        The anchor column mapping to mutate in place.
+    bbox : collections.abc.Mapping
+        A dumped bounding-box value.
+    """
+    columns["bbox_x"] = _coerce_int(bbox.get("x"))
+    columns["bbox_y"] = _coerce_int(bbox.get("y"))
+    columns["bbox_w"] = _coerce_int(bbox.get("width"))
+    columns["bbox_h"] = _coerce_int(bbox.get("height"))
+
+
+def _fill_text_span(
+    columns: dict[str, JsonValue], span: Mapping[str, JsonValue]
+) -> None:
+    """Fill the ``byte_start`` / ``byte_end`` columns from a dumped ``Span``.
+
+    Parameters
+    ----------
+    columns : dict
+        The anchor column mapping to mutate in place.
+    span : collections.abc.Mapping
+        A dumped :class:`~lairs.records._generated.defs.Span` value.
+    """
+    columns["byte_start"] = _coerce_int(span.get("byteStart"))
+    columns["byte_end"] = _coerce_int(span.get("byteEnd"))
+
+
+def _fill_token_ref_sequence(
+    columns: dict[str, JsonValue],
+    body: Mapping[str, JsonValue],
+) -> None:
+    """Fill ``token_id`` / ``token_indexes`` from a ``TokenRefSequence`` body."""
+    columns["token_id"] = _uuid_value(body.get("tokenizationId"))
+    indexes = body.get("tokenIndexes")
+    if isinstance(indexes, list):
+        columns["token_indexes"] = [_coerce_int(index) for index in indexes]
+
+
+def _fill_token_ref(
+    columns: dict[str, JsonValue], body: Mapping[str, JsonValue]
+) -> None:
+    """Fill ``token_id`` / ``token_index`` from a ``TokenRef`` body."""
+    columns["token_id"] = _uuid_value(body.get("tokenizationId"))
+    columns["token_index"] = _coerce_int(body.get("tokenIndex"))
+
+
+def _fill_temporal_span(
+    columns: dict[str, JsonValue], body: Mapping[str, JsonValue]
+) -> None:
+    """Fill ``t_start_ms`` / ``t_end_ms`` from a ``TemporalSpan`` body."""
+    columns["t_start_ms"] = _coerce_int(body.get("start"))
+    columns["t_end_ms"] = _coerce_int(body.get("ending"))
+
+
+def _fill_spatio_temporal(
+    columns: dict[str, JsonValue], body: Mapping[str, JsonValue]
+) -> None:
+    """Fill ``t_start_ms`` / ``t_end_ms`` from a ``SpatioTemporalAnchor`` body."""
+    span = body.get("temporalSpan")
+    if isinstance(span, dict):
+        _fill_temporal_span(columns, span)
+
+
+def _fill_page_anchor(
+    columns: dict[str, JsonValue], body: Mapping[str, JsonValue]
+) -> None:
+    """Fill ``page`` plus nested span/bbox columns from a ``PageAnchor`` body."""
+    columns["page"] = _coerce_int(body.get("page"))
+    text_span = body.get("textSpan")
+    if isinstance(text_span, dict):
+        _fill_text_span(columns, text_span)
+    bbox = body.get("boundingBox")
+    if isinstance(bbox, dict):
+        _fill_bounding_box(columns, bbox)
+
+
+def _fill_external_target(
+    columns: dict[str, JsonValue], body: Mapping[str, JsonValue]
+) -> None:
+    """Fill ``ext_source`` from an ``ExternalTarget`` body."""
+    source = body.get("source")
+    columns["ext_source"] = source if isinstance(source, str) else None
+
+
+# ordered (kind, distinguishing-fields) pairs probed by :func:`_anchor_kind`.
+# the order is load-bearing: ``tokenRefSequence`` precedes ``tokenRef`` (both
+# carry ``tokenizationId``) and the bare ``temporalSpan`` precedes
+# ``spatioTemporalAnchor`` (which nests its own ``temporalSpan``).
+_ANCHOR_KIND_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("span", ("byteStart", "byteEnd")),
+    ("tokenRefSequence", ("tokenIndexes",)),
+    ("tokenRef", ("tokenIndex", "tokenizationId")),
+    ("temporalSpan", ("start", "ending")),
+    ("spatioTemporalAnchor", ("temporalSpan", "keyframes")),
+    ("pageAnchor", ("page",)),
+    ("externalTarget", ("source", "selector")),
+)
+
+
+def _anchor_kind(body: Mapping[str, JsonValue]) -> str | None:
+    """Return the ``anchor_kind`` for a dumped anchor variant body, or ``None``.
+
+    Classifies by the distinguishing fields each variant carries, probing
+    :data:`_ANCHOR_KIND_FIELDS` in order so overlapping variants resolve to the
+    most specific kind.
+    """
+    for kind, fields in _ANCHOR_KIND_FIELDS:
+        if any(field in body for field in fields):
+            return kind
+    return None
+
+
+# per-kind column fillers, dispatched by :func:`_anchor_kind`.
+_ANCHOR_FILLERS = {
+    "span": _fill_text_span,
+    "tokenRefSequence": _fill_token_ref_sequence,
+    "tokenRef": _fill_token_ref,
+    "temporalSpan": _fill_temporal_span,
+    "spatioTemporalAnchor": _fill_spatio_temporal,
+    "pageAnchor": _fill_page_anchor,
+    "externalTarget": _fill_external_target,
+}
+
+
 def flatten_anchor(anchor: Mapping[str, JsonValue] | None) -> dict[str, JsonValue]:
     """Flatten a polymorphic anchor mapping into typed columns.
 
-    Recognises the Layers anchor variants by the fields they carry and projects
-    each into the fixed :data:`ANCHOR_COLUMNS`, leaving unrelated columns unset.
-    Unknown or absent anchors yield an all-``None`` row with an ``anchor_kind``
-    of ``None``, so the resulting column set is uniform across rows regardless of
-    which anchor variant each record uses.
+    Recognises every :class:`~lairs.records._generated.defs.Anchor` variant by
+    the fields it carries and projects each into the fixed :data:`ANCHOR_COLUMNS`,
+    leaving unrelated columns unset. Unknown or absent anchors yield an
+    all-``None`` row with an ``anchor_kind`` of ``None``, so the resulting column
+    set is uniform across rows regardless of which anchor variant each record
+    uses.
+
+    The seven recognised variants map to these ``anchor_kind`` values:
+
+    - ``textSpan`` -> ``"span"`` (``byte_start``, ``byte_end``)
+    - ``tokenRef`` -> ``"tokenRef"`` (``token_id``, ``token_index``)
+    - ``tokenRefSequence`` -> ``"tokenRefSequence"`` (``token_id``,
+      ``token_indexes``)
+    - ``temporalSpan`` -> ``"temporalSpan"`` (``t_start_ms``, ``t_end_ms``)
+    - ``spatioTemporalAnchor`` -> ``"spatioTemporalAnchor"`` (``t_start_ms``,
+      ``t_end_ms``)
+    - ``pageAnchor`` -> ``"pageAnchor"`` (``page``, nested ``byte_start`` /
+      ``byte_end`` and ``bbox_*``)
+    - ``externalTarget`` -> ``"externalTarget"`` (``ext_source``)
 
     Parameters
     ----------
@@ -174,37 +364,22 @@ def flatten_anchor(anchor: Mapping[str, JsonValue] | None) -> dict[str, JsonValu
     if anchor is None:
         return columns
     body = _anchor_body(anchor)
-
-    if "byteStart" in body or "byteEnd" in body:
-        columns["anchor_kind"] = "span"
-        columns["byte_start"] = _coerce_int(body.get("byteStart"))
-        columns["byte_end"] = _coerce_int(body.get("byteEnd"))
-    elif "tokenIndex" in body or "tokenizationId" in body:
-        columns["anchor_kind"] = "tokenRef"
-        token_id = body.get("tokenizationId")
-        columns["token_id"] = token_id if isinstance(token_id, str) else None
-        columns["token_index"] = _coerce_int(body.get("tokenIndex"))
-    elif "start" in body or "ending" in body:
-        columns["anchor_kind"] = "temporalSpan"
-        columns["t_start_ms"] = _coerce_int(body.get("start"))
-        columns["t_end_ms"] = _coerce_int(body.get("ending"))
-    elif {"x", "y", "w", "h"} & set(body):
-        columns["anchor_kind"] = "boundingBox"
-        columns["bbox_x"] = _coerce_int(body.get("x"))
-        columns["bbox_y"] = _coerce_int(body.get("y"))
-        columns["bbox_w"] = _coerce_int(body.get("w"))
-        columns["bbox_h"] = _coerce_int(body.get("h"))
-    elif "temporalSpan" in body or "keyframe" in body:
-        columns["anchor_kind"] = "spatioTemporalAnchor"
-        span = body.get("temporalSpan")
-        if isinstance(span, dict):
-            columns["t_start_ms"] = _coerce_int(span.get("start"))
-            columns["t_end_ms"] = _coerce_int(span.get("ending"))
+    kind = _anchor_kind(body)
+    if kind is None:
+        return columns
+    columns["anchor_kind"] = kind
+    _ANCHOR_FILLERS[kind](columns, body)
     return columns
 
 
 def _scalar_columns(dumped: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
     """Return the scalar (non-container) fields of a dumped record.
+
+    This is the flatten-to-typed-columns boundary: only top-level JSON scalars
+    become columns. Nested lists and objects (other than ``anchor``, which is
+    flattened separately into :data:`ANCHOR_COLUMNS`) are intentionally dropped,
+    so non-anchor nested data such as ``features``, ``tokenIndexes``, or
+    ``keyframes`` does not reach the Arrow views.
 
     Parameters
     ----------
@@ -350,6 +525,11 @@ def materialize(
     by collection NSID, with each NSID written as its own Parquet file; callers
     that have already built the normalized ``expressions`` / ``annotations`` /
     ``segmentations`` / ``media`` / ``edges`` tables can pass them explicitly.
+
+    Each view is written as a single ``<name>.parquet`` file with pyarrow's
+    default write options. Compression, row-group sizing, and partitioning are
+    not parameterized; a caller needing those should write the returned tables
+    with :func:`pyarrow.parquet.write_table` directly.
 
     Parameters
     ----------

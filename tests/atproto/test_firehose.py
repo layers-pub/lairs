@@ -5,11 +5,13 @@ from __future__ import annotations
 import secrets
 import threading
 import time
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 import httpx
 import libipld
 import pytest
+from websockets.exceptions import ConnectionClosed
 
 from lairs.atproto import firehose
 from lairs.atproto.firehose import (
@@ -153,6 +155,80 @@ def test_op_event_filters_unkept_collection() -> None:
     op: IpldValue = {"path": "app.bsky.feed.post/rk", "action": "create", "cid": None}
     store: dict[bytes, IpldValue] = {}
     assert _op_event(op, 1, "did:plc:abc", store, _keep_predicate(None)) is None
+
+
+class _FakeWebSocket:
+    """A fake sync websocket that replays frames then closes."""
+
+    def __init__(self, frames: list[bytes]) -> None:
+        self._frames = list(frames)
+
+    def recv(self) -> bytes:
+        if self._frames:
+            return self._frames.pop(0)
+        raise ConnectionClosed(None, None)
+
+
+def _commit_frame(seq: int) -> bytes:
+    """Build a single create-commit frame for one Layers record."""
+    header: IpldValue = {"op": 1, "t": "#commit"}
+    body: IpldValue = {
+        "seq": seq,
+        "repo": "did:plc:abc",
+        "blocks": b"",
+        "ops": [{"path": f"{_COLLECTION}/rk{seq}", "action": "create", "cid": None}],
+    }
+    return _frame(header, body)
+
+
+def test_subscribe_repos_ends_on_close_without_reconnect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # the default single-connection primitive ends iteration cleanly when the
+    # websocket closes, dialing exactly once.
+    dialed: list[str] = []
+
+    @contextmanager
+    def fake_connect(url: str, **_kwargs: object) -> Iterator[_FakeWebSocket]:
+        dialed.append(url)
+        yield _FakeWebSocket([_commit_frame(1), _commit_frame(2)])
+
+    monkeypatch.setattr(firehose, "connect", fake_connect)
+    events = list(firehose.subscribe_repos("ws://relay.example"))
+    assert [event.seq for event in events] == [1, 2]
+    assert len(dialed) == 1
+
+
+def test_subscribe_repos_reconnects_from_highest_seq(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # with reconnect=True a dropped connection is re-dialed, resuming from the
+    # highest seq already delivered so the freshness loop survives a blip.
+    dialed: list[str] = []
+    connections = iter(
+        [
+            [_commit_frame(5), _commit_frame(6)],
+            [_commit_frame(7)],
+        ],
+    )
+
+    @contextmanager
+    def fake_connect(url: str, **_kwargs: object) -> Iterator[_FakeWebSocket]:
+        dialed.append(url)
+        try:
+            frames = next(connections)
+        except StopIteration:
+            frames = []
+        yield _FakeWebSocket(frames)
+
+    monkeypatch.setattr(firehose, "connect", fake_connect)
+    stream = firehose.subscribe_repos("ws://relay.example", reconnect=True)
+    collected = [next(stream).seq for _ in range(3)]
+    stream.close()
+    assert collected == [5, 6, 7]
+    # the first dial carries no cursor; the reconnect resumes from seq 6.
+    assert dialed[0] == "ws://relay.example/xrpc/com.atproto.sync.subscribeRepos"
+    assert dialed[1].endswith("?cursor=6")
 
 
 @pytest.mark.integration

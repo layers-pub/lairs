@@ -60,8 +60,25 @@ def generate(lexicon_root: Path, out_root: Path) -> list[Path]:
         path.write_text(text, encoding="utf-8")
         written.append(path)
     _write_generated_init(out_root, sorted(rendered))
+    _prune_orphans(out_root, set(rendered))
     _canonicalise(out_root)
     return sorted([*written, out_root / "__init__.py"])
+
+
+def _prune_orphans(out_root: Path, namespaces: set[str]) -> None:
+    """Delete generated modules for namespaces no longer rendered.
+
+    Removing a lexicon namespace upstream must not leave an orphan module
+    behind: the stale ``<namespace>.py`` would still be importable and would no
+    longer reflect any lexicon. Only freshly rendered namespace modules and the
+    package ``__init__`` survive; every other ``*.py`` (including a namespace
+    that was dropped) is removed.
+    """
+    keep = {f"{namespace}.py" for namespace in namespaces}
+    keep.add("__init__.py")
+    for path in out_root.glob("*.py"):
+        if path.name not in keep:
+            path.unlink()
 
 
 def check(lexicon_root: Path, out_root: Path) -> bool:
@@ -77,16 +94,21 @@ def check(lexicon_root: Path, out_root: Path) -> bool:
     Returns
     -------
     bool
-        ``True`` if every committed module (and the package ``__init__``) is
-        byte-identical to a fresh generation off the vendored lexicons.
+        ``True`` if the committed ``*.py`` set is exactly the freshly generated
+        set and every committed module (and the package ``__init__``) is
+        byte-identical to its fresh counterpart. An orphan committed module with
+        no fresh counterpart (left behind after a lexicon namespace was removed
+        upstream) counts as drift and returns ``False``.
     """
     with tempfile.TemporaryDirectory() as tmp:
         fresh_root = Path(tmp)
         generate(lexicon_root, fresh_root)
+        fresh_names = {path.name for path in fresh_root.glob("*.py")}
+        committed_names = {path.name for path in out_root.glob("*.py")}
+        if committed_names != fresh_names:
+            return False
         for fresh in sorted(fresh_root.glob("*.py")):
             committed = out_root / fresh.name
-            if not committed.exists():
-                return False
             if committed.read_text(encoding="utf-8") != fresh.read_text(
                 encoding="utf-8"
             ):

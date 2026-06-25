@@ -13,12 +13,13 @@ from lairs.store.arrow import (
     materialize,
     records_to_table,
 )
-from lairs.store.blobcache import BlobCache
+from lairs.store.blobcache import BlobCache, BlobCacheError
 from lairs.store.pool import ModelPool
 from lairs.store.repository import RecordDiff, Repository, Workspace
 
 __all__ = [
     "BlobCache",
+    "BlobCacheError",
     "ModelPool",
     "RecordDiff",
     "Repository",

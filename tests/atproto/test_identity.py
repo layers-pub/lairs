@@ -44,6 +44,7 @@ def _resolver(
 
 def test_exports() -> None:
     assert set(identity.__all__) == {
+        "IdentityError",
         "IdentityResolution",
         "IdentityResolver",
         "resolve_did",
@@ -122,6 +123,37 @@ def test_resolve_did_web_uses_well_known() -> None:
     with _resolver(handler) as resolver:
         document = resolver.resolve_did("did:web:example.com")
     assert document["id"] == "did:web:example.com"
+
+
+def test_resolve_did_web_with_path_segments() -> None:
+    # did:web with path segments resolves to /<path>/did.json under the host,
+    # exercising the multi-part branch of _did_web_to_url.
+    did = "did:web:example.com:user:alice"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "example.com"
+        assert request.url.path == "/user/alice/did.json"
+        return httpx.Response(200, json={"id": did, "service": []})
+
+    with _resolver(handler) as resolver:
+        document = resolver.resolve_did(did)
+    assert document["id"] == did
+
+
+def test_resolve_did_web_with_percent_encoded_port() -> None:
+    # a percent-encoded port colon in the host segment is decoded back to ':',
+    # so the document is fetched from the explicit host:port with its path.
+    did = "did:web:localhost%3A8443:user:alice"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "localhost"
+        assert request.url.port == 8443
+        assert request.url.path == "/user/alice/did.json"
+        return httpx.Response(200, json={"id": did, "service": []})
+
+    with _resolver(handler) as resolver:
+        document = resolver.resolve_did(did)
+    assert document["id"] == did
 
 
 def test_resolve_did_rejects_unknown_method() -> None:

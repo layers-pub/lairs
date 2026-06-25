@@ -19,9 +19,12 @@ from lairs.data.corpus import (
     load_corpus,
 )
 from lairs.records._generated.annotation import AnnotationLayer
+from lairs.records._generated.corpus import Corpus as CorpusRecord
+from lairs.records._generated.corpus import Membership
 from lairs.records._generated.expression import Expression
 from lairs.records._generated.media import Media
 from lairs.records._generated.segmentation import Segmentation
+from lairs.store.repository import Repository
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -40,6 +43,9 @@ _L2 = f"at://{_AUTH}/pub.layers.annotation.annotationLayer/l2"
 _M1 = f"at://{_AUTH}/pub.layers.media.media/m1"
 _S1 = f"at://{_AUTH}/pub.layers.segmentation.segmentation/s1"
 _C1 = f"at://{_AUTH}/pub.layers.corpus.corpus/c1"
+_C2 = f"at://{_AUTH}/pub.layers.corpus.corpus/c2"
+_MEM1 = f"at://{_AUTH}/pub.layers.corpus.membership/mem1"
+_MEM2 = f"at://{_AUTH}/pub.layers.corpus.membership/mem2"
 
 
 def _expr(doc_id: str, *, media_ref: str | None = None) -> Expression:
@@ -69,6 +75,23 @@ def _layer(
 def _seg(expr_uri: str) -> Segmentation:
     """Build a minimal segmentation targeting an expression."""
     return Segmentation(expression=expr_uri, createdAt=_NOW, tokenizations=())
+
+
+def _member(
+    corpus_uri: str,
+    expr_uri: str,
+    *,
+    split: str | None = None,
+    ordinal: int | None = None,
+) -> Membership:
+    """Build a membership tying an expression to a corpus."""
+    return Membership(
+        corpusRef=corpus_uri,
+        expressionRef=expr_uri,
+        createdAt=_NOW,
+        split=split,
+        ordinal=ordinal,
+    )
 
 
 def _populated() -> Corpus:
@@ -189,6 +212,120 @@ def test_save_to_repo_commits(tmp_path: Path) -> None:
     assert rev != ""
 
 
+def test_save_to_repo_round_trips_records(tmp_path: Path) -> None:
+    c = _populated()
+    repo_path = tmp_path / "repo"
+    c.save_to_repo(repo_path)
+    # the committed records read back from a freshly opened repository.
+    repo = Repository.open(repo_path)
+    expr = repo.load(_E1, Expression)
+    assert isinstance(expr, Expression)
+    assert expr.id == "d1"
+    media = repo.load(_M1, Media)
+    assert isinstance(media, Media)
+    assert media.kind == "audio"
+
+
+def test_materialize_leaves_no_repo_dir(tmp_path: Path) -> None:
+    c = _populated()
+    out = tmp_path / "views"
+    c.materialize(out)
+    # the throwaway repo lives in a temp dir, not the output directory.
+    assert not (out / ".repo").exists()
+
+
+# membership-scoped views ------------------------------------------------------
+
+
+def _with_memberships() -> Corpus:
+    """Build a corpus whose two expressions are bound by membership records."""
+    c = Corpus.new(uri=_C1)
+    c.add_expression(_E1, _expr("d1"))
+    c.add_expression(_E2, _expr("d2"))
+    c.add_membership(_MEM1, _member(_C1, _E1, split="train", ordinal=0))
+    c.add_membership(_MEM2, _member(_C1, _E2, split="test", ordinal=1))
+    return c
+
+
+def test_expressions_restricted_to_members() -> None:
+    c = Corpus.new(uri=_C1)
+    c.add_expression(_E1, _expr("d1"))
+    c.add_expression(_E2, _expr("d2"))
+    # only e1 is a member of this corpus.
+    c.add_membership(_MEM1, _member(_C1, _E1))
+    assert {record.id for record in c.expressions} == {"d1"}
+    assert c.expression_uris() == [_E1]
+
+
+def test_expressions_ignore_other_corpus_memberships() -> None:
+    c = Corpus.new(uri=_C1)
+    c.add_expression(_E1, _expr("d1"))
+    c.add_expression(_E2, _expr("d2"))
+    # e1 belongs to this corpus; e2 belongs to a different corpus on the same
+    # authority and must not surface here.
+    c.add_membership(_MEM1, _member(_C1, _E1))
+    c.add_membership(_MEM2, _member(_C2, _E2))
+    assert {record.id for record in c.expressions} == {"d1"}
+
+
+def test_expressions_unscoped_without_memberships() -> None:
+    # a freshly authored corpus with no membership records treats every pooled
+    # expression as a member.
+    c = _populated()
+    assert {record.id for record in c.expressions} == {"d1", "d2"}
+
+
+def test_joins_respect_membership_scope() -> None:
+    c = Corpus.new(uri=_C1)
+    c.add_expression(_E1, _expr("d1", media_ref=_M1))
+    c.add_expression(_E2, _expr("d2"))
+    c.add_record(_M1, Media(kind="audio", createdAt=_NOW))
+    c.add_annotation_layer(_L1, _layer(_E2))
+    c.add_record(_S1, _seg(_E2))
+    c.add_membership(_MEM1, _member(_C1, _E1))
+    # only e1 is a member, so each join surfaces e1 alone.
+    assert {row.uri for row in c.with_annotations()} == {_E1}
+    assert {row.uri for row in c.with_media()} == {_E1}
+    assert {row.uri for row in c.with_segmentation()} == {_E1}
+
+
+def test_memberships_filtered_by_corpus_ref() -> None:
+    c = Corpus.new(uri=_C1)
+    c.add_membership(_MEM1, _member(_C1, _E1))
+    c.add_membership(_MEM2, _member(_C2, _E2))
+    members = list(c.memberships())
+    assert len(members) == 1
+    assert members[0].expressionRef == _E1
+
+
+def test_corpus_record_accessor() -> None:
+    c = Corpus.new(uri=_C1)
+    assert c.corpus_record is None
+    c.add_record(_C1, CorpusRecord(name="demo", createdAt=_NOW))
+    record = c.corpus_record
+    assert isinstance(record, CorpusRecord)
+    assert record.name == "demo"
+
+
+def test_corpus_record_is_none_without_uri() -> None:
+    c = Corpus.new()
+    assert c.corpus_record is None
+
+
+def test_split_selects_expressions() -> None:
+    c = _with_memberships()
+    train = list(c.split("train"))
+    assert [record.id for record in train] == ["d1"]
+    test = list(c.split("test"))
+    assert [record.id for record in test] == ["d2"]
+    assert list(c.split("dev")) == []
+
+
+def test_splits_lists_present_slugs() -> None:
+    c = _with_memberships()
+    assert c.splits() == ("test", "train")
+
+
 class _FakePds:
     """A fake PDS client returning canned envelopes per collection."""
 
@@ -252,6 +389,38 @@ def test_load_corpus_skips_undecodable_records() -> None:
         cid="cid",
         value={"kind": "document"},  # missing required id and createdAt
     )
+    fake = _FakePds({"pub.layers.expression.expression": [bad]})
+    loaded = load_corpus(_C1, source="pds", pds_client=fake)  # ty: ignore[invalid-argument-type]
+    assert len(loaded.expressions) == 0
+
+
+def test_load_corpus_loads_memberships_and_corpus_record() -> None:
+    fake = _FakePds(
+        {
+            "pub.layers.expression.expression": [
+                _envelope(_E1, _expr("d1")),
+                _envelope(_E2, _expr("d2")),
+            ],
+            "pub.layers.corpus.corpus": [
+                _envelope(_C1, CorpusRecord(name="demo", createdAt=_NOW)),
+            ],
+            "pub.layers.corpus.membership": [
+                _envelope(_MEM1, _member(_C1, _E1, split="train")),
+                _envelope(_MEM2, _member(_C2, _E2, split="test")),
+            ],
+        },
+    )
+    loaded = load_corpus(_C1, source="pds", pds_client=fake)  # ty: ignore[invalid-argument-type]
+    # only e1 is a member of c1; e2's membership points at c2.
+    assert {record.id for record in loaded.expressions} == {"d1"}
+    assert len(loaded.memberships()) == 1
+    assert loaded.corpus_record is not None
+    assert loaded.corpus_record.name == "demo"
+    assert [record.id for record in loaded.split("train")] == ["d1"]
+
+
+def test_load_corpus_skips_non_dict_value() -> None:
+    bad = RecordEnvelope(uri=_E1, cid="cid", value="not-a-record")
     fake = _FakePds({"pub.layers.expression.expression": [bad]})
     loaded = load_corpus(_C1, source="pds", pds_client=fake)  # ty: ignore[invalid-argument-type]
     assert len(loaded.expressions) == 0

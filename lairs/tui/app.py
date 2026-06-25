@@ -66,10 +66,12 @@ A colorful workbench for discovering and querying Layers corpus data.
   \\brun(s|ning)?\\b
   ```
 - **CQL**: a corpus query language over token-aligned annotations. A query is a
-  sequence of bracketed token constraints joined on adjacent token positions.
-  `=` exact, `!=` negated, `~` regular expression; `[]` matches any token.
+  sequence of bracketed token constraints joined on adjacent token positions;
+  each block matches exactly one token (repetition quantifiers are not
+  supported). `=` exact, `!=` negated, `~` regular expression; `[]` matches any
+  token.
   ```
-  [label="DET"] [label="ADJ"]* [label="NOUN"]
+  [label="DET"] [label="ADJ"] [label="NOUN"]
   ```
 
 ## Keys

@@ -15,6 +15,7 @@ from lairs.atproto import pds
 from lairs.atproto.pds import (
     PdsClient,
     RecordEnvelope,
+    RecordNotFoundError,
     RepoDescription,
     _envelopes_from_blocks,
     _walk_mst,
@@ -54,6 +55,7 @@ def test_exports() -> None:
         "QueryParams",
         "RecordDecodeFailure",
         "RecordEnvelope",
+        "RecordNotFoundError",
         "RepoDescription",
         "decode",
         "decode_all",
@@ -221,6 +223,24 @@ def test_get_record_raises_on_error_status() -> None:
         client.get_record(_REPO, _COLLECTION, "rkey")
 
 
+def test_get_record_raises_not_found_on_empty_body() -> None:
+    # a 200 whose body carries no usable record (no string uri) must surface as
+    # RecordNotFoundError rather than a silently empty-uri envelope.
+    with (
+        _client(lambda _r: httpx.Response(200, json={})) as client,
+        pytest.raises(RecordNotFoundError),
+    ):
+        client.get_record(_REPO, _COLLECTION, "rkey")
+
+
+def test_get_record_raises_not_found_on_non_object_body() -> None:
+    with (
+        _client(lambda _r: httpx.Response(200, json=[])) as client,
+        pytest.raises(RecordNotFoundError),
+    ):
+        client.get_record(_REPO, _COLLECTION, "rkey")
+
+
 _REPO_DID = "did:plc:repotest"
 
 
@@ -244,6 +264,34 @@ def _expression_record(text: str) -> dict[str, IpldValue]:
         "kind": "sentence",
         "createdAt": "2026-06-16T00:00:00Z",
     }
+
+
+def _unsigned_varint(value: int) -> bytes:
+    """Encode an unsigned integer as an LEB128 varint for CAR framing."""
+    out = bytearray()
+    while True:
+        chunk = value & 0x7F
+        value >>= 7
+        if value:
+            out.append(chunk | 0x80)
+        else:
+            out.append(chunk)
+            return bytes(out)
+
+
+def _encode_car(roots: list[bytes], blocks: dict[bytes, IpldValue]) -> bytes:
+    """Encode a CAR archive from root CIDs and a raw-CID-keyed block store.
+
+    Each section is a varint length prefix followed by its payload: the header
+    is the DAG-CBOR ``{roots, version}`` object, and each block is its raw CID
+    bytes concatenated with its DAG-CBOR-encoded value.
+    """
+    header = libipld.encode_dag_cbor({"roots": roots, "version": 1})
+    car = bytearray(_unsigned_varint(len(header)) + header)
+    for cid, value in blocks.items():
+        block = cid + libipld.encode_dag_cbor(value)
+        car += _unsigned_varint(len(block)) + block
+    return bytes(car)
 
 
 def _mst_entry(
@@ -432,6 +480,90 @@ def test_module_list_records_drains_pages() -> None:
     with PdsClient(_ENDPOINT, client) as pds_client:
         envelopes = list(pds_client.list_records(_REPO, _COLLECTION))
     assert len(envelopes) == 1
+
+
+def _patch_throwaway_client(
+    monkeypatch: pytest.MonkeyPatch,
+    handler: Callable[[httpx.Request], httpx.Response],
+) -> None:
+    """Bind the throwaway httpx.Client the module wrappers build to a mock.
+
+    The module-level wrappers construct their own ``httpx.Client()`` with no
+    injectable transport, so the test patches ``pds.httpx.Client`` to return a
+    client wired to a ``MockTransport``. This exercises the wrappers'
+    construct/delegate/close path without a live PDS.
+    """
+    transport = httpx.MockTransport(handler)
+    real_client = httpx.Client
+
+    def _build_client(*_args: object, **_kwargs: object) -> httpx.Client:
+        return real_client(transport=transport)
+
+    monkeypatch.setattr(pds.httpx, "Client", _build_client)
+
+
+def test_module_get_record_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/xrpc/com.atproto.repo.getRecord"
+        return httpx.Response(
+            200,
+            json={"uri": "at://x", "cid": "bafy", "value": {"text": "hi"}},
+        )
+
+    _patch_throwaway_client(monkeypatch, handler)
+    envelope = pds.get_record(_ENDPOINT, _REPO, _COLLECTION, "rkey")
+    assert envelope.uri == "at://x"
+    assert envelope.value == {"text": "hi"}
+
+
+def test_module_describe_repo_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/xrpc/com.atproto.repo.describeRepo"
+        return httpx.Response(
+            200,
+            json={"did": _REPO, "handle": "alice.test", "collections": [_COLLECTION]},
+        )
+
+    _patch_throwaway_client(monkeypatch, handler)
+    description = pds.describe_repo(_ENDPOINT, _REPO)
+    assert description.did == _REPO
+    assert description.handle == "alice.test"
+    assert description.collections == (_COLLECTION,)
+
+
+def test_module_get_repo_decodes_car(monkeypatch: pytest.MonkeyPatch) -> None:
+    # build a real one-record repository CAR and confirm the throwaway-client
+    # get_repo wrapper fetches and decodes it into envelopes.
+    record = _expression_record("module")
+    record_cid = _cid_bytes(record)
+    entries: list[IpldValue] = [
+        _mst_entry(b"", f"{_COLLECTION}/aaaaa".encode(), record_cid),
+    ]
+    node: dict[str, IpldValue] = {"l": None, "e": entries}
+    node_cid = _cid_bytes(node)
+    commit: dict[str, IpldValue] = {
+        "version": 3,
+        "did": _REPO_DID,
+        "data": node_cid,
+        "rev": "abc",
+        "prev": None,
+    }
+    commit_cid = _cid_bytes(commit)
+    car = _encode_car(
+        [commit_cid],
+        {commit_cid: commit, node_cid: node, record_cid: record},
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/xrpc/com.atproto.sync.getRepo"
+        return httpx.Response(200, content=car)
+
+    _patch_throwaway_client(monkeypatch, handler)
+    envelopes = pds.get_repo(_ENDPOINT, _REPO_DID)
+    assert [env.uri for env in envelopes] == [
+        f"at://{_REPO_DID}/{_COLLECTION}/aaaaa",
+    ]
+    assert decode(envelopes[0], Expression).text == "module"
 
 
 @pytest.mark.integration

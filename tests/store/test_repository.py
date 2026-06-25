@@ -149,3 +149,71 @@ def test_diff_across_revisions_reads_committed_data(tmp_path: Path) -> None:
     assert diff.added == (other,)
     assert diff.changed == (_EXPR_URI,)
     assert diff.removed == ()
+
+
+def test_state_at_folds_latest_value_over_linear_ancestry(tmp_path: Path) -> None:
+    # the post-order ancestry fold lets the newest commit's value win across a
+    # multi-commit linear history, not just a two-commit one.
+    repo = Repository.init(tmp_path / "repo")
+    repo.save(_EXPR_URI, _Expr(text="v1"))
+    base = repo.commit("c1")
+    repo.save(_EXPR_URI, _Expr(text="v2"))
+    repo.commit("c2")
+    repo.save(_EXPR_URI, _Expr(text="v3"))
+    head = repo.commit("c3")
+    diff = repo.diff(base, head)
+    assert diff.changed == (_EXPR_URI,)
+    # the reconstructed head state carries the latest value, not an ancestor's.
+    state = repo._state_at(head)
+    assert b"v3" in state[_EXPR_URI]
+    assert b"v2" not in state[_EXPR_URI]
+
+
+def test_safe_name_is_collision_free() -> None:
+    # two AT-URIs that the old slash/colon substitution collapsed onto one stem
+    # must now map to distinct file stems.
+    colliding = "at://did_plc_a/c/r"
+    real = "at://did:plc:a/c/r"
+    assert repository._safe_name(colliding) != repository._safe_name(real)
+
+
+def test_save_distinct_uris_do_not_overwrite(tmp_path: Path) -> None:
+    # the two URIs below collide under a naive slash/colon encoding; each must
+    # keep its own value on disk.
+    repo = Repository.init(tmp_path / "repo")
+    uri_a = "at://did:plc:a/c/r"
+    uri_b = "at://did_plc_a/c/r"
+    repo.save(uri_a, _Expr(text="value-a"))
+    repo.save(uri_b, _Expr(text="value-b"))
+    assert repo.load(uri_a, _Expr) == _Expr(text="value-a")
+    assert repo.load(uri_b, _Expr) == _Expr(text="value-b")
+
+
+def test_forget_removes_from_working_tree(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    repo.save(_EXPR_URI, _Expr(text="hello"))
+    repo.forget(_EXPR_URI)
+    assert repo.staged_uris() == []
+    assert repo.load(_EXPR_URI, _Expr) is None
+    assert repo.load_raw(_EXPR_URI) is None
+
+
+def test_forget_absent_uri_raises(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    with pytest.raises(KeyError, match="not in the working tree"):
+        repo.forget(_EXPR_URI)
+
+
+def test_diff_reports_removed_after_forget(tmp_path: Path) -> None:
+    # a record present at base and forgotten before head appears in removed; the
+    # tombstone committed by forget drops it from the head state.
+    repo = Repository.init(tmp_path / "repo")
+    repo.save(_EXPR_URI, _Expr(text="one"))
+    repo.save(_MEDIA_URI, _Expr(text="keep"))
+    base = repo.commit("base snapshot")
+    repo.forget(_EXPR_URI)
+    head = repo.commit("head snapshot")
+    diff = repo.diff(base, head)
+    assert diff.removed == (_EXPR_URI,)
+    assert diff.added == ()
+    assert diff.changed == ()

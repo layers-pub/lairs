@@ -11,6 +11,7 @@ from lairs.atproto import auth
 from lairs.atproto.auth import (
     Session,
     SessionAuth,
+    SessionRenewalError,
     SessionStore,
     authed_client,
     login,
@@ -34,6 +35,7 @@ def test_exports() -> None:
     assert set(auth.__all__) == {
         "Session",
         "SessionAuth",
+        "SessionRenewalError",
         "SessionStore",
         "authed_client",
         "login",
@@ -159,19 +161,54 @@ def test_session_auth_gives_up_without_password() -> None:
         access_jwt="old",
         refresh_jwt="dead",
     )
+    endpoint_hits = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("refreshSession"):
             return httpx.Response(400)
+        endpoint_hits["n"] += 1
         return httpx.Response(401, json={"error": "ExpiredToken"})
 
-    with httpx.Client(
-        transport=httpx.MockTransport(handler),
-        auth=SessionAuth(session),
-    ) as client:
-        response = client.get(_GET)
-    # renewal failed and no password to re-login: the endpoint's 401 stands.
-    assert response.status_code == 401
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(handler),
+            auth=SessionAuth(session),
+        ) as client,
+        pytest.raises(SessionRenewalError),
+    ):
+        client.get(_GET)
+    # renewal failed and no password to re-login: the request is raised rather
+    # than re-sent, so the target endpoint is hit exactly once (no double-send).
+    assert endpoint_hits["n"] == 1
+
+
+def test_session_auth_does_not_double_send_on_failed_renewal_post() -> None:
+    # a non-idempotent write whose renewal fails must hit the target once, not
+    # twice; raising rather than re-yielding the request guarantees that.
+    session = Session(
+        did="did:plc:x",
+        pds_endpoint=_ENDPOINT,
+        access_jwt="old",
+        refresh_jwt="dead",
+    )
+    writes: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("refreshSession"):
+            return httpx.Response(400)
+        writes.append(request.content)
+        return httpx.Response(401, json={"error": "ExpiredToken"})
+
+    create = f"{_ENDPOINT}/xrpc/com.atproto.repo.createRecord"
+    with (
+        httpx.Client(
+            transport=httpx.MockTransport(handler),
+            auth=SessionAuth(session),
+        ) as client,
+        pytest.raises(SessionRenewalError),
+    ):
+        client.post(create, json={"repo": "did:plc:x"})
+    assert len(writes) == 1
 
 
 def test_session_store_round_trip(tmp_path: Path) -> None:

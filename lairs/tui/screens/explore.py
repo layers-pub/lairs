@@ -15,11 +15,11 @@ from rich.text import Text
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import DataTable, Input, Markdown
 
+from lairs.discovery.index import DiscoveryIndex
 from lairs.discovery.query import SearchQuery, search
 
 if TYPE_CHECKING:
     from lairs.discovery.cards import DatasetCard
-    from lairs.discovery.index import DiscoveryIndex
 
 __all__ = ["ExplorePane"]
 
@@ -95,8 +95,6 @@ class ExplorePane(Horizontal):
             )
             return
         try:
-            from lairs.discovery.index import DiscoveryIndex  # noqa: PLC0415
-
             self._index = DiscoveryIndex.open(Path(self._index_path))
             self._cards = self._index.cards()
         except (OSError, ValueError) as error:  # pragma: no cover - defensive

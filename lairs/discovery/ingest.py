@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+import didactic.api as dx
 import httpx
 
 from lairs.atproto.firehose import subscribe_repos
@@ -28,6 +29,7 @@ from lairs.discovery.summary import _CORPUS_NSID, corpus_from_value
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
+    from lairs.atproto.firehose import FirehoseEvent
     from lairs.atproto.pds import RecordEnvelope, RepoDescription
     from lairs.discovery.cards import DatasetCard
     from lairs.discovery.index import DiscoveryIndex
@@ -69,10 +71,14 @@ def _same_content(existing: DatasetCard, candidate: DatasetCard) -> bool:
 
 def _refresh_card(
     index: DiscoveryIndex,
-    corpus_uri: str,
     card: DatasetCard,
+    existing: DatasetCard | None,
 ) -> bool:
     """Store a card unless its content already matches the indexed one.
+
+    The previously-indexed ``existing`` card is supplied by the caller so the
+    index is read once per corpus per pass rather than once here and again in
+    :func:`_first_seen`.
 
     Returns
     -------
@@ -80,17 +86,99 @@ def _refresh_card(
         ``True`` if the card was written (new or changed), ``False`` if the
         indexed card already had the same content.
     """
-    existing = index.get_card(corpus_uri)
     if existing is not None and _same_content(existing, card):
         return False
     index.put_card(card)
     return True
 
 
-def _first_seen(index: DiscoveryIndex, corpus_uri: str, now: datetime) -> datetime:
+def _first_seen(existing: DatasetCard | None, now: datetime) -> datetime:
     """Return the corpus's existing first-seen time, or ``now`` when new."""
-    existing = index.get_card(corpus_uri)
     return existing.freshness.first_seen_at if existing is not None else now
+
+
+def _checkpoint(index: DiscoveryIndex, relay: str, seq: int, now: datetime) -> None:
+    """Persist the cursor and commit a firehose checkpoint at ``seq``."""
+    index.put_cursor(SyncCursor(relay=relay, seq=seq, updated_at=now))
+    index.commit(f"firehose refresh to seq {seq}")
+
+
+def _card_for_firehose(
+    event: FirehoseEvent,
+    corpus_uri: str,
+    existing: DatasetCard | None,
+    *,
+    endpoint: str,
+    now: datetime,
+) -> DatasetCard | None:
+    """Build the card for a corpus create/update event, or ``None`` if undecodable."""
+    corpus = corpus_from_value(event.record)
+    if corpus is None:
+        return None
+    provenance = CardProvenance(
+        source_did=event.repo,
+        source_endpoint=endpoint,
+        discovered_via="firehose",
+    )
+    freshness = CardFreshness(
+        first_seen_at=_first_seen(existing, now),
+        last_updated_at=now,
+        last_seen_seq=event.seq,
+    )
+    return card_from_corpus(
+        corpus_uri,
+        corpus,
+        provenance=provenance,
+        freshness=freshness,
+    )
+
+
+class _EventOutcome(dx.Model):
+    """The result of applying one firehose event to the index.
+
+    Attributes
+    ----------
+    kind : str
+        One of ``"built"``, ``"unchanged"``, ``"removed"``, or ``"skipped"``.
+    reason : str or None
+        A human-readable skip reason when ``kind`` is ``"skipped"``.
+    """
+
+    kind: str = dx.field(description="built, unchanged, removed, or skipped")
+    reason: str | None = dx.field(default=None, description="skip reason when skipped")
+
+
+def _apply_firehose_event(
+    index: DiscoveryIndex,
+    event: FirehoseEvent,
+    *,
+    endpoint: str,
+    now: datetime,
+) -> _EventOutcome:
+    """Apply one firehose event to the index and classify its outcome."""
+    corpus_uri = f"at://{event.repo}/{event.collection}/{event.rkey}"
+    if event.action == "delete":
+        if index.remove_card(corpus_uri):
+            return _EventOutcome(kind="removed")
+        return _EventOutcome(
+            kind="skipped",
+            reason=f"seq {event.seq}: delete of unindexed corpus",
+        )
+    if event.action not in {"create", "update"}:
+        return _EventOutcome(
+            kind="skipped",
+            reason=f"seq {event.seq}: {event.action} not indexed",
+        )
+    existing = index.get_card(corpus_uri)
+    card = _card_for_firehose(event, corpus_uri, existing, endpoint=endpoint, now=now)
+    if card is None:
+        return _EventOutcome(
+            kind="skipped",
+            reason=f"seq {event.seq}: undecodable corpus",
+        )
+    if _refresh_card(index, card, existing):
+        return _EventOutcome(kind="built")
+    return _EventOutcome(kind="unchanged")
 
 
 def build_index(  # noqa: PLR0913  (crawl inputs plus a logged bound)
@@ -160,6 +248,7 @@ def build_index(  # noqa: PLR0913  (crawl inputs plus a logged bound)
                 skipped.append(f"{envelope.uri}: undecodable corpus")
                 continue
             found += 1
+            existing = index.get_card(envelope.uri)
             provenance = CardProvenance(
                 source_did=did,
                 source_endpoint=endpoint,
@@ -167,7 +256,7 @@ def build_index(  # noqa: PLR0913  (crawl inputs plus a logged bound)
                 source_handle=handle,
             )
             freshness = CardFreshness(
-                first_seen_at=_first_seen(index, envelope.uri, now),
+                first_seen_at=_first_seen(existing, now),
                 last_updated_at=now,
             )
             card = card_from_corpus(
@@ -176,7 +265,7 @@ def build_index(  # noqa: PLR0913  (crawl inputs plus a logged bound)
                 provenance=provenance,
                 freshness=freshness,
             )
-            if _refresh_card(index, envelope.uri, card):
+            if _refresh_card(index, card, existing):
                 built += 1
             else:
                 unchanged += 1
@@ -211,9 +300,12 @@ def update_index(
     """Tail a relay's firehose, refreshing cards for corpus commits.
 
     Resumes from the stored ``SyncCursor`` for the relay, indexes each corpus
-    create or update, and checkpoints the cursor and commits every
+    create or update, removes the card for each corpus delete (so the local index
+    does not drift stale), and checkpoints the cursor and commits every
     ``commit_every`` events. ``limit`` bounds the events processed, which makes
-    a live tail testable.
+    a live tail testable. A delete of a corpus that is not indexed is logged in
+    ``skipped`` rather than removed; a removed card is reported in
+    ``CrawlReport.cards_removed``.
 
     Parameters
     ----------
@@ -237,7 +329,8 @@ def update_index(
     cursor = index.get_cursor(relay)
     start = cursor.seq if cursor is not None else None
     now = datetime.now(UTC)
-    seen = built = unchanged = 0
+    seen = 0
+    counts = {"built": 0, "unchanged": 0, "removed": 0}
     last_seq = start if start is not None else 0
     skipped: list[str] = []
     for event in subscribe_repos(relay, nsids=[_CORPUS_NSID], cursor=start):
@@ -245,44 +338,25 @@ def update_index(
             break
         seen += 1
         last_seq = event.seq
-        if event.action not in {"create", "update"}:
-            skipped.append(f"seq {event.seq}: {event.action} not indexed")
-            continue
-        corpus = corpus_from_value(event.record)
-        if corpus is None:
-            skipped.append(f"seq {event.seq}: undecodable corpus")
-            continue
-        corpus_uri = f"at://{event.repo}/{event.collection}/{event.rkey}"
-        provenance = CardProvenance(
-            source_did=event.repo,
-            source_endpoint=endpoint,
-            discovered_via="firehose",
-        )
-        freshness = CardFreshness(
-            first_seen_at=_first_seen(index, corpus_uri, now),
-            last_updated_at=now,
-            last_seen_seq=event.seq,
-        )
-        card = card_from_corpus(
-            corpus_uri,
-            corpus,
-            provenance=provenance,
-            freshness=freshness,
-        )
-        if _refresh_card(index, corpus_uri, card):
-            built += 1
+        outcome = _apply_firehose_event(index, event, endpoint=endpoint, now=now)
+        if outcome.kind == "skipped":
+            if outcome.reason is not None:
+                skipped.append(outcome.reason)
         else:
-            unchanged += 1
+            counts[outcome.kind] += 1
         if seen % commit_every == 0:
-            index.put_cursor(SyncCursor(relay=relay, seq=last_seq, updated_at=now))
-            index.commit(f"firehose refresh to seq {last_seq}")
+            _checkpoint(index, relay, last_seq, now)
     revision: str | None = None
     if seen:
-        index.put_cursor(SyncCursor(relay=relay, seq=last_seq, updated_at=now))
-        revision = index.commit(f"firehose refresh to seq {last_seq}")
+        # commit a final checkpoint unless the last event already landed exactly
+        # on a ``commit_every`` boundary, which would leave nothing newly staged.
+        if seen % commit_every != 0:
+            _checkpoint(index, relay, last_seq, now)
+        revision = index.head()
     return CrawlReport(
-        cards_built=built,
-        cards_unchanged=unchanged,
+        cards_built=counts["built"],
+        cards_unchanged=counts["unchanged"],
+        cards_removed=counts["removed"],
         skipped=tuple(skipped),
         revision=revision,
     )

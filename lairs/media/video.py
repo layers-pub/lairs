@@ -9,6 +9,7 @@ the keyframe-interpolation and box math are pure Python and need no extra.
 
 from __future__ import annotations
 
+import io
 from typing import TYPE_CHECKING, Literal
 
 import didactic.api as dx
@@ -78,6 +79,10 @@ class VideoFrame(dx.Model):
         The frame width in pixels.
     height : int
         The frame height in pixels.
+    time_ms : int
+        The frame presentation time in milliseconds, set during decode. This is
+        the temporal position spatio-temporal anchors interpolate against; it is
+        not the same as ``index`` (the frame's ordinal position).
     pixels : bytes, optional
         The frame pixels, carried as an opaque payload.
     """
@@ -85,6 +90,10 @@ class VideoFrame(dx.Model):
     index: int = dx.field(description="frame index")
     width: int = dx.field(description="frame width in pixels")
     height: int = dx.field(description="frame height in pixels")
+    time_ms: int = dx.field(
+        default=0,
+        description="frame presentation time in milliseconds",
+    )
     pixels: bytes = dx.field(
         default=b"",
         opaque=True,
@@ -182,7 +191,8 @@ def frame_at_ms(handle: MediaHandle, time_ms: int) -> VideoFrame:
     ModuleNotFoundError
         If the ``lairs[video]`` extra (``av``) is not installed.
     ValueError
-        If the handle carries no bytes to decode or ``time_ms`` is negative.
+        If the handle carries no bytes to decode, ``time_ms`` is negative, or
+        the container holds no video stream.
     """
     if time_ms < 0:
         msg = f"time_ms must be non-negative, got {time_ms}"
@@ -191,31 +201,42 @@ def frame_at_ms(handle: MediaHandle, time_ms: int) -> VideoFrame:
         msg = "media handle has no bytes to decode; resolve it first"
         raise ValueError(msg)
     try:
-        import io  # noqa: PLC0415
-
         import av  # noqa: PLC0415
     except ModuleNotFoundError as exc:  # pragma: no cover - exercised via test patch
         msg = "video decoding requires the lairs[video] extra (av)"
         raise ModuleNotFoundError(msg) from exc
-    container = av.open(io.BytesIO(handle.data))
     target_s = time_ms / 1000.0
-    stream = container.streams.video[0]
     chosen_index = 0
+    chosen_time_ms = 0
     width = 0
     height = 0
     pixels = b""
-    # av.open over a readable buffer yields an InputContainer, but its stubs
-    # type the result as the input/output union, which hides decode().
-    frames = container.decode(stream)  # ty: ignore[unresolved-attribute]
-    for index, frame in enumerate(frames):
-        chosen_index = index
-        width = frame.width
-        height = frame.height
-        pixels = bytes(frame.to_ndarray(format="rgb24").tobytes())
-        if frame.time is not None and frame.time >= target_s:
-            break
-    container.close()
-    return VideoFrame(index=chosen_index, width=width, height=height, pixels=pixels)
+    # av.open over a readable buffer yields an InputContainer (a context
+    # manager), but its stubs type the result as the input/output union, which
+    # hides decode(); the with-statement also frees the container and the
+    # underlying buffer on any decode error.
+    with av.open(io.BytesIO(handle.data)) as container:
+        if not container.streams.video:
+            msg = "media handle carries no video stream to decode"
+            raise ValueError(msg)
+        stream = container.streams.video[0]
+        frames = container.decode(stream)  # ty: ignore[unresolved-attribute]
+        for index, frame in enumerate(frames):
+            chosen_index = index
+            width = frame.width
+            height = frame.height
+            pixels = bytes(frame.to_ndarray(format="rgb24").tobytes())
+            if frame.time is not None:
+                chosen_time_ms = int(frame.time * 1000.0)
+                if frame.time >= target_s:
+                    break
+    return VideoFrame(
+        index=chosen_index,
+        width=width,
+        height=height,
+        time_ms=chosen_time_ms,
+        pixels=pixels,
+    )
 
 
 def crop_to_bbox(frame: VideoFrame, box: BoundingBox) -> VideoFrame:
@@ -239,7 +260,8 @@ def crop_to_bbox(frame: VideoFrame, box: BoundingBox) -> VideoFrame:
     Raises
     ------
     ValueError
-        If the box falls outside the frame bounds.
+        If the box falls outside the frame bounds, or the pixel payload does not
+        match a row-major 3-bytes-per-pixel layout of the frame dimensions.
     """
     left = int(box.x)
     top = int(box.y)
@@ -250,9 +272,16 @@ def crop_to_bbox(frame: VideoFrame, box: BoundingBox) -> VideoFrame:
         raise ValueError(msg)
     new_width = right - left
     new_height = bottom - top
+    channels = 3
     cropped = bytearray()
     if frame.pixels:
-        channels = 3
+        expected = frame.width * frame.height * channels
+        if len(frame.pixels) != expected:
+            msg = (
+                f"frame pixel payload is {len(frame.pixels)} bytes but a "
+                f"{frame.width}x{frame.height} rgb24 frame needs {expected}"
+            )
+            raise ValueError(msg)
         stride = frame.width * channels
         for row in range(top, bottom):
             start = row * stride + left * channels

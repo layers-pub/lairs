@@ -12,9 +12,11 @@ The bulk path is ``applyWrites``. Records are ordered by cross-reference
 dependency (media before referrers; expressions before segmentations,
 annotations, and memberships; ontologies and personas before the layers that
 cite them), so a referenced record always commits before its referrer. Writes
-are chunked to a PDS batch limit, retried idempotently against deterministic
-rkeys, and reported back as a per-record result set
-(created / updated / skipped / failed with reasons).
+are chunked to a PDS batch limit; when a batch call fails it is retried one
+record at a time as ``putRecord`` upserts at each write's own rkey (so a record
+already committed by the partially-applied batch is upserted rather than
+duplicated), and reported back as a per-record result set
+(created / updated / deleted / failed with reasons).
 
 :func:`publish` maps a local Repository revision to the minimal ``applyWrites``
 plan by diffing the revision against what is already on the PDS (by AT-URI and
@@ -36,6 +38,7 @@ from multiformats import CID, multihash
 
 from lairs._types import JsonValue  # noqa: TC001  (runtime: didactic field sort)
 from lairs.atproto.pds import PdsClient
+from lairs.records.blobref import BlobRef
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
@@ -76,6 +79,9 @@ MAX_BLOB_SIZE = 100 * 1024 * 1024
 APPLY_WRITES_CHUNK = 200
 """The maximum number of writes sent in one ``applyWrites`` batch."""
 
+_EMPTY_COLLECTION_STATUSES = frozenset({400, 404})
+"""The PDS statuses treated as an empty (unknown) collection, not a failure."""
+
 # the dependency tier of each collection NSID. lower tiers are published first
 # so a referenced record always commits before its referrer. tiers mirror the
 # cross-reference structure of the lexicons (plan section 6b.3).
@@ -91,17 +97,18 @@ _DEPENDENCY_TIERS: dict[str, int] = {
     "pub.layers.expression.expression": 1,
     # tier 2: token-level structure over expressions.
     "pub.layers.segmentation.segmentation": 2,
-    # tier 3: annotations, graphs, and corpora over expressions and tokens.
+    # tier 3: annotations over expressions and tokens; graph nodes; standalone
+    # corpora and resource containers. these cite only tier 0-2 records.
     "pub.layers.annotation.annotationLayer": 3,
-    "pub.layers.annotation.clusterSet": 3,
     "pub.layers.graph.graphNode": 3,
-    "pub.layers.graph.graphEdge": 3,
-    "pub.layers.graph.graphEdgeSet": 3,
     "pub.layers.alignment.alignment": 3,
     "pub.layers.corpus.corpus": 3,
     "pub.layers.resource.collection": 3,
     "pub.layers.resource.template": 3,
-    # tier 4: records that reference tier-3 records.
+    # tier 4: records over tier-3 records. cluster sets cite annotations; edges
+    # cite nodes; resource members cite their container or template.
+    "pub.layers.annotation.clusterSet": 4,
+    "pub.layers.graph.graphEdge": 4,
     "pub.layers.corpus.membership": 4,
     "pub.layers.resource.entry": 4,
     "pub.layers.resource.filling": 4,
@@ -109,8 +116,11 @@ _DEPENDENCY_TIERS: dict[str, int] = {
     "pub.layers.resource.templateComposition": 4,
     "pub.layers.judgment.experimentDef": 4,
     "pub.layers.judgment.judgmentSet": 4,
-    "pub.layers.judgment.agreementReport": 4,
     "pub.layers.changelog.entry": 4,
+    # tier 5: records over tier-4 records. edge sets cite edges; agreement
+    # reports cite judgment sets.
+    "pub.layers.graph.graphEdgeSet": 5,
+    "pub.layers.judgment.agreementReport": 5,
 }
 
 _DEFAULT_TIER = 3
@@ -243,30 +253,6 @@ def _tier_of(collection: str) -> int:
     return _DEPENDENCY_TIERS.get(collection, _DEFAULT_TIER)
 
 
-def deterministic_rkey(value: Mapping[str, JsonValue]) -> str:
-    """Derive a deterministic rkey from a record value.
-
-    A stable rkey makes re-publishing idempotent: a second publish of the same
-    content upserts the same record rather than creating a duplicate. The rkey
-    is the first 24 hex characters of the SHA-256 of the canonical JSON of the
-    value, which is within ATProto's rkey syntax.
-
-    Parameters
-    ----------
-    value : collections.abc.Mapping
-        The record value to hash.
-
-    Returns
-    -------
-    str
-        A 24-character lowercase-hex rkey.
-    """
-    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
-    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-    rkey_length = 24
-    return digest[:rkey_length]
-
-
 def content_address(data: bytes) -> str:
     """Return a stable content address for blob bytes.
 
@@ -327,22 +313,22 @@ class WriteResult(dx.Model):
     uri : str
         The AT-URI of the record.
     status : str
-        The outcome: ``created``, ``updated``, ``skipped``, or ``failed``.
+        The outcome: ``created``, ``updated``, ``deleted``, or ``failed``.
     cid : str or None, optional
         The content identifier returned by the PDS, when the write succeeded.
     reason : str or None, optional
-        A human-readable reason for a skipped or failed write.
+        A human-readable reason for a failed write.
     """
 
     uri: str = dx.field(description="AT-URI of the record")
-    status: str = dx.field(description="created, updated, skipped, or failed")
+    status: str = dx.field(description="created, updated, deleted, or failed")
     cid: str | None = dx.field(
         default=None,
         description="content identifier returned by the PDS, when successful",
     )
     reason: str | None = dx.field(
         default=None,
-        description="reason for a skipped or failed write",
+        description="reason for a failed write",
     )
 
 
@@ -620,6 +606,9 @@ class WriteClient:
             raise WriteError(msg) from exc
         parsed = response.json()
         blob = parsed.get("blob") if isinstance(parsed, dict) else None
+        if not isinstance(blob, dict):
+            msg = "uploadBlob response did not contain a 'blob' reference object"
+            raise WriteError(msg)
         self._blob_cache[address] = blob
         return blob
 
@@ -728,7 +717,7 @@ class WriteClient:
 
         Writes are ordered so a referenced record precedes its referrer, sent
         in chunks within the PDS batch limit, and retried once per chunk via
-        idempotent ``putRecord`` upserts on deterministic rkeys when the batch
+        idempotent ``putRecord`` upserts at each write's own rkey when the batch
         call fails, so a partial failure can be safely resumed. Each input
         write yields exactly one :class:`WriteResult`.
 
@@ -766,15 +755,18 @@ class WriteClient:
             "writes": [_write_op_to_json(op) for op in chunk],
         }
         try:
-            self._post(_APPLY_WRITES_NSID, body)
+            parsed = self._post(_APPLY_WRITES_NSID, body)
         except WriteError:
             return self._retry_chunk(chunk)
+        raw_results = parsed.get("results")
+        cids = _apply_writes_result_cids(raw_results, len(chunk))
         return tuple(
             WriteResult(
                 uri=op.uri,
                 status="created" if op.action == "create" else op.action + "d",
+                cid=cids[index],
             )
-            for op in chunk
+            for index, op in enumerate(chunk)
         )
 
     def _retry_chunk(self, chunk: Sequence[WriteOp]) -> tuple[WriteResult, ...]:
@@ -821,6 +813,38 @@ class WriteClient:
             return self.delete_record(op.collection, op.rkey)
         value = op.value if isinstance(op.value, dict) else {}
         return self.put_record(op.collection, op.rkey, value)
+
+
+def _apply_writes_result_cids(
+    raw_results: JsonValue,
+    count: int,
+) -> tuple[str | None, ...]:
+    """Extract per-write CIDs from an ``applyWrites`` ``results`` array.
+
+    The PDS returns a ``results`` array aligned with the input writes; create
+    and update results carry a ``cid``, delete results do not. A short, absent,
+    or malformed array yields ``None`` for the missing positions so the caller
+    always gets exactly ``count`` entries.
+
+    Parameters
+    ----------
+    raw_results : JsonValue
+        The ``results`` value from the ``applyWrites`` response.
+    count : int
+        The number of writes in the batch.
+
+    Returns
+    -------
+    tuple of (str or None)
+        The committed CID per write position, or ``None`` where unavailable.
+    """
+    results = raw_results if isinstance(raw_results, list) else []
+    cids: list[str | None] = []
+    for index in range(count):
+        entry = results[index] if index < len(results) else None
+        cid = entry.get("cid") if isinstance(entry, dict) else None
+        cids.append(cid if isinstance(cid, str) else None)
+    return tuple(cids)
 
 
 def _write_op_to_json(op: WriteOp) -> dict[str, JsonValue]:
@@ -880,11 +904,111 @@ def apply_writes(
         return write_client.apply_writes(writes)
 
 
-def _value_with_type(value: JsonValue, collection: str) -> JsonValue:
-    """Ensure a record value carries its ``$type`` discriminator.
+def _blob_to_wire(blob: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+    """Convert a lairs blob reference map to the ATProto blob wire form.
 
-    ATProto records embed their collection NSID as ``$type``; the generated
-    model dump does not, so it is injected here for the write value.
+    The generated :class:`~lairs.records.blobref.BlobRef` dumps as
+    ``{"cid": ..., "mime_type": ..., "size": ...}``; a PDS stores and addresses
+    a blob as ``{"$type": "blob", "ref": {"$link": cid}, "mimeType": ...,
+    "size": ...}``. Converting to the wire form lets both the write value and
+    the locally computed CID match what the PDS stores.
+
+    Parameters
+    ----------
+    blob : collections.abc.Mapping
+        The lairs blob reference map.
+
+    Returns
+    -------
+    dict
+        The ATProto blob object in its JSON wire form.
+    """
+    cid = blob.get("cid")
+    wire: dict[str, JsonValue] = {
+        "$type": "blob",
+        "ref": {"$link": cid},
+    }
+    mime_type = blob.get("mime_type")
+    if mime_type is not None:
+        wire["mimeType"] = mime_type
+    size = blob.get("size")
+    if size is not None:
+        wire["size"] = size
+    return wire
+
+
+def _blobs_to_wire(value: JsonValue, model: type[dx.Model] | None) -> JsonValue:
+    """Rewrite every blob field of a record value to the ATProto wire form.
+
+    The walk is model-driven: a field is converted only when the generated
+    model declares it (or its array element, or a nested model field) as a
+    :class:`~lairs.records.blobref.BlobRef`, so non-blob maps are never
+    misidentified. The value is left unchanged when no model is available.
+
+    Parameters
+    ----------
+    value : JsonValue
+        The record value in its lairs JSON form.
+    model : type of didactic.api.Model or None
+        The record's generated model, or ``None`` when unresolved.
+
+    Returns
+    -------
+    JsonValue
+        The value with every blob field in ATProto wire form.
+    """
+    if model is None or not isinstance(value, dict):
+        return value
+    converted = dict(value)
+    for spec in model.__field_specs__.values():
+        key = spec.alias if spec.alias is not None else spec.name
+        if key not in converted:
+            continue
+        converted[key] = _convert_field(converted[key], spec.annotation)
+    return converted
+
+
+def _convert_field(field_value: JsonValue, annotation: object) -> JsonValue:
+    """Convert one field value per its annotated type.
+
+    Parameters
+    ----------
+    field_value : JsonValue
+        The field's JSON value.
+    annotation : object
+        The field's type annotation (possibly a union or a list element type).
+
+    Returns
+    -------
+    JsonValue
+        The converted value: blob maps become wire blobs and nested models
+        recurse; everything else is returned unchanged.
+    """
+    members = getattr(annotation, "__args__", (annotation,))
+    for member in members:
+        if member is BlobRef:
+            if isinstance(field_value, dict):
+                return _blob_to_wire(field_value)
+            return field_value
+        if isinstance(member, type) and issubclass(member, dx.Model):
+            return _blobs_to_wire(field_value, member)
+        origin = getattr(member, "__origin__", None)
+        if origin in (list, tuple) and isinstance(field_value, list):
+            args = [arg for arg in getattr(member, "__args__", ()) if arg is not ...]
+            element = args[0] if args else None
+            return [_convert_field(item, element) for item in field_value]
+    return field_value
+
+
+def _value_with_type(value: JsonValue, collection: str) -> JsonValue:
+    """Prepare a record value for writing and CID computation.
+
+    Two normalisations are applied. First, the collection NSID is injected as
+    ``$type`` (ATProto records embed it; the generated model dump does not).
+    Second, every blob field is rewritten from the lairs
+    :class:`~lairs.records.blobref.BlobRef` form to the ATProto blob wire form
+    so a blob-bearing record both writes correctly and content-addresses the
+    way the PDS does (making a re-publish of an unchanged blob record a no-op).
 
     Parameters
     ----------
@@ -896,13 +1020,46 @@ def _value_with_type(value: JsonValue, collection: str) -> JsonValue:
     Returns
     -------
     JsonValue
-        The value with ``$type`` set to the collection NSID.
+        The value with ``$type`` set and blob fields in ATProto wire form.
     """
     if not isinstance(value, dict):
         return value
-    typed = dict(value)
+    typed = _blobs_to_wire(value, _model_for(collection))
+    if not isinstance(typed, dict):
+        return typed
+    typed = dict(typed)
     typed.setdefault("$type", collection)
     return typed
+
+
+def _dag_cbor_links(value: JsonValue) -> JsonValue:
+    """Rewrite cid-link maps so DAG-CBOR encodes them as CID links.
+
+    In the JSON form of a record, a CID link (including the ``ref`` of every
+    blob) is the map ``{"$link": "<cid>"}``. ``libipld`` encodes that map as an
+    ordinary string map, but a PDS stores the link as a DAG-CBOR CID link (CBOR
+    tag 42), which ``libipld`` emits only when the value is the raw CID bytes.
+    This walk replaces each ``{"$link": "<cid>"}`` with ``bytes(CID)`` so the
+    locally computed CID matches the PDS-reported CID for blob-bearing records.
+
+    Parameters
+    ----------
+    value : JsonValue
+        The record value in its JSON form.
+
+    Returns
+    -------
+    JsonValue
+        The value with every cid-link map replaced by its raw CID bytes.
+    """
+    if isinstance(value, dict):
+        link = value.get("$link")
+        if len(value) == 1 and isinstance(link, str):
+            return bytes(CID.decode(link))
+        return {key: _dag_cbor_links(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_dag_cbor_links(item) for item in value]
+    return value
 
 
 def _record_cid(value: JsonValue) -> str:
@@ -910,8 +1067,10 @@ def _record_cid(value: JsonValue) -> str:
 
     The CID is a CIDv1 over the DAG-CBOR encoding of the value with a sha-256
     multihash and the dag-cbor codec, computed the way a PDS computes the CID it
-    reports for a stored record. Computing it the same way lets the publish diff
-    detect an unchanged record by CID equality.
+    reports for a stored record. Cid-link maps (such as every blob ``ref``) are
+    first rewritten to their DAG-CBOR CID-link form so a blob-bearing record's
+    locally computed CID matches the PDS-reported CID. Computing it the same way
+    lets the publish diff detect an unchanged record by CID equality.
 
     Parameters
     ----------
@@ -923,7 +1082,8 @@ def _record_cid(value: JsonValue) -> str:
     str
         The record's CIDv1 string.
     """
-    digest = multihash.digest(libipld.encode_dag_cbor(value), "sha2-256")
+    encoded = libipld.encode_dag_cbor(_dag_cbor_links(value))
+    digest = multihash.digest(encoded, "sha2-256")
     return str(CID("base32", 1, "dag-cbor", digest))
 
 
@@ -978,6 +1138,15 @@ def _fetch_pds_cids(
     -------
     dict of str to str
         A mapping from AT-URI to the PDS-reported record CID.
+
+    Raises
+    ------
+    WriteError
+        If a collection fails to enumerate with a status other than an empty
+        or unknown collection (for example a 5xx), so a degraded PDS aborts the
+        diff rather than producing a wrong plan.
+    httpx.HTTPError
+        If a transport-level failure (connection or timeout) occurs.
     """
     cids: dict[str, str] = {}
     with PdsClient(endpoint, client) as pds_client:
@@ -985,9 +1154,18 @@ def _fetch_pds_cids(
             try:
                 for envelope in pds_client.list_records(repo, collection):
                     cids[envelope.uri] = envelope.cid
-            except httpx.HTTPError:
-                # a collection with no records may 400/404; treat as empty.
-                continue
+            except httpx.HTTPStatusError as exc:
+                # an unknown or empty collection may 400/404; treat it as empty.
+                # any other status (notably a 5xx) means the PDS could not
+                # report the collection, so re-raise rather than silently
+                # dropping records that are genuinely present.
+                if exc.response.status_code in _EMPTY_COLLECTION_STATUSES:
+                    continue
+                msg = (
+                    f"listing {collection} on {repo} failed with status "
+                    f"{exc.response.status_code}"
+                )
+                raise WriteError(msg) from exc
     return cids
 
 

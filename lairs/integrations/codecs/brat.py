@@ -10,15 +10,30 @@ file. The ``.ann`` lines this codec understands are:
 
 - ``Tn<TAB>TYPE START END<TAB>TEXT`` - a text-bound entity, where ``START`` and
   ``END`` are UTF-8 byte offsets into the document text (the pivot for a span
-  annotation kind anchored by a :class:`~lairs.records.defs.Span`).
+  annotation kind anchored by a :class:`~lairs.records.defs.Span`). A
+  discontinuous entity (``TYPE 0 5;8 12``) is collapsed to the single enclosing
+  span (see :func:`_parse_entity`).
 - ``Rn<TAB>TYPE Arg1:Tx Arg2:Ty`` - a binary relation between two entities (the
   pivot for a relation annotation kind).
 - ``An<TAB>TYPE Tx[ VALUE]`` - an attribute on an entity (a binary flag when no
   value is given), carried as annotation features.
 
+Only the ``T``, ``R``, and ``A`` line kinds are decoded. Event (``E``),
+normalisation (``N``), equivalence (``*``), and note (``#``) lines, and any
+structurally malformed ``T``/``R``/``A`` line, are skipped: the decode is lossy
+for those, and the dropped lines are not reported. A consumer needing those
+kinds must extend the parser.
+
+A brat binary-flag attribute (no value) is encoded as an empty feature value
+and recovered as a binary flag, so a valued attribute whose value is literally
+``"true"`` is preserved verbatim rather than collapsing to a flag (an empty
+string is not a legal brat attribute value, so it is a safe flag sentinel; see
+:func:`_attribute_pairs`).
+
 The ``.txt`` and ``.ann`` are combined into a single source string separated by
 a sentinel line so the codec round-trips both halves through one
-:meth:`decode`/:meth:`encode` pair.
+:meth:`decode`/:meth:`encode` pair. :func:`split_standoff` recovers the
+conventional ``.txt`` and ``.ann`` halves from an encoded source.
 """
 
 from __future__ import annotations
@@ -50,7 +65,7 @@ if TYPE_CHECKING:
 
     from lairs._types import JsonValue
 
-__all__ = ["BratCodec", "BratIso", "canonical_standoff"]
+__all__ = ["BratCodec", "BratIso", "canonical_standoff", "split_standoff"]
 
 # the epoch timestamp used for the deterministic createdAt of generated layers,
 # so that decode and encode round-trip without depending on wall-clock time.
@@ -70,6 +85,11 @@ _ANNOTATION_NSID = "pub.layers.annotation"
 _EXPRESSION_LOCAL_ID = "expression"
 _ENTITY_LAYER_LOCAL_ID = "entities"
 _RELATION_LAYER_LOCAL_ID = "relations"
+
+# the feature value standing in for a brat binary-flag attribute (no value).
+# an empty string is never a legal brat attribute value, so it cannot collide
+# with a genuine value such as the literal "true".
+_FLAG_SENTINEL = ""
 
 
 class BratCodec:
@@ -273,6 +293,29 @@ def _split_source(src: str) -> tuple[str, str]:
     return "", src
 
 
+def split_standoff(source: str | bytes) -> tuple[str, str]:
+    """Split an encoded brat source into its conventional ``.txt`` and ``.ann``.
+
+    :meth:`BratCodec.encode` joins the document text and the standoff annotation
+    body with a sentinel line so both halves round-trip through one string. This
+    recovers the two halves a real brat corpus stores in separate files: write
+    the first element to ``*.txt`` and the second to ``*.ann``.
+
+    Parameters
+    ----------
+    source : str or bytes
+        An encoded brat source (the sentinel-joined string :meth:`BratCodec.encode`
+        returns). A source without the sentinel is treated as a bare ``.ann``
+        body over empty text.
+
+    Returns
+    -------
+    tuple of (str, str)
+        The ``.txt`` document text and the ``.ann`` annotation body.
+    """
+    return _split_source(_as_str(source))
+
+
 def _parse_standoff(text: str, ann: str) -> _Standoff:
     """Parse the document text and ``.ann`` lines into a :class:`_Standoff`."""
     entities: list[_Entity] = []
@@ -304,22 +347,26 @@ def _parse_standoff(text: str, ann: str) -> _Standoff:
 
 
 def _parse_entity(line: str) -> _Entity | None:
-    """Parse a single ``T`` entity line, or ``None`` when malformed."""
+    """Parse a single ``T`` entity line, or ``None`` when malformed.
+
+    A discontinuous (fragmented) entity, whose offset field carries several
+    ``;``-separated ranges (``Type 0 5;8 12``), is collapsed to the single
+    enclosing span from the first fragment's start to the last fragment's end.
+    The gap between fragments is not modelled, so the recovered span over-covers
+    the discontinuous region.
+    """
     parts = line.split("\t")
     expected_fields = 3
     if len(parts) < expected_fields:
         return None
     tag = parts[0].strip()
-    middle = parts[1].split()
-    type_and_span = 3
-    if len(middle) < type_and_span:
+    type_name, _, offsets = parts[1].partition(" ")
+    if not type_name or not offsets:
         return None
-    type_name = middle[0]
-    try:
-        byte_start = int(middle[1])
-        byte_end = int(middle[2])
-    except ValueError:
+    span = _parse_entity_offsets(offsets)
+    if span is None:
         return None
+    byte_start, byte_end = span
     return _Entity(
         tag=tag,
         type_name=type_name,
@@ -327,6 +374,28 @@ def _parse_entity(line: str) -> _Entity | None:
         byte_end=byte_end,
         text=parts[2],
     )
+
+
+def _parse_entity_offsets(offsets: str) -> tuple[int, int] | None:
+    """Return the enclosing ``(start, end)`` of a brat entity offset field.
+
+    The field holds one or more ``;``-separated ``START END`` fragment ranges.
+    The result spans the first fragment's start to the last fragment's end.
+    """
+    bounds: list[int] = []
+    for fragment in offsets.split(";"):
+        endpoints = fragment.split()
+        fragment_endpoints = 2
+        if len(endpoints) != fragment_endpoints:
+            return None
+        try:
+            bounds.append(int(endpoints[0]))
+            bounds.append(int(endpoints[1]))
+        except ValueError:
+            return None
+    if not bounds:
+        return None
+    return min(bounds), max(bounds)
 
 
 def _parse_relation(line: str) -> _Relation | None:
@@ -461,8 +530,8 @@ def _features_for_entity(attrs: list[_Attribute]) -> FeatureMap | None:
 
 
 def _attribute_value(attribute: _Attribute) -> str:
-    """Return an attribute's value, defaulting a binary flag to ``"true"``."""
-    return attribute.value if attribute.value is not None else "true"
+    """Return an attribute's value, mapping a binary flag to the flag sentinel."""
+    return attribute.value if attribute.value is not None else _FLAG_SENTINEL
 
 
 def _relation_annotation(relation: _Relation) -> Annotation:
@@ -564,8 +633,9 @@ def _attribute_pairs(
 ) -> Iterator[tuple[str, str | None]]:
     """Yield ``(type_name, value)`` pairs from a span annotation's features.
 
-    A feature value of ``"true"`` is recovered as a binary flag (``None``);
-    any other value is recovered verbatim.
+    The flag sentinel (an empty feature value) is recovered as a binary flag
+    (``None``); any other value is recovered verbatim, so an explicit value of
+    literally ``"true"`` survives intact.
     """
     features = annotation.get("features")
     if not isinstance(features, dict):
@@ -580,8 +650,10 @@ def _attribute_pairs(
         raw_value = entry.get("value")
         if not isinstance(key, str):
             continue
-        value = None if raw_value == "true" else raw_value
-        yield key, value if isinstance(value, str) else None
+        if raw_value == _FLAG_SENTINEL:
+            yield key, None
+        elif isinstance(raw_value, str):
+            yield key, raw_value
 
 
 def _relation_from_annotation(annotation: dict[str, JsonValue]) -> _Relation | None:
@@ -660,10 +732,15 @@ def canonical_standoff(standoff: _Standoff) -> _Standoff:
     entity they decorate. Round-trip law fixtures sample from this canonical
     subset, on which ``BratIso.backward(BratIso.forward(x)) == x`` holds.
 
+    This operates on the codec's internal parsed-standoff model, which a caller
+    obtains from :meth:`BratIso.backward` (or builds directly for tests); it is
+    not part of the decode/encode fragment surface, so it is intentionally not
+    re-exported from the package.
+
     Parameters
     ----------
     standoff : _Standoff
-        Any parsed standoff.
+        Any parsed standoff (for example the result of :meth:`BratIso.backward`).
 
     Returns
     -------

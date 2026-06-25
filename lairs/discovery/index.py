@@ -156,6 +156,31 @@ class DiscoveryIndex:
         loaded = self._repo.load(card_uri(corpus_uri), DatasetCard)
         return loaded if isinstance(loaded, DatasetCard) else None
 
+    def remove_card(self, corpus_uri: str) -> bool:
+        """Remove a corpus's card from the index, returning whether one existed.
+
+        Stages the card's removal through the backing Repository so the card is
+        absent from :meth:`cards`, :meth:`get_card`, and search, and a
+        revision-to-revision :meth:`diff_cards` reports it in ``removed`` once the
+        removal is committed. Removing a card that is not indexed is a no-op.
+
+        Parameters
+        ----------
+        corpus_uri : str
+            The corpus AT-URI whose card to remove.
+
+        Returns
+        -------
+        bool
+            ``True`` if a card was removed, ``False`` if none was indexed.
+        """
+        uri = card_uri(corpus_uri)
+        try:
+            self._repo.forget(uri)
+        except KeyError:
+            return False
+        return True
+
     def cards(self) -> list[DatasetCard]:
         """Load every dataset card in the index.
 

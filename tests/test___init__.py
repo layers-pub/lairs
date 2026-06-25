@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as distribution_version
+
 import pytest
 
 import lairs
@@ -9,8 +12,29 @@ from lairs.integrations.registry import UnknownAdapterError
 from lairs.records.blobref import BlobRef
 
 
-def test_version() -> None:
+def test_version_matches_distribution_metadata() -> None:
     assert isinstance(lairs.__version__, str)
+    try:
+        installed = distribution_version("lairs")
+    except PackageNotFoundError:
+        installed = None
+    if installed is not None:
+        # __version__ is derived from the installed distribution metadata, so
+        # the two can never silently diverge.
+        assert lairs.__version__ == installed
+    else:
+        # In a source tree with no installed distribution the literal fallback
+        # is the single source of truth for the release version.
+        assert lairs.__version__ == lairs._FALLBACK_VERSION
+
+
+def test_fallback_version_is_release_target() -> None:
+    # The fallback literal is the release version and must stay in step with
+    # pyproject.toml's version field.
+    assert lairs._FALLBACK_VERSION == "0.1.0"
+    parts = lairs._FALLBACK_VERSION.split(".")
+    assert len(parts) == 3
+    assert all(part.isdigit() for part in parts)
 
 
 def test_public_surface() -> None:

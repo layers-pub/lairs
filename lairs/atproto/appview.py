@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Self
 
 import httpx
 
-from lairs.atproto.pds import QueryParams, RecordEnvelope
+from lairs.atproto.pds import QueryParams, RecordEnvelope, RecordNotFoundError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -176,8 +176,14 @@ class AppviewClient:
         ------
         httpx.HTTPStatusError
             If the appview returns a non-success status.
+        RecordNotFoundError
+            If the appview returns a ``200`` whose body is not a usable record
+            object (an empty or malformed body with no string ``uri``).
         """
         body = self.query(nsid, params)
+        if not isinstance(body.get("uri"), str):
+            msg = f"appview query {nsid} returned no usable record"
+            raise RecordNotFoundError(msg)
         return _envelope_from_record(body)
 
     def list(

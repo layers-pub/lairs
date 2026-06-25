@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING
 
 import didactic.api as dx
 
+from lairs.media import resolve_media
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -348,6 +350,12 @@ class WebDatasetExporter:
     ) -> tuple[str, bytes] | None:
         """Resolve a JSON-shaped media record cell to a media member.
 
+        A cell carrying inline bytes (directly or via a resolvable record) is
+        embedded as a media member. A cell that references externally-hosted
+        media (an ``externalUri`` with no inline bytes) cannot be embedded into a
+        self-contained shard, so it raises rather than silently producing a
+        json-only sample: the exporter writes bytes, not links.
+
         Parameters
         ----------
         cell : dict
@@ -357,22 +365,31 @@ class WebDatasetExporter:
         -------
         tuple of (str, bytes) or None
             The ``(extension, bytes)`` of the media member, or ``None`` when the
-            record carries no bytes to embed.
-        """
-        from lairs.media import MediaHandle, resolve_media  # noqa: PLC0415
+            cell carries no media reference at all (no bytes, cid, or URI).
 
+        Raises
+        ------
+        ValueError
+            When the cell references externally-hosted media that carries no
+            inline bytes, so nothing can be embedded into the shard.
+        """
         record = _MediaCell.from_json(cell)
+        if record.data:
+            return (self._extension_for(record.mime_type), record.data)
         try:
             handle = resolve_media(record)
         except ValueError:
-            handle = MediaHandle(
-                cid=record.cid,
-                mime_type=record.mime_type,
-                modality="document",
-                data=record.data,
-            )
-        if not handle.data:
+            # the cell is an empty placeholder (no bytes, cid, or URI); there is
+            # nothing to embed and nothing was dropped, so skip it quietly.
             return None
+        if not handle.data:
+            msg = (
+                f"media cell {record.external_uri or record.cid!r} references "
+                f"externally-hosted media with no inline bytes; the webdataset "
+                f"exporter embeds bytes and cannot write a self-contained shard "
+                f"for external media"
+            )
+            raise ValueError(msg)
         return (self._extension_for(handle.mime_type), handle.data)
 
     @staticmethod

@@ -6,18 +6,32 @@ library (the ``lairs[conllu]`` extra) is imported lazily inside the codec
 methods, with a clear error when it is missing, so importing this module never
 pulls the dependency in.
 
+:class:`ConlluCodec` parses with the ``conllu`` library (``conllu.parse``) and
+serialises with its ``TokenList.serialize``, so it inherits that library's
+multi-sentence, comment, multiword-token, and sentence-metadata handling. The
+:class:`ConlluIso` works over already-parsed structures with a self-contained
+standard-library parser, so it never requires the optional dependency.
+
 The CoNLL-U surface maps onto Layers as follows:
 
 - the ``FORM`` column of each token-line becomes a
   :class:`~lairs.records.segmentation.Token`, and a sentence's tokens become a
   :class:`~lairs.records.segmentation.Tokenization` inside one
-  :class:`~lairs.records.segmentation.Segmentation` record.
+  :class:`~lairs.records.segmentation.Segmentation` record. Each token's
+  ``textSpan`` carries the true UTF-8 byte offsets of its form in the sentence
+  text (the tokens are joined with single spaces).
 - ``UPOS`` and ``XPOS`` become token-tag
   :class:`~lairs.records.annotation.AnnotationLayer` records anchored by token
   index; ``LEMMA`` becomes a token-tag lemma layer; ``FEATS`` are carried as
   per-annotation features.
 - ``HEAD``/``DEPREL`` become a relation (dependency) annotation layer, with each
   arc carrying ``headIndex`` (``-1`` at the root) and ``targetIndex``.
+
+Only the basic ``HEAD``/``DEPREL`` dependency tree is modelled. The CoNLL-U
+``DEPS`` column (enhanced Universal Dependencies, which may attach several
+governors to one token) is not decoded: the relation layer models exactly one
+head per token. Multiword-token range rows (``1-2``) and empty-node rows
+(``1.1``) are skipped; their surface text is recovered from the per-token forms.
 """
 
 from __future__ import annotations
@@ -43,6 +57,7 @@ from lairs.records._generated.segmentation import Segmentation, Token, Tokenizat
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
+    from types import ModuleType
 
     from lairs._types import JsonValue
 
@@ -51,18 +66,20 @@ __all__ = ["ConlluCodec", "ConlluIso"]
 # the epoch timestamp used for the deterministic createdAt of generated records.
 _EPOCH = "1970-01-01T00:00:00+00:00"
 
-# the at-uri-shaped local references the generated records point at.
+# the at-uri-shaped local reference the generated records point at, before the
+# per-sentence index suffix is appended.
 _EXPRESSION_REF = "at://local/expression"
 
-# the deterministic uuid of the generated tokenization.
-_TOKENIZATION_UUID = "tokenization-0"
+# the deterministic uuid stem of the generated tokenization.
+_TOKENIZATION_UUID = "tokenization"
 
 # the nsid collections of the records a conllu fragment carries.
 _EXPRESSION_NSID = "pub.layers.expression"
 _SEGMENTATION_NSID = "pub.layers.segmentation"
 _ANNOTATION_NSID = "pub.layers.annotation"
 
-# the local ids of the records inside a conllu fragment.
+# the local-id stems of the records inside a conllu fragment, before the
+# per-sentence index suffix is appended.
 _EXPRESSION_LOCAL_ID = "expression"
 _SEGMENTATION_LOCAL_ID = "segmentation"
 _UPOS_LAYER_LOCAL_ID = "upos"
@@ -77,8 +94,13 @@ _EMPTY = "_"
 _ROOT_HEAD = -1
 
 
-def _require_conllu() -> None:
-    """Import the optional ``conllu`` library or raise a clear error.
+def _require_conllu() -> ModuleType:
+    """Import and return the optional ``conllu`` library, or raise a clear error.
+
+    Returns
+    -------
+    types.ModuleType
+        The imported ``conllu`` module.
 
     Raises
     ------
@@ -86,13 +108,14 @@ def _require_conllu() -> None:
         When the ``conllu`` library is not installed.
     """
     try:
-        import conllu  # noqa: F401, PLC0415
+        import conllu  # noqa: PLC0415
     except ImportError as error:
         message = (
             "the conllu codec requires the optional 'conllu' library; "
             "install it with `pip install lairs[conllu]`"
         )
         raise ModuleNotFoundError(message) from error
+    return conllu
 
 
 class ConlluCodec:
@@ -115,10 +138,16 @@ class ConlluCodec:
     ) -> CorpusFragment:
         """Decode CoNLL-U text into a corpus fragment.
 
+        Every sentence in the source is decoded. Each sentence contributes its
+        own expression, segmentation, and annotation-layer records, with the
+        local ids and uuids suffixed by the sentence's 0-based index (the first
+        sentence keeps the unsuffixed ids for symmetry with the single-sentence
+        :class:`ConlluIso`).
+
         Parameters
         ----------
         src : str or bytes
-            The CoNLL-U source.
+            The CoNLL-U source, which may hold any number of sentences.
         into : lairs.integrations.codecs.CorpusFragment or None, optional
             An existing fragment to extend with the decoded records.
 
@@ -126,15 +155,26 @@ class ConlluCodec:
         -------
         lairs.integrations.codecs.CorpusFragment
             The decoded fragment.
+
+        Raises
+        ------
+        ModuleNotFoundError
+            When the optional ``conllu`` library is not installed.
         """
-        _require_conllu()
-        sentence = _parse_conllu(_as_str(src))
+        conllu = _require_conllu()
+        sentences = _parse_with_library(conllu, _as_str(src))
         records = list(into.records) if into is not None else []
-        records.extend(_records_from_sentence(sentence))
+        for index, sentence in enumerate(sentences):
+            records.extend(_records_from_sentence(sentence, index))
         return CorpusFragment(records=tuple(records), source=self.name)
 
     def encode(self, records: Iterable[FragmentRecord]) -> str:
         """Encode fragment records into CoNLL-U text.
+
+        Records are grouped back into their sentences (by the index suffix the
+        decode side assigned), and each sentence is serialised with the
+        ``conllu`` library's ``TokenList.serialize`` so the output is conformant
+        CoNLL-U.
 
         Parameters
         ----------
@@ -145,9 +185,15 @@ class ConlluCodec:
         -------
         str
             The CoNLL-U representation.
+
+        Raises
+        ------
+        ModuleNotFoundError
+            When the optional ``conllu`` library is not installed.
         """
-        _require_conllu()
-        return _render_sentence(_sentence_from_records(tuple(records)))
+        conllu = _require_conllu()
+        sentences = _sentences_from_records(tuple(records))
+        return "".join(_render_with_library(conllu, sentence) for sentence in sentences)
 
 
 class _Feat(dx.Model):
@@ -268,6 +314,56 @@ def _as_str(src: str | bytes) -> str:
     return src
 
 
+def _suffix(stem: str, index: int) -> str:
+    """Return ``stem`` for sentence 0, else ``stem`` with a ``-index`` suffix.
+
+    Sentence 0 keeps the unsuffixed stem so a single-sentence decode matches the
+    :class:`ConlluIso` output exactly.
+    """
+    return stem if index == 0 else f"{stem}-{index}"
+
+
+def _local_id(stem: str, index: int) -> str:
+    """Return the per-sentence local id of a record built from ``stem``."""
+    return _suffix(stem, index)
+
+
+def _expression_ref(index: int) -> str:
+    """Return the per-sentence expression reference for sentence ``index``."""
+    return _suffix(_EXPRESSION_REF, index)
+
+
+def _tokenization_uuid(index: int) -> str:
+    """Return the per-sentence tokenization uuid for sentence ``index``."""
+    return f"{_TOKENIZATION_UUID}-{index}"
+
+
+def _annotation_uuid(prefix: str, index: int, token_index: int) -> str:
+    """Return a per-sentence, per-token annotation uuid."""
+    if index == 0:
+        return f"{prefix}-{token_index}"
+    return f"{prefix}-{index}-{token_index}"
+
+
+def _sentence_index_of(local_id: str, stem: str) -> int | None:
+    """Return the sentence index a record's ``local_id`` encodes, or ``None``.
+
+    A bare stem (``"expression"``) maps to sentence 0; a suffixed stem
+    (``"expression-3"``) maps to that index. A ``local_id`` that does not match
+    the stem returns ``None``.
+    """
+    if local_id == stem:
+        return 0
+    prefix = f"{stem}-"
+    if not local_id.startswith(prefix):
+        return None
+    suffix = local_id[len(prefix) :]
+    try:
+        return int(suffix)
+    except ValueError:
+        return None
+
+
 def _parse_conllu(src: str) -> _ConlluSentence:
     """Parse the first CoNLL-U sentence in ``src`` into a :class:`_ConlluSentence`.
 
@@ -293,6 +389,117 @@ def _parse_conllu(src: str) -> _ConlluSentence:
             tokens.append(token)
     text = declared_text if declared_text is not None else _join_forms(tokens)
     return _ConlluSentence(text=text, tokens=tuple(tokens))
+
+
+def _parse_with_library(conllu: ModuleType, src: str) -> tuple[_ConlluSentence, ...]:
+    """Parse every CoNLL-U sentence in ``src`` with the ``conllu`` library."""
+    return tuple(
+        _sentence_from_token_list(token_list) for token_list in conllu.parse(src)
+    )
+
+
+def _sentence_from_token_list(
+    token_list: Iterable[dict[str, object]],
+) -> _ConlluSentence:
+    """Convert one ``conllu`` ``TokenList`` into a :class:`_ConlluSentence`."""
+    metadata = getattr(token_list, "metadata", {}) or {}
+    declared_text = metadata.get("text") if isinstance(metadata, dict) else None
+    tokens: list[_ConlluToken] = []
+    for row in token_list:
+        token = _token_from_library_row(row)
+        if token is not None:
+            tokens.append(token)
+    text = declared_text if isinstance(declared_text, str) else _join_forms(tokens)
+    return _ConlluSentence(text=text, tokens=tuple(tokens))
+
+
+def _token_from_library_row(row: dict[str, object]) -> _ConlluToken | None:
+    """Convert one ``conllu`` token mapping into a :class:`_ConlluToken`.
+
+    Multiword-token range rows (``id`` is a tuple) and empty-node rows are
+    skipped so the segmentation models exactly the syntactic words.
+    """
+    token_id = row.get("id")
+    if not isinstance(token_id, int):
+        # multiword ranges parse to a tuple id; empty nodes to a decimal tuple.
+        return None
+    return _ConlluToken(
+        index=token_id - 1,
+        form=str(row.get("form", "")),
+        lemma=_library_str(row.get("lemma")),
+        upos=_library_str(row.get("upos")),
+        xpos=_library_str(row.get("xpos")),
+        feats=_library_feats(row.get("feats")),
+        head=_library_head(row.get("head")),
+        deprel=_library_str(row.get("deprel")),
+    )
+
+
+def _library_str(value: object) -> str | None:
+    """Return a library column value as a string, or ``None`` when absent."""
+    if value is None or value == _EMPTY:
+        return None
+    return str(value)
+
+
+def _library_feats(value: object) -> tuple[_Feat, ...]:
+    """Convert a library ``feats`` mapping into ordered key/value pairs."""
+    if not isinstance(value, dict):
+        return ()
+    return tuple(
+        _Feat(key=str(key), value=str(val))
+        for key, val in value.items()
+        if val is not None
+    )
+
+
+def _library_head(value: object) -> int | None:
+    """Convert a library ``head`` value into a 0-based head index (``-1`` root)."""
+    if not isinstance(value, int):
+        return None
+    return _ROOT_HEAD if value == 0 else value - 1
+
+
+def _render_with_library(conllu: ModuleType, sentence: _ConlluSentence) -> str:
+    """Render a parsed sentence to CoNLL-U text via the ``conllu`` library."""
+    rows = [_library_row(token) for token in sentence.tokens]
+    token_list = conllu.TokenList(rows, metadata={"text": sentence.text})
+    return token_list.serialize()
+
+
+def _library_row(token: _ConlluToken) -> dict[str, object]:
+    """Build a ``conllu`` token mapping from a parsed token."""
+    return {
+        "id": token.index + 1,
+        "form": token.form,
+        "lemma": _library_column(token.lemma),
+        "upos": _library_column(token.upos),
+        "xpos": _library_column(token.xpos),
+        "feats": _library_feats_column(token.feats),
+        "head": _library_head_column(token.head),
+        "deprel": _library_column(token.deprel),
+        "deps": None,
+        "misc": None,
+    }
+
+
+def _library_column(value: str | None) -> str | None:
+    """Return an optional column value for a library token mapping."""
+    return value
+
+
+def _library_feats_column(feats: tuple[_Feat, ...]) -> dict[str, str] | None:
+    """Return the library ``feats`` mapping for ordered feature pairs."""
+    if not feats:
+        return None
+    return {feat.key: feat.value for feat in feats}
+
+
+def _library_head_column(head: int | None) -> int | None:
+    """Return the 1-based library ``head`` value for a 0-based head index."""
+    if head is None:
+        return None
+    return 0 if head == _ROOT_HEAD else head + 1
 
 
 def _parse_token_line(line: str) -> _ConlluToken | None:
@@ -354,31 +561,44 @@ def _join_forms(tokens: list[_ConlluToken]) -> str:
     return " ".join(token.form for token in tokens)
 
 
-def _records_from_sentence(sentence: _ConlluSentence) -> Iterator[FragmentRecord]:
-    """Yield the fragment records for a parsed CoNLL-U sentence."""
+def _records_from_sentence(
+    sentence: _ConlluSentence,
+    index: int = 0,
+) -> Iterator[FragmentRecord]:
+    """Yield the fragment records for the ``index``-th parsed CoNLL-U sentence.
+
+    Parameters
+    ----------
+    sentence : _ConlluSentence
+        The parsed sentence.
+    index : int, optional
+        The 0-based sentence index, which suffixes the records' local ids,
+        tokenisation uuid, and expression reference so several sentences share
+        one fragment without colliding. Sentence 0 keeps the unsuffixed ids.
+    """
     yield FragmentRecord(
-        local_id=_EXPRESSION_LOCAL_ID,
+        local_id=_local_id(_EXPRESSION_LOCAL_ID, index),
         nsid=_EXPRESSION_NSID,
-        value_json=_expression_json(sentence.text),
+        value_json=_expression_json(sentence.text, index),
     )
     yield FragmentRecord(
-        local_id=_SEGMENTATION_LOCAL_ID,
+        local_id=_local_id(_SEGMENTATION_LOCAL_ID, index),
         nsid=_SEGMENTATION_NSID,
-        value_json=_segmentation_json(sentence),
+        value_json=_segmentation_json(sentence, index),
     )
-    yield from _tag_layer_records(sentence)
+    yield from _tag_layer_records(sentence, index)
     if any(token.head is not None for token in sentence.tokens):
         yield FragmentRecord(
-            local_id=_DEPS_LAYER_LOCAL_ID,
+            local_id=_local_id(_DEPS_LAYER_LOCAL_ID, index),
             nsid=_ANNOTATION_NSID,
-            value_json=_dependency_layer_json(sentence),
+            value_json=_dependency_layer_json(sentence, index),
         )
 
 
-def _expression_json(text: str) -> str:
+def _expression_json(text: str, index: int) -> str:
     """Return the json for the expression record carrying the sentence text."""
     expression = Expression(
-        id=_EXPRESSION_LOCAL_ID,
+        id=_local_id(_EXPRESSION_LOCAL_ID, index),
         kind="sentence",
         createdAt=_epoch(),
         text=text,
@@ -386,51 +606,69 @@ def _expression_json(text: str) -> str:
     return expression.model_dump_json()
 
 
-def _segmentation_json(sentence: _ConlluSentence) -> str:
+def _segmentation_json(sentence: _ConlluSentence, index: int) -> str:
     """Return the json for the segmentation record of the sentence's tokens."""
-    tokens = tuple(_segmentation_token(token) for token in sentence.tokens)
+    tokens = tuple(_segmentation_tokens(sentence))
     tokenization = Tokenization(
         kind="custom",
-        uuid=Uuid(value=_TOKENIZATION_UUID),
+        uuid=Uuid(value=_tokenization_uuid(index)),
         tokens=tokens,
     )
     segmentation = Segmentation(
         createdAt=_epoch(),
-        expression=_EXPRESSION_REF,
+        expression=_expression_ref(index),
         tokenizations=(tokenization,),
     )
     return segmentation.model_dump_json()
 
 
-def _segmentation_token(token: _ConlluToken) -> Token:
-    """Build a segmentation token from a parsed CoNLL-U token."""
-    byte_length = len(token.form.encode("utf-8"))
-    return Token(
-        tokenIndex=token.index,
-        text=token.form,
-        textSpan=Span(byteStart=0, byteEnd=byte_length),
-    )
+def _segmentation_tokens(sentence: _ConlluSentence) -> Iterator[Token]:
+    """Yield segmentation tokens carrying each form's true byte offsets.
+
+    The byte cursor walks the sentence text the same way :func:`_join_forms`
+    builds it: forms separated by a single space. Each token's ``textSpan``
+    therefore slices the expression text back to that token's surface form.
+    """
+    cursor = 0
+    for position, token in enumerate(sentence.tokens):
+        if position > 0:
+            # account for the single space joining successive forms.
+            cursor += 1
+        byte_length = len(token.form.encode("utf-8"))
+        yield Token(
+            tokenIndex=token.index,
+            text=token.form,
+            textSpan=Span(byteStart=cursor, byteEnd=cursor + byte_length),
+        )
+        cursor += byte_length
 
 
-def _tag_layer_records(sentence: _ConlluSentence) -> Iterator[FragmentRecord]:
+def _tag_layer_records(
+    sentence: _ConlluSentence,
+    index: int,
+) -> Iterator[FragmentRecord]:
     """Yield the token-tag layer records present in the sentence."""
     if any(token.upos is not None for token in sentence.tokens):
         yield FragmentRecord(
-            local_id=_UPOS_LAYER_LOCAL_ID,
+            local_id=_local_id(_UPOS_LAYER_LOCAL_ID, index),
             nsid=_ANNOTATION_NSID,
-            value_json=_tag_layer_json(sentence, "pos", _upos_label, _feats_for_upos),
+            value_json=_tag_layer_json(
+                sentence, index, "pos", _upos_label, _feats_for_upos
+            ),
         )
     if any(token.xpos is not None for token in sentence.tokens):
         yield FragmentRecord(
-            local_id=_XPOS_LAYER_LOCAL_ID,
+            local_id=_local_id(_XPOS_LAYER_LOCAL_ID, index),
             nsid=_ANNOTATION_NSID,
-            value_json=_tag_layer_json(sentence, "xpos", _xpos_label, _no_feats),
+            value_json=_tag_layer_json(sentence, index, "xpos", _xpos_label, _no_feats),
         )
     if any(token.lemma is not None for token in sentence.tokens):
         yield FragmentRecord(
-            local_id=_LEMMA_LAYER_LOCAL_ID,
+            local_id=_local_id(_LEMMA_LAYER_LOCAL_ID, index),
             nsid=_ANNOTATION_NSID,
-            value_json=_tag_layer_json(sentence, "lemma", _lemma_label, _no_feats),
+            value_json=_tag_layer_json(
+                sentence, index, "lemma", _lemma_label, _no_feats
+            ),
         )
 
 
@@ -464,18 +702,20 @@ def _no_feats(token: _ConlluToken) -> FeatureMap | None:  # noqa: ARG001
 
 def _tag_layer_json(
     sentence: _ConlluSentence,
+    index: int,
     subkind: str,
     label_of: Callable[[_ConlluToken], str | None],
     feats_of: Callable[[_ConlluToken], FeatureMap | None],
 ) -> str:
     """Return the json for a token-tag layer over the sentence."""
+    tokenization_uuid = _tokenization_uuid(index)
     annotations = tuple(
         Annotation(
-            uuid=Uuid(value=f"{subkind}-{token.index}"),
+            uuid=Uuid(value=_annotation_uuid(subkind, index, token.index)),
             anchor=Anchor(
                 tokenRef=TokenRef(
                     tokenIndex=token.index,
-                    tokenizationId=Uuid(value=_TOKENIZATION_UUID),
+                    tokenizationId=Uuid(value=tokenization_uuid),
                 )
             ),
             tokenIndex=token.index,
@@ -488,24 +728,25 @@ def _tag_layer_json(
     layer = AnnotationLayer(
         annotations=annotations,
         createdAt=_epoch(),
-        expression=_EXPRESSION_REF,
+        expression=_expression_ref(index),
         kind="token-tag",
         subkind=subkind,
         formalism="conll-u",
-        tokenizationId=Uuid(value=_TOKENIZATION_UUID),
+        tokenizationId=Uuid(value=tokenization_uuid),
     )
     return layer.model_dump_json()
 
 
-def _dependency_layer_json(sentence: _ConlluSentence) -> str:
+def _dependency_layer_json(sentence: _ConlluSentence, index: int) -> str:
     """Return the json for the dependency relation layer over the sentence."""
+    tokenization_uuid = _tokenization_uuid(index)
     annotations = tuple(
         Annotation(
-            uuid=Uuid(value=f"dep-{token.index}"),
+            uuid=Uuid(value=_annotation_uuid("dep", index, token.index)),
             anchor=Anchor(
                 tokenRef=TokenRef(
                     tokenIndex=token.index,
-                    tokenizationId=Uuid(value=_TOKENIZATION_UUID),
+                    tokenizationId=Uuid(value=tokenization_uuid),
                 )
             ),
             tokenIndex=token.index,
@@ -519,19 +760,54 @@ def _dependency_layer_json(sentence: _ConlluSentence) -> str:
     layer = AnnotationLayer(
         annotations=annotations,
         createdAt=_epoch(),
-        expression=_EXPRESSION_REF,
+        expression=_expression_ref(index),
         kind="relation",
         subkind="dependency",
         formalism="universal-dependencies",
-        tokenizationId=Uuid(value=_TOKENIZATION_UUID),
+        tokenizationId=Uuid(value=tokenization_uuid),
     )
     return layer.model_dump_json()
+
+
+def _sentences_from_records(
+    records: tuple[FragmentRecord, ...],
+) -> tuple[_ConlluSentence, ...]:
+    """Recover every parsed CoNLL-U sentence from a fragment's records.
+
+    Records are bucketed by the sentence index their local id encodes, so a
+    multi-sentence fragment recovers each sentence in order.
+    """
+    buckets: dict[int, list[FragmentRecord]] = {}
+    for record in records:
+        sentence_index = _record_sentence_index(record.local_id)
+        if sentence_index is None:
+            continue
+        buckets.setdefault(sentence_index, []).append(record)
+    return tuple(
+        _sentence_from_records(tuple(buckets[index])) for index in sorted(buckets)
+    )
+
+
+def _record_sentence_index(local_id: str) -> int | None:
+    """Return the sentence index a record's local id encodes, or ``None``."""
+    for stem in (
+        _EXPRESSION_LOCAL_ID,
+        _SEGMENTATION_LOCAL_ID,
+        _UPOS_LAYER_LOCAL_ID,
+        _XPOS_LAYER_LOCAL_ID,
+        _LEMMA_LAYER_LOCAL_ID,
+        _DEPS_LAYER_LOCAL_ID,
+    ):
+        sentence_index = _sentence_index_of(local_id, stem)
+        if sentence_index is not None:
+            return sentence_index
+    return None
 
 
 def _sentence_from_records(
     records: tuple[FragmentRecord, ...],
 ) -> _ConlluSentence:
-    """Recover a parsed CoNLL-U sentence from fragment records."""
+    """Recover a single parsed CoNLL-U sentence from one sentence's records."""
     text = ""
     forms: dict[int, str] = {}
     upos: dict[int, str] = {}
@@ -544,20 +820,20 @@ def _sentence_from_records(
         value = json.loads(record.value_json)
         if not isinstance(value, dict):
             continue
-        if record.local_id == _EXPRESSION_LOCAL_ID:
+        if _sentence_index_of(record.local_id, _EXPRESSION_LOCAL_ID) is not None:
             raw_text = value.get("text")
             if isinstance(raw_text, str):
                 text = raw_text
-        elif record.local_id == _SEGMENTATION_LOCAL_ID:
+        elif _sentence_index_of(record.local_id, _SEGMENTATION_LOCAL_ID) is not None:
             _collect_forms(value, forms)
-        elif record.local_id == _UPOS_LAYER_LOCAL_ID:
+        elif _sentence_index_of(record.local_id, _UPOS_LAYER_LOCAL_ID) is not None:
             _collect_labels(value, upos)
             _collect_feats(value, feats)
-        elif record.local_id == _XPOS_LAYER_LOCAL_ID:
+        elif _sentence_index_of(record.local_id, _XPOS_LAYER_LOCAL_ID) is not None:
             _collect_labels(value, xpos)
-        elif record.local_id == _LEMMA_LAYER_LOCAL_ID:
+        elif _sentence_index_of(record.local_id, _LEMMA_LAYER_LOCAL_ID) is not None:
             _collect_labels(value, lemma)
-        elif record.local_id == _DEPS_LAYER_LOCAL_ID:
+        elif _sentence_index_of(record.local_id, _DEPS_LAYER_LOCAL_ID) is not None:
             _collect_dependencies(value, heads, deprels)
     tokens = tuple(
         _ConlluToken(

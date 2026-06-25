@@ -88,13 +88,14 @@ def explode_layer(layer: dx.Model) -> Iterator[dict[str, JsonValue]]:
     for index, annotation in enumerate(annotations):
         if not isinstance(annotation, dict):
             continue
-        row: dict[str, JsonValue] = {
-            "annotation_index": index,
-            "layer_kind": layer_kind,
-            "layer_subkind": layer_subkind,
-            "anchor_kind": _anchor_kind_of_row(annotation.get("anchor")),
-        }
-        row.update(annotation)
+        # the annotation's own dumped fields go in first; the synthesised
+        # context keys are written last so they always win, even if a future
+        # annotation field were ever named one of them
+        row: dict[str, JsonValue] = dict(annotation)
+        row["annotation_index"] = index
+        row["layer_kind"] = layer_kind
+        row["layer_subkind"] = layer_subkind
+        row["anchor_kind"] = _anchor_kind_of_row(annotation.get("anchor"))
         yield row
 
 

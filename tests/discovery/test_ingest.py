@@ -16,7 +16,7 @@ from lairs.discovery.index import DiscoveryIndex
 from lairs.discovery.ingest import build_index, update_index
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Sequence
     from pathlib import Path
 
     from conftest import PdsServer
@@ -137,6 +137,106 @@ def test_update_index_from_firehose(
     cursor = index.get_cursor("wss://relay.example")
     assert cursor is not None
     assert cursor.seq == 5
+
+
+def _fixed_subscribe(
+    events: list[FirehoseEvent],
+) -> Callable[..., Iterator[FirehoseEvent]]:
+    def fake_subscribe(
+        relay: str,
+        *,
+        nsids: Sequence[str] | None = None,
+        cursor: int | None = None,
+    ) -> Iterator[FirehoseEvent]:
+        _ = (relay, nsids, cursor)
+        yield from events
+
+    return fake_subscribe
+
+
+@pytest.mark.integration
+def test_update_index_removes_card_on_delete(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    create = FirehoseEvent(
+        seq=5,
+        repo="did:plc:x",
+        collection=_CORPUS_NSID,
+        rkey="a",
+        action="create",
+        record=_CORPUS_VALUE,
+    )
+    delete = FirehoseEvent(
+        seq=6,
+        repo="did:plc:x",
+        collection=_CORPUS_NSID,
+        rkey="a",
+        action="delete",
+        record=None,
+    )
+    monkeypatch.setattr(ingest, "subscribe_repos", _fixed_subscribe([create]))
+    update_index(index, "wss://relay.example", limit=1)
+    assert index.get_card(_URI_A) is not None
+
+    monkeypatch.setattr(ingest, "subscribe_repos", _fixed_subscribe([delete]))
+    report = update_index(index, "wss://relay.example", limit=1)
+    assert report.cards_removed == 1
+    assert report.cards_built == 0
+    assert index.get_card(_URI_A) is None
+    cursor = index.get_cursor("wss://relay.example")
+    assert cursor is not None
+    assert cursor.seq == 6
+
+
+@pytest.mark.integration
+def test_update_index_skips_delete_of_unindexed_corpus(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    delete = FirehoseEvent(
+        seq=7,
+        repo="did:plc:x",
+        collection=_CORPUS_NSID,
+        rkey="a",
+        action="delete",
+        record=None,
+    )
+    monkeypatch.setattr(ingest, "subscribe_repos", _fixed_subscribe([delete]))
+    report = update_index(index, "wss://relay.example", limit=1)
+    assert report.cards_removed == 0
+    assert any("delete of unindexed corpus" in reason for reason in report.skipped)
+
+
+@pytest.mark.integration
+def test_update_index_create_then_delete_in_one_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    create = FirehoseEvent(
+        seq=8,
+        repo="did:plc:x",
+        collection=_CORPUS_NSID,
+        rkey="a",
+        action="create",
+        record=_CORPUS_VALUE,
+    )
+    delete = FirehoseEvent(
+        seq=9,
+        repo="did:plc:x",
+        collection=_CORPUS_NSID,
+        rkey="a",
+        action="delete",
+        record=None,
+    )
+    monkeypatch.setattr(ingest, "subscribe_repos", _fixed_subscribe([create, delete]))
+    report = update_index(index, "wss://relay.example", limit=2, commit_every=100)
+    assert report.cards_built == 1
+    assert report.cards_removed == 1
+    assert index.get_card(_URI_A) is None
 
 
 def _seed_corpus(server: PdsServer, name: str) -> None:

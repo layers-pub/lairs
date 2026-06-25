@@ -14,9 +14,11 @@ from lairs import cli, discovery
 from lairs._codegen.manifest import load_manifest
 from lairs.atproto import auth
 from lairs.atproto.auth import Session
+from lairs.atproto.identity import IdentityError
 from lairs.author.publish import PublishPlan
 from lairs.data.corpus import Corpus
-from lairs.discovery import CardDiff, CrawlReport
+from lairs.discovery import CardDiff, CrawlReport, SearchHit, SearchQuery
+from lairs.discovery.cards import CardFreshness, CardProvenance, DatasetCard
 from lairs.discovery.models import (
     CollectionCount,
     DatasetSummary,
@@ -29,6 +31,7 @@ from lairs.store.repository import Repository
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from typing import Self
 
     from conftest import PdsServer
 
@@ -602,6 +605,458 @@ def test_index_build_and_search_live(
     out = capsys.readouterr().out
     assert search_code == 0
     assert "cli indexed corpus" in out
+
+
+# index group (fast, monkeypatched) ------------------------------------------
+
+
+def _make_search_hit(name: str, *, domain: str = "biomedical") -> SearchHit:
+    """Build a real SearchHit wrapping a real DatasetCard for handler tests."""
+    summary = DatasetSummary(
+        uri="at://did:plc:x/pub.layers.corpus.corpus/a",
+        did="did:plc:x",
+        name=name,
+        domain=domain,
+        language="en",
+        expression_count=10,
+    )
+    card = DatasetCard(
+        summary=summary,
+        provenance=CardProvenance(
+            source_did="did:plc:x",
+            source_endpoint="https://pds.example",
+            discovered_via="crawl",
+        ),
+        freshness=CardFreshness(first_seen_at=_NOW, last_updated_at=_NOW),
+    )
+    return SearchHit(card=card, score=2.5)
+
+
+class _FakeIndex:
+    """A stand-in DiscoveryIndex that records construction and calls."""
+
+    last_init: Path | None = None
+    last_open: Path | None = None
+    cards_value: tuple[DatasetCard, ...] = ()
+    diff_value: CardDiff = CardDiff(added=(), changed=(), removed=())
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    @classmethod
+    def init(cls, path: Path) -> _FakeIndex:
+        cls.last_init = path
+        return cls(path)
+
+    @classmethod
+    def open(cls, path: Path) -> _FakeIndex:
+        cls.last_open = path
+        return cls(path)
+
+    def cards(self) -> tuple[DatasetCard, ...]:
+        return type(self).cards_value
+
+    def diff_cards(self, base: str, head: str) -> CardDiff:
+        type(self).diff_value = CardDiff(
+            added=(f"{base}->{head}",),
+            changed=(),
+            removed=(),
+        )
+        return type(self).diff_value
+
+
+class _FakeBuildClient:
+    """A context-managed PdsClient stand-in for the index build path."""
+
+    def __init__(self, endpoint: str | None) -> None:
+        self.endpoint = endpoint
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def list_repos(self) -> list[str]:
+        return ["did:plc:auto"]
+
+
+def test_index_build_reports_crawl(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_build_index(
+        _index: object,
+        dids: object,
+        **kwargs: object,
+    ) -> CrawlReport:
+        captured_kwargs["dids"] = dids
+        captured_kwargs.update(kwargs)
+        return CrawlReport(repos_seen=1, repos_with_corpora=1, cards_built=1)
+
+    monkeypatch.setattr(cli.discovery, "DiscoveryIndex", _FakeIndex)
+    monkeypatch.setattr(cli.discovery, "build_index", fake_build_index)
+    monkeypatch.setattr(cli, "PdsClient", _FakeBuildClient)
+    code = cli.main(
+        [
+            "index",
+            "build",
+            "--into",
+            str(tmp_path / "idx"),
+            "--endpoint",
+            "https://pds.example",
+            "--seed-did",
+            "did:plc:seed",
+        ],
+    )
+    assert code == 0
+    assert _FakeIndex.last_init == tmp_path / "idx"
+    assert captured_kwargs["dids"] == ["did:plc:seed"]
+    assert captured_kwargs["endpoint"] == "https://pds.example"
+    assert "cards built: 1" in capsys.readouterr().out
+
+
+def test_index_build_reports_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_build_index(*_args: object, **_kwargs: object) -> CrawlReport:
+        msg = "relay down"
+        raise httpx.ConnectError(msg)
+
+    monkeypatch.setattr(cli.discovery, "DiscoveryIndex", _FakeIndex)
+    monkeypatch.setattr(cli.discovery, "build_index", fake_build_index)
+    monkeypatch.setattr(cli, "PdsClient", _FakeBuildClient)
+    code = cli.main(
+        [
+            "index",
+            "build",
+            "--into",
+            str(tmp_path / "idx"),
+            "--endpoint",
+            "https://pds.example",
+        ],
+    )
+    assert code == 1
+    assert "error: relay down" in capsys.readouterr().err
+
+
+def test_index_update_reports_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_update_index(
+        _index: object,
+        relay: str,
+        *,
+        limit: int | None = None,
+    ) -> CrawlReport:
+        seen["relay"] = relay
+        seen["limit"] = limit
+        return CrawlReport(repos_seen=2, repos_with_corpora=2, cards_built=2)
+
+    monkeypatch.setattr(cli.discovery, "DiscoveryIndex", _FakeIndex)
+    monkeypatch.setattr(cli.discovery, "update_index", fake_update_index)
+    code = cli.main(
+        [
+            "index",
+            "update",
+            "--index",
+            str(tmp_path / "idx"),
+            "--relay",
+            "wss://relay.example",
+            "--limit",
+            "5",
+        ],
+    )
+    assert code == 0
+    assert _FakeIndex.last_open == tmp_path / "idx"
+    assert seen == {"relay": "wss://relay.example", "limit": 5}
+    assert "cards built: 2" in capsys.readouterr().out
+
+
+def test_index_update_reports_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_update_index(*_args: object, **_kwargs: object) -> CrawlReport:
+        msg = "no cursor"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(cli.discovery, "DiscoveryIndex", _FakeIndex)
+    monkeypatch.setattr(cli.discovery, "update_index", fake_update_index)
+    code = cli.main(
+        ["index", "update", "--index", str(tmp_path / "idx"), "--relay", "wss://r"],
+    )
+    assert code == 1
+    assert "error: no cursor" in capsys.readouterr().err
+
+
+def test_index_search_builds_query_and_prints(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, SearchQuery] = {}
+
+    def fake_search(cards: object, query: SearchQuery) -> list[SearchHit]:
+        _ = cards
+        captured["query"] = query
+        return [_make_search_hit("biomed corpus")]
+
+    monkeypatch.setattr(cli.discovery, "DiscoveryIndex", _FakeIndex)
+    monkeypatch.setattr(cli.discovery, "search", fake_search)
+    code = cli.main(
+        [
+            "index",
+            "search",
+            "--index",
+            str(tmp_path / "idx"),
+            "biomed",
+            "--domain",
+            "biomedical",
+            "--language",
+            "en",
+            "--min-expressions",
+            "3",
+            "--min-rounds",
+            "2",
+        ],
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    query = captured["query"]
+    assert query.text == "biomed"
+    assert query.domain == "biomedical"
+    assert query.language == "en"
+    assert query.min_expressions == 3
+    assert query.min_annotation_rounds == 2
+    assert "biomed corpus" in out
+
+
+def test_index_search_duckdb_branch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    accel_calls: dict[str, object] = {}
+
+    def fake_accelerated(
+        index: object,
+        query: SearchQuery,
+        *,
+        out_dir: Path,
+    ) -> list[SearchHit]:
+        _ = (index, query)
+        accel_calls["out_dir"] = out_dir
+        return [_make_search_hit("accelerated corpus")]
+
+    def fail_search(*_args: object, **_kwargs: object) -> list[SearchHit]:
+        msg = "the in-memory search must not run on the duckdb branch"
+        raise AssertionError(msg)
+
+    index_dir = tmp_path / "idx"
+    monkeypatch.setattr(cli.discovery, "DiscoveryIndex", _FakeIndex)
+    monkeypatch.setattr(cli.discovery, "search", fail_search)
+    monkeypatch.setattr(cli.accelerator, "search_accelerated", fake_accelerated)
+    code = cli.main(
+        ["index", "search", "--index", str(index_dir), "x", "--duckdb"],
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert accel_calls["out_dir"] == index_dir / ".accel"
+    assert "accelerated corpus" in out
+
+
+def test_index_diff_prints_changes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(cli.discovery, "DiscoveryIndex", _FakeIndex)
+    code = cli.main(
+        ["index", "diff", "--index", str(tmp_path / "idx"), "rev-a", "rev-b"],
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "added: 1" in out
+    assert "+ rev-a->rev-b" in out
+
+
+# toc (fast, monkeypatched) --------------------------------------------------
+
+
+def test_toc_prints_table(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_toc(
+        actor: str,
+        *,
+        source: str = "auto",
+        counts: bool = False,
+        pds_client: PdsClient | None = None,
+    ) -> RepoTableOfContents:
+        seen["actor"] = actor
+        seen["source"] = source
+        seen["counts"] = counts
+        seen["pds_client_is_none"] = pds_client is None
+        return RepoTableOfContents(
+            did="did:plc:x",
+            handle="alice.test",
+            collections=(
+                CollectionCount(
+                    nsid="pub.layers.corpus.corpus",
+                    is_dataset_like=True,
+                    count=4,
+                ),
+            ),
+            dataset_collections=("pub.layers.corpus.corpus",),
+        )
+
+    monkeypatch.setattr(cli.discovery, "table_of_contents", fake_toc)
+    code = cli.main(["toc", "alice.test", "--source", "pds", "--counts"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert seen == {
+        "actor": "alice.test",
+        "source": "pds",
+        "counts": True,
+        "pds_client_is_none": True,
+    }
+    assert "alice.test" in out
+    assert "pub.layers.corpus.corpus" in out
+
+
+def test_toc_json_branch(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_toc(actor: str, **_kwargs: object) -> RepoTableOfContents:
+        _ = actor
+        return RepoTableOfContents(
+            did="did:plc:x",
+            handle="alice.test",
+            collections=(),
+            dataset_collections=(),
+        )
+
+    monkeypatch.setattr(cli.discovery, "table_of_contents", fake_toc)
+    code = cli.main(["toc", "alice.test", "--json"])
+    assert code == 0
+    parsed = json.loads(capsys.readouterr().out)
+    assert parsed["did"] == "did:plc:x"
+
+
+def test_toc_reports_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_toc(actor: str, **_kwargs: object) -> RepoTableOfContents:
+        _ = actor
+        msg = "unknown source"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(cli.discovery, "table_of_contents", fake_toc)
+    code = cli.main(["toc", "alice.test"])
+    assert code == 1
+    assert "error: unknown source" in capsys.readouterr().err
+
+
+# materialize / inspect error paths ------------------------------------------
+
+
+def test_materialize_reports_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_load(_uri: str, **_kwargs: object) -> Corpus:
+        msg = "could not resolve actor"
+        raise IdentityError(msg)
+
+    monkeypatch.setattr("lairs.data.load_corpus", fake_load)
+    code = cli.main(
+        [
+            "materialize",
+            "at://did:plc:me/pub.layers.corpus.corpus/c",
+            "--endpoint",
+            "https://pds.example",
+            "--out",
+            str(tmp_path / "views"),
+        ],
+    )
+    assert code == 1
+    assert "error: could not resolve actor" in capsys.readouterr().err
+
+
+def test_inspect_reports_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_load(_uri: str, **_kwargs: object) -> Corpus:
+        msg = "pds unreachable"
+        raise httpx.ConnectError(msg)
+
+    monkeypatch.setattr("lairs.data.load_corpus", fake_load)
+    code = cli.main(
+        [
+            "inspect",
+            "at://did:plc:me/pub.layers.corpus.corpus/c",
+            "--endpoint",
+            "https://pds.example",
+        ],
+    )
+    assert code == 1
+    assert "error: pds unreachable" in capsys.readouterr().err
+
+
+# tui (fast, monkeypatched) --------------------------------------------------
+
+
+def test_tui_delegates_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, str | None] = {}
+
+    def fake_run_tui(
+        *,
+        index_path: str | None = None,
+        data_path: str | None = None,
+        repo_path: str | None = None,
+    ) -> None:
+        seen["index_path"] = index_path
+        seen["data_path"] = data_path
+        seen["repo_path"] = repo_path
+
+    monkeypatch.setattr(cli, "run_tui", fake_run_tui)
+    code = cli.main(
+        [
+            "tui",
+            "--index",
+            "idx-dir",
+            "--repo",
+            "repo-dir",
+            "--data",
+            "data-dir",
+        ],
+    )
+    assert code == 0
+    assert seen == {
+        "index_path": "idx-dir",
+        "data_path": "data-dir",
+        "repo_path": "repo-dir",
+    }
 
 
 # login / logout / whoami ----------------------------------------------------

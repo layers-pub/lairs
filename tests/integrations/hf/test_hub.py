@@ -97,6 +97,27 @@ def test_dataset_card_default_heading() -> None:
     assert "# lairs corpus mirror" in card
 
 
+def test_dataset_card_emits_yaml_front_matter_for_license_and_source() -> None:
+    bundle = provenance_bundle(
+        corpus_uri="at://did:plc:abc/pub.layers.corpus.corpus/x",
+        license="CC-BY-4.0",
+        name="Mirrored",
+    )
+    card = dataset_card(bundle)
+    # the machine-readable header leads the card and carries the license.
+    assert card.startswith("---\n")
+    header, _, _ = card.partition("\n---\n")
+    assert "license: CC-BY-4.0" in header
+    assert "source_datasets:" in header
+    assert "at://did:plc:abc/pub.layers.corpus.corpus/x" in header
+
+
+def test_dataset_card_omits_front_matter_when_no_metadata() -> None:
+    # a bundle with no license, corpus_uri, or tag emits no YAML header.
+    card = dataset_card(ProvenanceBundle(name="Bare"))
+    assert not card.startswith("---")
+
+
 def test_push_to_hub_without_datasets_raises_import_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -126,20 +147,40 @@ def vcr_config() -> dict[str, list[str]]:
 class _FakeHubDataset:
     """Stand-in for ``datasets.Dataset`` that records its push_to_hub call."""
 
-    pushes: ClassVar[list[tuple[str, bool]]] = []
+    pushes: ClassVar[list[dict[str, object]]] = []
 
     def __init__(self, view: pa.Table) -> None:
         self._view = view
 
-    def push_to_hub(self, repo_id: str, *, private: bool = False) -> None:
+    def push_to_hub(
+        self,
+        repo_id: str,
+        *,
+        config_name: str = "default",
+        split: str = "train",
+        private: bool = False,
+        token: str | None = None,
+    ) -> None:
         """Record the push instead of contacting the Hub."""
-        _FakeHubDataset.pushes.append((repo_id, private))
+        _FakeHubDataset.pushes.append(
+            {
+                "repo_id": repo_id,
+                "config_name": config_name,
+                "split": split,
+                "private": private,
+                "token": token,
+            },
+        )
 
 
 class _FakeHfApi:
-    """Stand-in for ``huggingface_hub.HfApi`` that records uploaded files."""
+    """Stand-in for ``huggingface_hub.HfApi`` that records uploaded card bytes."""
 
-    uploaded: ClassVar[list[str]] = []
+    uploaded: ClassVar[list[tuple[str, bytes]]] = []
+    tokens: ClassVar[list[str | None]] = []
+
+    def __init__(self, *, token: str | None = None) -> None:
+        _FakeHfApi.tokens.append(token)
 
     def upload_file(
         self,
@@ -150,19 +191,15 @@ class _FakeHfApi:
         repo_type: str,
     ) -> None:
         """Record the upload instead of contacting the Hub."""
-        _ = (path_or_fileobj, repo_id, repo_type)
-        _FakeHfApi.uploaded.append(path_in_repo)
+        _ = (repo_id, repo_type)
+        _FakeHfApi.uploaded.append((path_in_repo, path_or_fileobj))
 
 
-def test_push_to_hub_pushes_dataset_uploads_card_and_returns_url(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # inject fake datasets/huggingface_hub modules so the push orchestration runs
-    # end-to-end without the Hub; a real push needs write credentials, so the
-    # network round-trip is covered by the load cassette instead.
-    pa = pytest.importorskip("pyarrow")
+def _install_fake_hub(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inject fake ``datasets``/``huggingface_hub`` modules and reset recorders."""
     _FakeHubDataset.pushes.clear()
     _FakeHfApi.uploaded.clear()
+    _FakeHfApi.tokens.clear()
     fake_datasets = types.SimpleNamespace(Dataset=_FakeHubDataset)
     fake_hub = types.SimpleNamespace(
         HfApi=_FakeHfApi,
@@ -172,11 +209,94 @@ def test_push_to_hub_pushes_dataset_uploads_card_and_returns_url(
     )
     monkeypatch.setitem(sys.modules, "datasets", fake_datasets)
     monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+
+
+def _uploaded_readme() -> str:
+    """Return the decoded README the fake api recorded for the latest push."""
+    for path_in_repo, payload in _FakeHfApi.uploaded:
+        if path_in_repo == "README.md":
+            return payload.decode("utf-8")
+    msg = "no README.md was uploaded"
+    raise AssertionError(msg)
+
+
+def test_push_to_hub_pushes_dataset_uploads_card_and_returns_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # inject fake datasets/huggingface_hub modules so the push orchestration runs
+    # end-to-end without the Hub; a real push needs write credentials, so the
+    # network round-trip is covered by the load cassette instead.
+    pa = pytest.importorskip("pyarrow")
+    _install_fake_hub(monkeypatch)
     table = pa.table({"id": [1, 2], "text": ["a", "b"]})
     url = hub.push_to_hub(table, "org/corpus", private=True)
-    assert _FakeHubDataset.pushes == [("org/corpus", True)]
-    assert "README.md" in _FakeHfApi.uploaded
+    assert len(_FakeHubDataset.pushes) == 1
+    push = _FakeHubDataset.pushes[0]
+    assert push["repo_id"] == "org/corpus"
+    assert push["private"] is True
+    assert push["split"] == "train"
+    assert push["config_name"] == "default"
+    assert "README.md" in {path for path, _ in _FakeHfApi.uploaded}
     assert url == "https://hf/org/corpus/README.md?type=dataset"
+
+
+def test_push_to_hub_uploads_card_carrying_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # the uploaded card bytes must carry the supplied provenance, so a regression
+    # uploading an empty or wrong card is caught.
+    pa = pytest.importorskip("pyarrow")
+    _install_fake_hub(monkeypatch)
+    bundle = provenance_bundle(
+        corpus_uri="at://did:plc:abc/pub.layers.corpus.corpus/x",
+        revision="rev9",
+        license="CC-BY-4.0",
+        name="Provenanced Corpus",
+    )
+    table = pa.table({"id": [1]})
+    hub.push_to_hub(table, "org/corpus", provenance=bundle)
+    readme = _uploaded_readme()
+    assert "Provenanced Corpus" in readme
+    assert "at://did:plc:abc/pub.layers.corpus.corpus/x" in readme
+    assert "rev9" in readme
+    assert "CC-BY-4.0" in readme
+    assert bundle.lexicon_manifest_hash is not None
+    assert bundle.lexicon_manifest_hash in readme
+
+
+def test_push_to_hub_default_bundle_card_has_manifest_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # with no explicit bundle, the card still records the vendored manifest.
+    pa = pytest.importorskip("pyarrow")
+    _install_fake_hub(monkeypatch)
+    table = pa.table({"id": [1]})
+    hub.push_to_hub(table, "org/corpus")
+    readme = _uploaded_readme()
+    manifest = hub._read_manifest()
+    assert manifest["lexicon_tree_hash"] in readme
+    assert manifest["layers_version"] in readme
+
+
+def test_push_to_hub_forwards_token_split_and_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pa = pytest.importorskip("pyarrow")
+    _install_fake_hub(monkeypatch)
+    table = pa.table({"id": [1]})
+    hub.push_to_hub(
+        table,
+        "org/corpus",
+        token="hf_secret",
+        split="validation",
+        config_name="subsetA",
+    )
+    push = _FakeHubDataset.pushes[0]
+    assert push["token"] == "hf_secret"
+    assert push["split"] == "validation"
+    assert push["config_name"] == "subsetA"
+    # the api is constructed with the same token for the card upload.
+    assert _FakeHfApi.tokens == ["hf_secret"]
 
 
 @pytest.mark.vcr
@@ -185,8 +305,70 @@ def test_load_from_hub_reads_public_dataset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # replay a recorded read of a tiny public dataset, so the datasets load path
-    # runs deterministically offline from the committed cassette.
-    pytest.importorskip("datasets")
+    # runs deterministically offline from the committed cassette. A multi-split
+    # repository with no split selected yields a DatasetDict, not a Dataset, which
+    # the concrete-type assertion pins.
+    datasets = pytest.importorskip("datasets")
     monkeypatch.setenv("HF_HOME", str(tmp_path))
     loaded = hub.load_from_hub("hf-internal-testing/fixtures_ade20k")
+    assert isinstance(loaded, datasets.DatasetDict)
     assert len(loaded) >= 1
+
+
+class _FakeLoadModule:
+    """Stand-in ``datasets`` module recording the load_dataset arguments."""
+
+    calls: ClassVar[list[dict[str, object]]] = []
+
+    @staticmethod
+    def load_dataset(
+        path: str,
+        *,
+        split: str | None = None,
+        revision: str | None = None,
+        token: str | None = None,
+    ) -> str:
+        """Record the load arguments and return a sentinel for the split."""
+        _FakeLoadModule.calls.append(
+            {
+                "path": path,
+                "split": split,
+                "revision": revision,
+                "token": token,
+            },
+        )
+        return f"dataset:{split}" if split is not None else "dataset-dict"
+
+
+def test_load_from_hub_forwards_split_revision_and_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # the split/revision/token parameters reach datasets.load_dataset, so a
+    # caller can request a single split as a concrete Dataset.
+    _FakeLoadModule.calls.clear()
+    monkeypatch.setitem(sys.modules, "datasets", _FakeLoadModule)
+    result = hub.load_from_hub(
+        "org/corpus",
+        split="test",
+        revision="main",
+        token="hf_secret",
+    )
+    assert result == "dataset:test"
+    assert _FakeLoadModule.calls == [
+        {
+            "path": "org/corpus",
+            "split": "test",
+            "revision": "main",
+            "token": "hf_secret",
+        },
+    ]
+
+
+def test_load_from_hub_without_split_passes_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeLoadModule.calls.clear()
+    monkeypatch.setitem(sys.modules, "datasets", _FakeLoadModule)
+    result = hub.load_from_hub("org/corpus")
+    assert result == "dataset-dict"
+    assert _FakeLoadModule.calls[0]["split"] is None

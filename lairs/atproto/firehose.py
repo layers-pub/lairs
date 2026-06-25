@@ -7,6 +7,12 @@ bodies carry an embedded CAR archive whose blocks hold the created and updated
 record values, which are recovered through the shared CAR primitives and
 rendered to the same DAG-JSON shape the XRPC record endpoints emit.
 
+By default ``subscribe_repos`` is a single-connection primitive: a closed
+websocket ends iteration cleanly and the caller resumes from the highest event
+``seq`` it saw. Passing ``reconnect=True`` makes it re-dial on a dropped
+connection, resuming from the highest delivered ``seq`` so the freshness loop
+survives a transient blip.
+
 The websocket transport is provided by the ``websockets`` library, a core
 runtime dependency. Integration-marked tests exercise the consumer against a
 live PDS firehose.
@@ -272,11 +278,48 @@ def _commit_events(
             yield event
 
 
+def _stream_one_connection(
+    url: str,
+    keep: Callable[[str], bool],
+    on_seq: Callable[[int], None],
+) -> Iterator[FirehoseEvent]:
+    """Stream events from a single websocket connection until it closes.
+
+    Parameters
+    ----------
+    url : str
+        The fully qualified subscription URL.
+    keep : collections.abc.Callable
+        The collection filter predicate.
+    on_seq : collections.abc.Callable
+        A callback invoked with each yielded event's sequence number so the
+        caller can track the highest seen seq for resumption.
+
+    Yields
+    ------
+    FirehoseEvent
+        Decoded commit events for the kept collections, until the websocket
+        is closed by either peer.
+    """
+    # max_size is disabled because commit frames can exceed the default cap.
+    with connect(url, max_size=None) as websocket:
+        while True:
+            try:
+                message = websocket.recv()
+            except ConnectionClosed:
+                return
+            if isinstance(message, bytes):
+                for event in _commit_events(message, keep):
+                    on_seq(event.seq)
+                    yield event
+
+
 def subscribe_repos(
     relay: str,
     *,
     nsids: Sequence[str] | None = None,
     cursor: int | None = None,
+    reconnect: bool = False,
 ) -> Iterator[FirehoseEvent]:
     """Subscribe to the repo firehose, filtered to the Layers NSIDs.
 
@@ -284,6 +327,15 @@ def subscribe_repos(
     event per kept commit op as frames arrive. The stream is live and unbounded;
     the consumer controls how many events to take and closing the generator
     closes the websocket.
+
+    By default this is a single-connection primitive: when the websocket closes
+    (a deliberate close or a transient network drop) iteration ends cleanly and
+    the caller owns reconnect and cursor bookkeeping. Each ``FirehoseEvent``
+    carries its ``seq``, so a caller tracking the highest seen ``seq`` can
+    resume by passing it as ``cursor`` on a fresh call. Pass ``reconnect=True``
+    to have this function re-dial automatically on a dropped connection,
+    resuming from the highest ``seq`` it has already delivered so the freshness
+    loop survives a blip.
 
     Parameters
     ----------
@@ -295,6 +347,11 @@ def subscribe_repos(
         ``pub.layers.``.
     cursor : int or None, optional
         A sequence number to resume from.
+    reconnect : bool, optional
+        When ``True``, re-dial on a dropped connection, resuming from the
+        highest ``seq`` already delivered (or the original ``cursor`` when no
+        event has been delivered yet). When ``False`` (the default), a closed
+        connection ends iteration and the caller owns resumption.
 
     Yields
     ------
@@ -302,13 +359,16 @@ def subscribe_repos(
         Decoded commit events for the kept collections.
     """
     keep = _keep_predicate(nsids)
-    url = _subscription_url(relay, cursor)
-    # max_size is disabled because commit frames can exceed the default cap.
-    with connect(url, max_size=None) as websocket:
-        while True:
-            try:
-                message = websocket.recv()
-            except ConnectionClosed:
-                return
-            if isinstance(message, bytes):
-                yield from _commit_events(message, keep)
+    last_seq = cursor
+    seen: dict[str, int | None] = {"seq": last_seq}
+
+    def _track(seq: int) -> None:
+        seen["seq"] = seq
+
+    if not reconnect:
+        url = _subscription_url(relay, last_seq)
+        yield from _stream_one_connection(url, keep, _track)
+        return
+    while True:
+        url = _subscription_url(relay, seen["seq"])
+        yield from _stream_one_connection(url, keep, _track)

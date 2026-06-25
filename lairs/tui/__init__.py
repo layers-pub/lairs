@@ -11,8 +11,13 @@ pure-Python query engine in :mod:`lairs.tui.query` is usable on its own;
 
 from __future__ import annotations
 
+import atexit
+import shutil
+import tempfile
 from pathlib import Path
 
+from lairs.tui.app import LairsApp
+from lairs.tui.browse import BrowseError, RepoBrowser, materialize_repo
 from lairs.tui.query import (
     CqlError,
     QueryEngine,
@@ -36,25 +41,21 @@ def _materialize_for_query(repo_path: str) -> str | None:
 
     The Browse tab reads the repository directly; the Query tab needs Parquet
     views, so a repository opened on its own is materialized once into a scratch
-    directory. Returns the directory, or ``None`` when the repository cannot be
-    flattened (the Browse tab still works in that case).
+    directory. The scratch directory is removed at interpreter exit so each
+    invocation does not leave a materialized corpus copy in the system temp dir.
+    Returns the directory, or ``None`` when the repository cannot be flattened
+    (the Browse tab still works in that case).
     """
-    import tempfile  # noqa: PLC0415
-
-    from lairs.tui.browse import (  # noqa: PLC0415
-        BrowseError,
-        RepoBrowser,
-        materialize_repo,
-    )
-
     try:
         browser = RepoBrowser.open(Path(repo_path))
     except BrowseError:
         return None
     out_dir = Path(tempfile.mkdtemp(prefix="lairs-tui-"))
+    atexit.register(shutil.rmtree, out_dir, ignore_errors=True)
     try:
         materialize_repo(browser.repo, out_dir)
     except OSError, ValueError:
+        shutil.rmtree(out_dir, ignore_errors=True)
         return None
     return str(out_dir)
 
@@ -66,9 +67,6 @@ def run_tui(
     repo_path: str | None = None,
 ) -> None:
     """Launch the Layers explorer TUI.
-
-    Imports the Textual application lazily so that importing this package (for
-    the query engine alone) does not require the terminal stack.
 
     Parameters
     ----------
@@ -84,8 +82,6 @@ def run_tui(
         given without ``data_path``, the repository is also flattened to back the
         Query screen.
     """
-    from lairs.tui.app import LairsApp  # noqa: PLC0415
-
     resolved_data = data_path
     if resolved_data is None and repo_path is not None:
         resolved_data = _materialize_for_query(repo_path)

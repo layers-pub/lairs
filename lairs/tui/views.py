@@ -15,6 +15,7 @@ attributes, so the helpers stay concretely typed. :data:`LIST_COLUMNS` and
 from __future__ import annotations
 
 import json
+import weakref
 from typing import TYPE_CHECKING
 
 from lairs.tui import viz
@@ -542,8 +543,15 @@ _GRAPH_EDGE_SET_NSID = "pub.layers.graph.graphEdgeSet"
 _GRAPH_EDGE_NSID = "pub.layers.graph.graphEdge"
 _GRAPH_NODE_NSID = "pub.layers.graph.graphNode"
 
-# id(browser) -> {item AT-URI: (experimentRef, [judgment dicts])}, built once.
-_ITEM_INDEX: dict[int, dict[str, tuple[str, list[Mapping[str, JsonValue]]]]] = {}
+# {item AT-URI: (experimentRef, [judgment dicts])}, built once per browser.
+type _ItemIndex = dict[str, tuple[str, list[Mapping[str, JsonValue]]]]
+
+# browser -> item index. Keyed weakly by the browser object so each entry lives
+# exactly as long as its browser and cannot collide with a reused id() of a
+# garbage-collected one.
+_ITEM_INDEX: weakref.WeakKeyDictionary[RepoBrowser, _ItemIndex] = (
+    weakref.WeakKeyDictionary()
+)
 
 
 # ---- view producers (one focused, uncluttered view per mode) ---------------
@@ -582,22 +590,21 @@ def _layers_roster(browser: RepoBrowser, uri: str) -> str:
     return "\n".join(rows) if len(rows) > 2 else "*No annotation layers.*"  # noqa: PLR2004
 
 
-def _item_index(
-    browser: RepoBrowser,
-) -> dict[str, tuple[str, list[Mapping[str, JsonValue]]]]:
+def _item_index(browser: RepoBrowser) -> _ItemIndex:
     """Build (and cache) the map from a judged item AT-URI to its judgments."""
-    key = id(browser)
-    if key not in _ITEM_INDEX:
-        index: dict[str, tuple[str, list[Mapping[str, JsonValue]]]] = {}
-        for _, jset in browser.records_raw(_JUDGMENT_SET_NSID):
-            experiment = _str(jset.get("experimentRef"))
-            for raw in _items(jset.get("judgments")):
-                judgment = _obj(raw)
-                item = _str(_obj(judgment.get("item")).get("recordRef"))
-                if item:
-                    index.setdefault(item, (experiment, []))[1].append(judgment)
-        _ITEM_INDEX[key] = index
-    return _ITEM_INDEX[key]
+    cached = _ITEM_INDEX.get(browser)
+    if cached is not None:
+        return cached
+    index: _ItemIndex = {}
+    for _, jset in browser.records_raw(_JUDGMENT_SET_NSID):
+        experiment = _str(jset.get("experimentRef"))
+        for raw in _items(jset.get("judgments")):
+            judgment = _obj(raw)
+            item = _str(_obj(judgment.get("item")).get("recordRef"))
+            if item:
+                index.setdefault(item, (experiment, []))[1].append(judgment)
+    _ITEM_INDEX[browser] = index
+    return index
 
 
 def _graph_nodes(browser: RepoBrowser) -> dict[str, Mapping[str, JsonValue]]:

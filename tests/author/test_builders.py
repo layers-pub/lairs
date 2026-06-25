@@ -48,6 +48,39 @@ def test_span_sets_text_span_property_only() -> None:
     assert anchor.temporalSpan is None
 
 
+def test_span_carries_optional_char_offsets() -> None:
+    anchor = builders.span(0, 8, char_start=0, char_end=6)
+    assert anchor.textSpan is not None
+    assert anchor.textSpan.byteStart == 0
+    assert anchor.textSpan.byteEnd == 8
+    assert anchor.textSpan.charStart == 0
+    assert anchor.textSpan.charEnd == 6
+
+
+def test_span_leaves_char_offsets_unset_by_default() -> None:
+    anchor = builders.span(0, 4)
+    assert anchor.textSpan is not None
+    assert anchor.textSpan.charStart is None
+    assert anchor.textSpan.charEnd is None
+
+
+def test_span_rejects_one_sided_char_offsets() -> None:
+    with pytest.raises(builders.BuildError):
+        builders.span(0, 4, char_start=0)
+    with pytest.raises(builders.BuildError):
+        builders.span(0, 4, char_end=4)
+
+
+def test_span_rejects_inverted_char_span() -> None:
+    with pytest.raises(builders.BuildError):
+        builders.span(0, 8, char_start=6, char_end=2)
+
+
+def test_span_rejects_negative_char_offset() -> None:
+    with pytest.raises(builders.BuildError):
+        builders.span(0, 8, char_start=-1, char_end=2)
+
+
 def test_span_rejects_negative_offset() -> None:
     with pytest.raises(builders.BuildError):
         builders.span(-1, 4)
@@ -176,6 +209,12 @@ def test_reference_reads_uri_field_from_model() -> None:
     )
 
 
+def test_reference_passes_through_empty_string() -> None:
+    # an explicit AT-URI string passes through unchecked, including the empty
+    # string: reference does not validate AT-URI shape, only model resolution.
+    assert builders.reference("") == ""
+
+
 def test_reference_rejects_unpublished_model() -> None:
     expr = Expression(
         id="doc-1",
@@ -244,6 +283,38 @@ def test_layer_builder_requires_an_annotation() -> None:
     builder = _builder()
     with pytest.raises(builders.BuildError):
         builder.build()
+
+
+def test_layer_builder_rejects_empty_kind() -> None:
+    with pytest.raises(builders.BuildError):
+        builders.LayerBuilder(
+            "at://did:plc:abc/pub.layers.expression.expression/e1",
+            "",
+            datetime.now(UTC),
+        )
+
+
+def test_layer_builder_rejects_empty_formalism() -> None:
+    # formalism is an open vocabulary, so an empty string is the only rejection.
+    with pytest.raises(builders.BuildError):
+        builders.LayerBuilder(
+            "at://did:plc:abc/pub.layers.expression.expression/e1",
+            "tree",
+            datetime.now(UTC),
+            formalism="",
+        )
+
+
+def test_layer_builder_accepts_community_formalism() -> None:
+    builder = builders.LayerBuilder(
+        "at://did:plc:abc/pub.layers.expression.expression/e1",
+        "tree",
+        datetime.now(UTC),
+        formalism="universal-dependencies",
+    )
+    builder.add(label="root", token_index=0)
+    layer = builder.build()
+    assert layer.formalism == "universal-dependencies"
 
 
 def test_layer_builder_accepts_pending_expression_id() -> None:

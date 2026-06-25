@@ -53,8 +53,10 @@ class FieldSpec(dx.Model):
         The lexicon property name, used verbatim as the python attribute name.
     type_kind : str
         The resolved field shape, one of ``"str"``, ``"int"``, ``"bool"``,
-        ``"datetime"``, ``"bytes"``, ``"blob"``, ``"embed"``, ``"union"``,
-        ``"array"``, or ``"unknown"``.
+        ``"datetime"``, ``"bytes"``, ``"blob"``, ``"embed"``, ``"union"``, or
+        ``"array"``. There is no ``"unknown"`` kind: an unrecognised lexicon
+        construct (``cid-link``, the empty type, or any future construct) maps
+        to ``"str"`` so the generated record validates rather than failing.
     target : str or None, optional
         For ``"embed"`` and ``"union"`` kinds, the name of the referenced model
         or union class. ``None`` for scalar kinds.
@@ -250,7 +252,7 @@ def schema_to_specs(
     for def_name, definition in defs.items():
         def_type = _string_value(definition.get("type"))
         if def_type == "record":
-            specs.append(_record_spec(nsid, def_name, definition))
+            specs.extend(_record_spec(nsid, def_name, definition))
         elif def_type == "object":
             specs.extend(_object_specs(nsid, def_name, definition))
     return tuple(specs)
@@ -266,18 +268,26 @@ def _record_spec(
     nsid: str,
     def_name: str,
     definition: dict[str, JsonValue],
-) -> ModelSpec:
-    """Build the spec for a record definition (``def main``)."""
+) -> Sequence[ModelSpec]:
+    """Build the specs for a record definition (``def main``).
+
+    A record body property typed ``union`` (or an array of ``union``) is emitted
+    as its own ``dx.TaggedUnion`` model alongside the record, exactly as for
+    object definitions, so an inline union in a record body is not silently
+    degraded to a plain string field.
+    """
     record = _mapping_value(definition.get("record"))
-    fields = _field_specs(nsid, record)
-    return ModelSpec(
+    fields, extra = _container_field_specs(nsid, def_name, record)
+    owner = ModelSpec(
         name=_class_name(nsid, def_name),
         nsid=nsid,
         def_name=def_name,
         is_record=True,
         description=_string_or_none(definition.get("description")),
-        fields=fields,
+        fields=tuple(fields),
     )
+    # emit union members before the owner so the owner's union target resolves
+    return (*extra, owner)
 
 
 def _object_specs(
@@ -290,28 +300,7 @@ def _object_specs(
     An object property typed ``union`` (a formal closed/open union over refs)
     is emitted as its own ``dx.TaggedUnion`` model alongside the owning object.
     """
-    extra: list[ModelSpec] = []
-    fields: list[FieldSpec] = []
-    properties = _mapping_value(definition.get("properties"))
-    required = _required_set(definition)
-    for prop_name, prop in sorted(properties.items()):
-        prop_map = _mapping_value(prop)
-        if _string_value(prop_map.get("type")) == "union":
-            union_spec = _union_spec(nsid, def_name, prop_name, prop_map)
-            extra.append(union_spec)
-            fields.append(
-                FieldSpec(
-                    name=prop_name,
-                    type_kind="union",
-                    target=union_spec.name,
-                    required=prop_name in required,
-                    description=_string_or_none(prop_map.get("description")),
-                )
-            )
-        else:
-            fields.append(
-                _field_spec(nsid, prop_name, prop_map, required=prop_name in required)
-            )
+    fields, extra = _container_field_specs(nsid, def_name, definition)
     owner = ModelSpec(
         name=_class_name(nsid, def_name),
         nsid=nsid,
@@ -321,6 +310,36 @@ def _object_specs(
     )
     # emit union members before the owner so the owner's embed resolves
     return (*extra, owner)
+
+
+def _container_field_specs(
+    nsid: str,
+    owner_def: str,
+    container: dict[str, JsonValue],
+) -> tuple[list[FieldSpec], list[ModelSpec]]:
+    """Build the field specs of a record body or object, plus inline unions.
+
+    A property (or an array element) typed ``union`` spawns an extra
+    ``dx.TaggedUnion`` :class:`ModelSpec`. The extra specs are returned
+    alongside the field specs so the caller can emit the union members before
+    the owner model that references them. This is the single inline-union entry
+    point shared by record bodies, objects, and array items.
+    """
+    properties = _mapping_value(container.get("properties"))
+    required = _required_set(container)
+    fields: list[FieldSpec] = []
+    extra: list[ModelSpec] = []
+    for prop_name, prop in sorted(properties.items()):
+        field, field_extra = _field_spec(
+            nsid,
+            owner_def,
+            prop_name,
+            _mapping_value(prop),
+            required=prop_name in required,
+        )
+        fields.append(field)
+        extra.extend(field_extra)
+    return fields, extra
 
 
 def _union_spec(
@@ -333,6 +352,17 @@ def _union_spec(
 
     The discriminator value of each variant is the member reference shortname
     (for example ``"textQuoteSelector"``), matching the lexicon ``refs`` order.
+    Member refs are resolved with the same cross-file qualification path as
+    embed refs, so a union member that points at another lexicon (for example
+    ``pub.layers.other#thing`` or a ``#main`` record ref) resolves to the
+    correct target class name.
+
+    The lexicon ``closed`` flag on a union is not honoured: didactic's
+    ``dx.TaggedUnion`` is always closed over its declared variants, so a record
+    carrying an unknown future member type cannot be represented. Every union in
+    the vendored lexicons is open (no ``closed`` flag), so this is a deliberate
+    scope boundary rather than a faithful mapping; forward-compatible unknown
+    variants are out of scope for 0.1.0.
     """
     union_name = _union_class_name(nsid, owner_def, prop_name)
     refs = _string_list(prop.get("refs"))
@@ -343,7 +373,7 @@ def _union_spec(
             VariantSpec(
                 discriminator_value=member,
                 class_name=f"{union_name}{_capitalise(member)}",
-                target=_class_name(nsid, member),
+                target=_class_name(nsid, member, qualified_ref=ref),
             )
         )
     return ModelSpec(
@@ -357,22 +387,6 @@ def _union_spec(
     )
 
 
-def _field_specs(
-    nsid: str,
-    container: dict[str, JsonValue],
-) -> tuple[FieldSpec, ...]:
-    """Build field specs for the properties of a record body or object."""
-    properties = _mapping_value(container.get("properties"))
-    required = _required_set(container)
-    fields = [
-        _field_spec(
-            nsid, prop_name, _mapping_value(prop), required=prop_name in required
-        )
-        for prop_name, prop in sorted(properties.items())
-    ]
-    return tuple(fields)
-
-
 # lexicon scalar types that map directly to a field type-kind with no extra
 # structure. ``cid-link`` and the empty type collapse to a plain string.
 _SCALAR_TYPE_KINDS: dict[str, str] = {
@@ -384,27 +398,52 @@ _SCALAR_TYPE_KINDS: dict[str, str] = {
 
 def _field_spec(
     nsid: str,
+    owner_def: str,
     name: str,
     prop: dict[str, JsonValue],
     *,
     required: bool,
-) -> FieldSpec:
-    """Map one lexicon property to a field spec."""
+) -> tuple[FieldSpec, list[ModelSpec]]:
+    """Map one lexicon property to a field spec plus any inline union specs.
+
+    A property typed ``union`` (or an array whose items are a ``union``) spawns
+    an extra ``dx.TaggedUnion`` :class:`ModelSpec`, returned alongside the field
+    so the caller can emit the union members before the owner. Every other kind
+    returns an empty extra list.
+    """
     prop_type = _string_value(prop.get("type"))
     description = _string_or_none(prop.get("description"))
+    if prop_type == "union":
+        union_spec = _union_spec(nsid, owner_def, name, prop)
+        field = FieldSpec(
+            name=name,
+            type_kind="union",
+            target=union_spec.name,
+            required=required,
+            description=description,
+        )
+        return field, [union_spec]
     if prop_type == "ref":
-        return _ref_field(nsid, name, prop, required=required, description=description)
+        field = _ref_field(nsid, name, prop, required=required, description=description)
+        return field, []
     if prop_type == "array":
-        item = _field_spec(nsid, name, _mapping_value(prop.get("items")), required=True)
-        return FieldSpec(
+        # the array element spec is built against the same owner_def so an
+        # inline array-of-union resolves to its own tagged union rather than
+        # degrading to a tuple of strings; the element name is unused by the
+        # emitter but is kept stable for diagnostics
+        item, item_extra = _field_spec(
+            nsid, owner_def, name, _mapping_value(prop.get("items")), required=True
+        )
+        field = FieldSpec(
             name=name,
             type_kind="array",
             item=item,
             required=required,
             description=description,
         )
+        return field, item_extra
     if prop_type == "integer":
-        return FieldSpec(
+        field = FieldSpec(
             name=name,
             type_kind="int",
             required=required,
@@ -412,16 +451,19 @@ def _field_spec(
             minimum=_int_or_none(prop.get("minimum")),
             maximum=_int_or_none(prop.get("maximum")),
         )
+        return field, []
     if prop_type in _SCALAR_TYPE_KINDS:
-        return FieldSpec(
+        field = FieldSpec(
             name=name,
             type_kind=_SCALAR_TYPE_KINDS[prop_type],
             required=required,
             description=description,
         )
+        return field, []
     # string, cid-link, the empty type, and any unknown construct all map to a
     # string-shaped field so the generated record validates rather than failing
-    return _string_field(name, prop, required=required, description=description)
+    field = _string_field(name, prop, required=required, description=description)
+    return field, []
 
 
 def _ref_field(

@@ -1,19 +1,26 @@
 """Wikidata knowledge-base connector.
 
 Resolves and links against Wikidata, the hub other knowledge bases reconcile
-to. The default transport is the public Wikidata REST, action, and SPARQL
-endpoints over :mod:`httpx` (a core dependency), so no extra is required for the
-common path. The ``lairs[wikidata]`` extra (``qwikidata`` / ``SPARQLWrapper``)
-is supported for callers who prefer those clients and is imported lazily, never
-at module import time.
+to. The transport is the public Wikidata REST, action, and SPARQL endpoints over
+:mod:`httpx` (a core dependency), so no extra is required. The connector creates
+its own :class:`httpx.Client` with a descriptive ``User-Agent`` so the public
+Wikidata Query Service and action API (which return HTTP 403 for requests with a
+default user agent) accept it; inject a client to override headers or supply a
+mock transport.
+
+The ``lairs[wikidata]`` extra (``qwikidata`` / ``SPARQLWrapper``) is declared
+for callers who prefer those clients in their own code. This connector does not
+import or use them; the ``httpx`` transport above is the only path here.
 """
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Self
 
 import httpx
 
+from lairs import __version__
 from lairs._types import JsonValue  # noqa: TC001  (runtime: model construction)
 from lairs.integrations.kb import Candidate, Edge, Entity
 
@@ -21,7 +28,32 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from types import TracebackType
 
-__all__ = ["WikidataKB"]
+__all__ = ["WikidataError", "WikidataKB"]
+
+
+class WikidataError(ValueError):
+    """A Wikidata reference or property was not a well-formed identifier.
+
+    Raised when a value destined for direct interpolation into a SPARQL query
+    (an entity QID or a property identifier) does not match the Wikidata
+    identifier grammar, so a malformed or injected token never reaches the
+    endpoint.
+    """
+
+
+_QID_PATTERN = re.compile(r"^Q[1-9][0-9]*$")
+"""The grammar of a bare Wikidata entity identifier."""
+
+_PROPERTY_PATTERN = re.compile(r"^P[1-9][0-9]*$")
+"""The grammar of a bare Wikidata property identifier."""
+
+DEFAULT_USER_AGENT = f"lairs/{__version__} (https://github.com/aaronstevenwhite/lairs)"
+"""The default ``User-Agent`` sent to the public Wikidata endpoints.
+
+The Wikidata Query Service and action API reject requests carrying the default
+:mod:`httpx` user agent with HTTP 403, so the connector's own client identifies
+itself per their user-agent policy.
+"""
 
 DEFAULT_SPARQL_ENDPOINT = "https://query.wikidata.org/sparql"
 """The public Wikidata Query Service SPARQL endpoint."""
@@ -93,6 +125,37 @@ def _as_str(value: JsonValue) -> str:
     return value if isinstance(value, str) else ""
 
 
+def _search_label(hit: dict[str, JsonValue]) -> str:
+    """Extract a human-readable label from a ``wbsearchentities`` hit.
+
+    The action API does not always return a ``label`` key. For a hit that
+    matched on an alias the readable text lives in ``display.label.value`` or
+    ``match.text`` instead, so those are consulted before falling back to the
+    bare QID so a candidate is never labelled with the empty string.
+
+    Parameters
+    ----------
+    hit : dict
+        One result object from a ``wbsearchentities`` response.
+
+    Returns
+    -------
+    str
+        The best available label for the hit.
+    """
+    label = _as_str(hit.get("label"))
+    if label:
+        return label
+    display_label = _as_object(_as_object(hit.get("display")).get("label"))
+    label = _as_str(display_label.get("value"))
+    if label:
+        return label
+    label = _as_str(_as_object(hit.get("match")).get("text"))
+    if label:
+        return label
+    return _as_str(hit.get("id"))
+
+
 def _qid(ref: str) -> str:
     """Normalise a Wikidata reference to a bare QID.
 
@@ -116,6 +179,55 @@ def _qid(ref: str) -> str:
     return ref.rsplit("/", 1)[-1]
 
 
+def _checked_qid(ref: str) -> str:
+    """Normalise a reference to a QID and verify it is well formed.
+
+    Parameters
+    ----------
+    ref : str
+        The Wikidata identifier or URI.
+
+    Returns
+    -------
+    str
+        The validated bare QID.
+
+    Raises
+    ------
+    WikidataError
+        If the normalised value is not a bare ``Q``-prefixed identifier.
+    """
+    qid = _qid(ref)
+    if not _QID_PATTERN.match(qid):
+        msg = f"not a well-formed Wikidata entity identifier: {ref!r}"
+        raise WikidataError(msg)
+    return qid
+
+
+def _checked_property(rel: str) -> str:
+    """Verify a relation is a well-formed Wikidata property identifier.
+
+    Parameters
+    ----------
+    rel : str
+        The candidate property identifier (for example ``P31``).
+
+    Returns
+    -------
+    str
+        The validated property identifier.
+
+    Raises
+    ------
+    WikidataError
+        If the value is not a bare ``P``-prefixed identifier.
+    """
+    if not _PROPERTY_PATTERN.match(rel):
+        msg = f"not a well-formed Wikidata property identifier: {rel!r}"
+        raise WikidataError(msg)
+    return rel
+
+
 class WikidataKB:
     """A connector to Wikidata over its public REST, action, and SPARQL APIs.
 
@@ -129,28 +241,39 @@ class WikidataKB:
         The linked-data entity endpoint used by :meth:`resolve`.
     lang : str, optional
         The default label language.
+    limit : int, optional
+        The default number of candidates requested from the search API. This
+        also scales the synthetic rank-decay score :meth:`search` assigns (see
+        that method), so changing it widens both the result set and the score
+        spread.
     client : httpx.Client or None, optional
-        An injected HTTP client. When omitted, a private client is created and
-        closed with this connector; injecting one lets tests supply a mock
-        transport.
+        An injected HTTP client. When omitted, a private client is created with
+        :data:`DEFAULT_USER_AGENT` and closed with this connector; injecting one
+        lets a caller override headers or supply a mock transport.
     """
 
     name = "wikidata"
 
-    def __init__(
+    def __init__(  # noqa: PLR0913  (three endpoints plus language, limit, and a client seam)
         self,
         endpoint: str = DEFAULT_SPARQL_ENDPOINT,
         *,
         api_endpoint: str = DEFAULT_API_ENDPOINT,
         entity_endpoint: str = DEFAULT_ENTITY_ENDPOINT,
         lang: str = "en",
+        limit: int = DEFAULT_SEARCH_LIMIT,
         client: httpx.Client | None = None,
     ) -> None:
         self.endpoint = endpoint
         self.api_endpoint = api_endpoint
         self.entity_endpoint = entity_endpoint
         self.lang = lang
-        self._client = client if client is not None else httpx.Client()
+        self.limit = limit
+        self._client = (
+            client
+            if client is not None
+            else httpx.Client(headers={"User-Agent": DEFAULT_USER_AGENT})
+        )
         self._owns_client = client is None
         self._entity_cache: dict[str, Entity] = {}
         self._search_cache: dict[tuple[str, str], list[Candidate]] = {}
@@ -317,9 +440,17 @@ class WikidataKB:
     ) -> list[Candidate]:
         """Search Wikidata for candidate entities.
 
-        Uses the ``wbsearchentities`` action API. Type constraints are not
-        expressible in that API and are ignored; use :class:`ReconciliationKB`
-        against the Wikidata reconciliation endpoint for type-filtered search.
+        Uses the ``wbsearchentities`` action API, which returns hits already
+        ranked by relevance but carries no per-hit relevance score. Each
+        candidate therefore receives a synthetic rank-decay score
+        ``1 - rank / limit`` (the top hit scores near ``1.0``, later hits
+        less), clamped to ``0.0`` so a result set larger than ``limit`` never
+        yields a negative score. The ordering is faithful; the magnitudes are
+        not calibrated probabilities.
+
+        Type constraints are not expressible in this API and are ignored; use
+        :class:`~lairs.integrations.kb.reconciliation.ReconciliationKB` against
+        the Wikidata reconciliation endpoint for type-filtered search.
 
         Parameters
         ----------
@@ -351,7 +482,7 @@ class WikidataKB:
             "search": text,
             "language": search_lang,
             "uselang": search_lang,
-            "limit": DEFAULT_SEARCH_LIMIT,
+            "limit": self.limit,
             "format": "json",
         }
         response = self._client.get(self.api_endpoint, params=params)
@@ -363,8 +494,8 @@ class WikidataKB:
             candidates.append(
                 Candidate(
                     ref=_as_str(obj.get("id")),
-                    label=_as_str(obj.get("label")),
-                    score=1.0 - rank / DEFAULT_SEARCH_LIMIT,
+                    label=_search_label(obj),
+                    score=max(0.0, 1.0 - rank / self.limit),
                 ),
             )
         self._search_cache[key] = candidates
@@ -393,10 +524,12 @@ class WikidataKB:
 
         Raises
         ------
+        WikidataError
+            If ``ref`` or any ``rels`` entry is not a well-formed identifier.
         httpx.HTTPStatusError
             If the SPARQL endpoint returns a non-success status.
         """
-        qid = _qid(ref)
+        qid = _checked_qid(ref)
         query = self._neighbor_query(qid, rels)
         response = self._client.get(
             self.endpoint,
@@ -435,9 +568,14 @@ class WikidataKB:
         -------
         str
             The SPARQL query string.
+
+        Raises
+        ------
+        WikidataError
+            If any ``rels`` entry is not a well-formed property identifier.
         """
         if rels:
-            values = " ".join(f"wdt:{rel}" for rel in rels)
+            values = " ".join(f"wdt:{_checked_property(rel)}" for rel in rels)
             predicate = f"VALUES ?p {{ {values} }}\n  ?s ?p ?o ."
         else:
             predicate = (

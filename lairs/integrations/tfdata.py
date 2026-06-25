@@ -53,11 +53,19 @@ _FLOAT_TOKEN = "float32"  # noqa: S105
 _DOUBLE_TOKEN = "float64"  # noqa: S105
 _BOOL_TOKEN = "bool"  # noqa: S105
 _STRING_TOKEN = "string"  # noqa: S105
-_BINARY_TOKEN = "string"  # noqa: S105
+# binary keeps its own token so binary bytes feed a tensorflow string tensor
+# directly instead of being silently flattened to empty bytes like a non-string.
+_BINARY_TOKEN = "binary"  # noqa: S105
 _FALLBACK_TOKEN = "string"  # noqa: S105
 
-# tokens that the lazy tensorflow bridge knows how to resolve to a dtype. kept
-# as a frozenset so the pure derivation can be validated without tensorflow.
+# tokens whose values feed a tensorflow string tensor as ``bytes``: strings are
+# utf-8 encoded and binary payloads pass through unchanged.
+_BYTE_FEED_TOKENS: frozenset[str] = frozenset({_STRING_TOKEN, _BINARY_TOKEN})
+
+# tokens that the lazy tensorflow bridge resolves to a dtype by attribute lookup
+# (``getattr(tf, token)``). binary and any unknown token fall back to
+# ``tf.string`` instead. kept as a frozenset so the pure derivation can be
+# validated without tensorflow.
 _KNOWN_TOKENS: frozenset[str] = frozenset(
     {_INT_TOKEN, _FLOAT_TOKEN, _DOUBLE_TOKEN, _BOOL_TOKEN, _STRING_TOKEN},
 )
@@ -258,6 +266,12 @@ def _dtype_for(token: str, tf: tf) -> tf.dtypes.DType:
 def _column_values(view: pa.Table, spec: TfFeatureSpec) -> list[_FeedValue]:
     """Return a column's python values, encoding strings as bytes for tensorflow.
 
+    String and binary columns feed a tensorflow string tensor, so their values
+    are returned as ``bytes`` (strings utf-8 encoded, binary passed through).
+    Numeric columns are returned unchanged, but a numeric column carrying a null
+    is rejected: ``tf.ragged.constant`` cannot convert a ``None`` to a numeric
+    dtype and would otherwise raise an opaque framework error.
+
     Parameters
     ----------
     view : pyarrow.Table
@@ -269,25 +283,39 @@ def _column_values(view: pa.Table, spec: TfFeatureSpec) -> list[_FeedValue]:
     -------
     list
         The column's values as python objects suitable for a tensor.
+
+    Raises
+    ------
+    ValueError
+        When a numeric column carries a null value, which cannot be converted to
+        the column's tensorflow dtype.
     """
     values: list[_FeedValue] = view.column(spec.name).to_pylist()
-    if spec.dtype != _STRING_TOKEN:
+    if spec.dtype not in _BYTE_FEED_TOKENS:
+        if any(value is None for value in values):
+            msg = (
+                f"numeric column {spec.name!r} carries a null value and cannot "
+                f"be converted to a {spec.dtype} tensor; drop the column or fill "
+                f"its nulls before exporting"
+            )
+            raise ValueError(msg)
         return values
     return [_as_bytes(value, is_sequence=spec.is_sequence) for value in values]
 
 
 def _as_bytes(value: _FeedValue, *, is_sequence: bool) -> _FeedValue:
-    """Encode a string value (or list of strings) as tensorflow-ready bytes.
+    """Encode a string or binary value (or list thereof) as tensorflow bytes.
 
-    Strings arrive from ``to_pylist`` as ``str``; tensorflow string tensors take
-    ``bytes``, so each ``str`` is utf-8 encoded and absent values become ``b""``.
+    Strings arrive from ``to_pylist`` as ``str`` and binary as ``bytes``;
+    tensorflow string tensors take ``bytes``, so each ``str`` is utf-8 encoded,
+    each ``bytes`` value is kept, and absent values become ``b""``.
 
     Parameters
     ----------
     value : _FeedValue
         The value to encode.
     is_sequence : bool
-        Whether the value is a list of strings rather than a scalar string.
+        Whether the value is a list of scalars rather than a scalar.
 
     Returns
     -------
@@ -300,19 +328,24 @@ def _as_bytes(value: _FeedValue, *, is_sequence: bool) -> _FeedValue:
 
 
 def _scalar_bytes(value: _FeedValue) -> bytes:
-    """Encode one scalar string value as tensorflow-ready bytes.
+    """Encode one scalar string or binary value as tensorflow-ready bytes.
 
     Parameters
     ----------
     value : _FeedValue
-        The scalar value to encode; non-strings yield ``b""``.
+        The scalar value to encode; a ``str`` is utf-8 encoded, a ``bytes`` (or
+        ``bytearray``) value is kept, and anything else yields ``b""``.
 
     Returns
     -------
     bytes
-        The utf-8 encoded string, or ``b""`` for a non-string or absent value.
+        The encoded string or binary payload, or ``b""`` for an absent value.
     """
-    return value.encode() if isinstance(value, str) else b""
+    if isinstance(value, str):
+        return value.encode()
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    return b""
 
 
 class TfDataExporter:

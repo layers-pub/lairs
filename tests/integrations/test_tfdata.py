@@ -18,6 +18,7 @@ from lairs.integrations.tfdata import (
     TfDataExporter,
     TfDataSpec,
     TfFeatureSpec,
+    _column_values,
     feature_specs_of,
     token_of,
 )
@@ -52,7 +53,10 @@ def test_token_of_scalars() -> None:
     assert token_of(pa.float32()) == ("float32", False)
     assert token_of(pa.string()) == ("string", False)
     assert token_of(pa.large_string()) == ("string", False)
-    assert token_of(pa.binary()) == ("string", False)
+    # binary keeps its own token so its bytes are not flattened away as a
+    # non-string would be; it still resolves to a tensorflow string tensor.
+    assert token_of(pa.binary()) == ("binary", False)
+    assert token_of(pa.large_binary()) == ("binary", False)
 
 
 def test_token_of_lists_are_sequences() -> None:
@@ -93,6 +97,29 @@ def test_feature_specs_of_selects_and_orders_columns() -> None:
 def test_feature_specs_of_empty_schema() -> None:
     """An empty schema yields no feature specs."""
     assert feature_specs_of(pa.schema([])) == ()
+
+
+def test_column_values_preserves_binary_bytes() -> None:
+    """A binary column's bytes feed through unchanged, not flattened to empty."""
+    table = pa.table({"raw": pa.array([b"abc", b"\x00\x01"], type=pa.binary())})
+    (spec,) = feature_specs_of(table.schema)
+    assert spec.dtype == "binary"
+    assert _column_values(table, spec) == [b"abc", b"\x00\x01"]
+
+
+def test_column_values_encodes_string_bytes() -> None:
+    """A string column is utf-8 encoded and absent values become empty bytes."""
+    table = pa.table({"text": pa.array(["hi", None], type=pa.string())})
+    (spec,) = feature_specs_of(table.schema)
+    assert _column_values(table, spec) == [b"hi", b""]
+
+
+def test_column_values_rejects_null_in_numeric_column() -> None:
+    """A null in a numeric column raises a clear lairs error naming the column."""
+    table = pa.table({"label": pa.array([1, None], type=pa.int64())})
+    (spec,) = feature_specs_of(table.schema)
+    with pytest.raises(ValueError, match=r"numeric column 'label' carries a null"):
+        _column_values(table, spec)
 
 
 def test_spec_defaults() -> None:
@@ -155,3 +182,39 @@ def test_export_handles_sequence_columns() -> None:
     rows = list(dataset.as_numpy_iterator())
     assert list(rows[0]["tokens"]) == [b"a", b"b"]
     assert list(rows[1]["tokens"]) == [b"c"]
+
+
+@pytest.mark.integration
+def test_export_preserves_binary_column() -> None:
+    """A binary column survives export as bytes in a string tensor."""
+    tf = pytest.importorskip("tensorflow")
+    table = pa.table({"raw": pa.array([b"abc", b"\x00\x01"], type=pa.binary())})
+    dataset = TfDataExporter().export(table)
+    assert isinstance(dataset, tf.data.Dataset)
+    rows = list(dataset.as_numpy_iterator())
+    assert [row["raw"] for row in rows] == [b"abc", b"\x00\x01"]
+
+
+def test_export_rejects_null_numeric_column() -> None:
+    """Exporting a numeric column with a null raises a clear lairs error.
+
+    The check runs before tensorflow is needed, so it is exercised in the
+    default suite regardless of whether the extra is installed.
+    """
+    table = pa.table({"label": pa.array([1, None], type=pa.int64())})
+    with pytest.raises(ValueError, match=r"numeric column 'label' carries a null"):
+        TfDataExporter().export(table)
+
+
+@pytest.mark.integration
+def test_export_shuffles_with_seed() -> None:
+    """The shuffle_buffer and seed options drive a reproducible shuffle."""
+    pytest.importorskip("tensorflow")
+    table = pa.table({"n": list(range(10))})
+    spec = TfDataSpec(shuffle_buffer=10, seed=7)
+    first = [row["n"] for row in TfDataExporter().export(table, spec=spec)]
+    second = [row["n"] for row in TfDataExporter().export(table, spec=spec)]
+    # the same seed yields the same permutation, and shuffling actually reorders.
+    assert first == second
+    assert sorted(first) == list(range(10))
+    assert first != list(range(10))

@@ -66,6 +66,7 @@ from lairs.atproto.pds import PdsClient
 from lairs.author import publish as publish_ops
 from lairs.discovery import accelerator
 from lairs.store.repository import Repository
+from lairs.tui import run_tui
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -582,12 +583,17 @@ def _run_materialize(args: argparse.Namespace) -> int:
     Returns
     -------
     int
-        ``0`` on success.
+        ``0`` on success, ``1`` on a resolution, transport, or validation
+        failure.
     """
     out: Path = args.out
-    with PdsClient(args.endpoint) as client:
-        corpus = data.load_corpus(args.uri, source="pds", pds_client=client)
-    written = corpus.materialize(out)
+    try:
+        with PdsClient(args.endpoint) as client:
+            corpus = data.load_corpus(args.uri, source="pds", pds_client=client)
+        written = corpus.materialize(out)
+    except (httpx.HTTPError, IdentityError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     print(f"materialized {len(written)} view(s) into {out}")
     for path in written:
         print(f"  {path}")
@@ -681,10 +687,15 @@ def _run_inspect(args: argparse.Namespace) -> int:
     Returns
     -------
     int
-        ``0`` on success.
+        ``0`` on success, ``1`` on a resolution, transport, or validation
+        failure.
     """
-    with PdsClient(args.endpoint) as client:
-        corpus = data.load_corpus(args.uri, source="pds", pds_client=client)
+    try:
+        with PdsClient(args.endpoint) as client:
+            corpus = data.load_corpus(args.uri, source="pds", pds_client=client)
+    except (httpx.HTTPError, IdentityError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     counts: dict[str, int] = {}
     for uri in corpus.pool.uris():
         nsid = _nsid_of(uri)
@@ -1386,12 +1397,7 @@ def _run_tui(args: argparse.Namespace) -> int:
     Returns
     -------
     int
-        ``0`` after the UI exits, ``1`` when the terminal stack is unavailable.
+        ``0`` after the UI exits.
     """
-    try:
-        from lairs.tui import run_tui  # noqa: PLC0415
-    except ImportError as error:
-        print(f"the TUI requires the 'textual' dependency: {error}")
-        return 1
     run_tui(index_path=args.index, data_path=args.data, repo_path=args.repo)
     return 0

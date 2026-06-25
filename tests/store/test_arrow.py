@@ -2,12 +2,25 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import didactic.api as dx
 import pyarrow.parquet as pq
 import pytest
 
+from lairs.records._generated.defs import (
+    Anchor,
+    BoundingBox,
+    ExternalTarget,
+    PageAnchor,
+    Span,
+    SpatioTemporalAnchor,
+    TemporalSpan,
+    TokenRef,
+    TokenRefSequence,
+    Uuid,
+)
 from lairs.store import arrow
 from lairs.store.repository import Repository
 
@@ -47,6 +60,11 @@ _EXPR_URI = "at://did:plc:abc/pub.layers.expression.expression/e1"
 _LAYER_URI = "at://did:plc:abc/pub.layers.annotation.annotationLayer/l1"
 
 
+def _flatten_real(anchor: Anchor) -> dict[str, object]:
+    """Flatten a real generated Anchor through its JSON dump."""
+    return arrow.flatten_anchor(json.loads(anchor.model_dump_json()))
+
+
 def test_exports() -> None:
     assert set(arrow.__all__) == {
         "ANCHOR_COLUMNS",
@@ -59,44 +77,125 @@ def test_exports() -> None:
     }
 
 
-def test_flatten_span_anchor() -> None:
-    columns = arrow.flatten_anchor({"byteStart": 3, "byteEnd": 7})
+def test_anchor_columns_cover_every_variant_field() -> None:
+    # every typed column the variants fill is part of the published column set.
+    assert {
+        "anchor_kind",
+        "byte_start",
+        "byte_end",
+        "token_id",
+        "token_index",
+        "token_indexes",
+        "t_start_ms",
+        "t_end_ms",
+        "bbox_x",
+        "bbox_y",
+        "bbox_w",
+        "bbox_h",
+        "page",
+        "ext_source",
+    } == set(arrow.ANCHOR_COLUMNS)
+
+
+def test_flatten_text_span_real_anchor() -> None:
+    columns = _flatten_real(Anchor(textSpan=Span(byteStart=3, byteEnd=7)))
     assert columns["anchor_kind"] == "span"
     assert columns["byte_start"] == 3
     assert columns["byte_end"] == 7
     assert columns["token_id"] is None
 
 
-def test_flatten_token_ref_anchor() -> None:
-    columns = arrow.flatten_anchor({"tokenizationId": "tok", "tokenIndex": 4})
+def test_flatten_token_ref_real_anchor_extracts_uuid_value() -> None:
+    # tokenizationId is an embedded Uuid model that dumps to {"value": ...}, not
+    # a bare string; the flattener must reach into it for token_id.
+    columns = _flatten_real(
+        Anchor(tokenRef=TokenRef(tokenIndex=4, tokenizationId=Uuid(value="tok-123"))),
+    )
     assert columns["anchor_kind"] == "tokenRef"
-    assert columns["token_id"] == "tok"
+    assert columns["token_id"] == "tok-123"
     assert columns["token_index"] == 4
+    assert columns["token_indexes"] is None
 
 
-def test_flatten_temporal_span_anchor() -> None:
-    columns = arrow.flatten_anchor({"start": 100, "ending": 250})
+def test_flatten_token_ref_sequence_real_anchor() -> None:
+    # a tokenRefSequence carries tokenizationId too; it must not be misread as a
+    # plain tokenRef, and its index list must survive.
+    columns = _flatten_real(
+        Anchor(
+            tokenRefSequence=TokenRefSequence(
+                tokenIndexes=(1, 2, 5),
+                tokenizationId=Uuid(value="seq-1"),
+            ),
+        ),
+    )
+    assert columns["anchor_kind"] == "tokenRefSequence"
+    assert columns["token_id"] == "seq-1"
+    assert columns["token_indexes"] == [1, 2, 5]
+    assert columns["token_index"] is None
+
+
+def test_flatten_temporal_span_real_anchor() -> None:
+    columns = _flatten_real(Anchor(temporalSpan=TemporalSpan(start=100, ending=250)))
     assert columns["anchor_kind"] == "temporalSpan"
     assert columns["t_start_ms"] == 100
     assert columns["t_end_ms"] == 250
 
 
-def test_flatten_bounding_box_anchor() -> None:
-    columns = arrow.flatten_anchor({"x": 1, "y": 2, "w": 3, "h": 4})
-    assert columns["anchor_kind"] == "boundingBox"
-    assert columns["bbox_x"] == 1
-    assert columns["bbox_y"] == 2
-    assert columns["bbox_w"] == 3
-    assert columns["bbox_h"] == 4
-
-
-def test_flatten_spatio_temporal_anchor() -> None:
-    columns = arrow.flatten_anchor(
-        {"temporalSpan": {"start": 10, "ending": 20}, "keyframe": []},
+def test_flatten_spatio_temporal_real_anchor() -> None:
+    columns = _flatten_real(
+        Anchor(
+            spatioTemporalAnchor=SpatioTemporalAnchor(
+                temporalSpan=TemporalSpan(start=10, ending=20),
+            ),
+        ),
     )
     assert columns["anchor_kind"] == "spatioTemporalAnchor"
     assert columns["t_start_ms"] == 10
     assert columns["t_end_ms"] == 20
+
+
+def test_flatten_page_anchor_with_text_span() -> None:
+    columns = _flatten_real(
+        Anchor(pageAnchor=PageAnchor(page=2, textSpan=Span(byteStart=0, byteEnd=5))),
+    )
+    assert columns["anchor_kind"] == "pageAnchor"
+    assert columns["page"] == 2
+    assert columns["byte_start"] == 0
+    assert columns["byte_end"] == 5
+
+
+def test_flatten_page_anchor_with_bounding_box_uses_width_height() -> None:
+    # BoundingBox dumps to {height, width, x, y}; the bbox_w/bbox_h columns must
+    # read width/height, not the long-gone w/h keys.
+    columns = _flatten_real(
+        Anchor(
+            pageAnchor=PageAnchor(
+                page=7,
+                boundingBox=BoundingBox(height=10, width=20, x=1, y=2),
+            ),
+        ),
+    )
+    assert columns["anchor_kind"] == "pageAnchor"
+    assert columns["page"] == 7
+    assert columns["bbox_x"] == 1
+    assert columns["bbox_y"] == 2
+    assert columns["bbox_w"] == 20
+    assert columns["bbox_h"] == 10
+
+
+def test_flatten_external_target_real_anchor() -> None:
+    columns = _flatten_real(
+        Anchor(externalTarget=ExternalTarget(source="https://example.com/doc")),
+    )
+    assert columns["anchor_kind"] == "externalTarget"
+    assert columns["ext_source"] == "https://example.com/doc"
+
+
+def test_flatten_empty_real_anchor_is_anchorless() -> None:
+    # a wrapper with no populated variant must not be misclassified.
+    columns = _flatten_real(Anchor())
+    assert columns["anchor_kind"] is None
+    assert all(value is None for value in columns.values())
 
 
 def test_flatten_none_anchor_is_all_unset() -> None:
@@ -105,8 +204,8 @@ def test_flatten_none_anchor_is_all_unset() -> None:
     assert all(value is None for value in columns.values())
 
 
-def test_flatten_unwraps_tagged_union_wrapper() -> None:
-    columns = arrow.flatten_anchor({"span": {"byteStart": 0, "byteEnd": 5}})
+def test_flatten_unwraps_single_key_wrapper() -> None:
+    columns = arrow.flatten_anchor({"textSpan": {"byteStart": 0, "byteEnd": 5}})
     assert columns["anchor_kind"] == "span"
     assert columns["byte_start"] == 0
     assert columns["byte_end"] == 5
@@ -187,17 +286,3 @@ def test_materialize_derives_views_from_repo(tmp_path: Path) -> None:
     assert reloaded.num_rows == 1
     assert reloaded.column("anchor_kind").to_pylist() == ["span"]
     assert reloaded.column("uri").to_pylist() == [_EXPR_URI]
-
-
-def test_flatten_anchor_wrapper_selects_populated_variant() -> None:
-    # the dumped anchor object carries every variant field with one populated.
-    # the null siblings must not be mistaken for the active variant.
-    import json  # noqa: PLC0415
-
-    from lairs.records._generated.defs import Anchor, Span  # noqa: PLC0415
-
-    anchor = Anchor(textSpan=Span(byteStart=3, byteEnd=8))
-    columns = arrow.flatten_anchor(json.loads(anchor.model_dump_json()))
-    assert columns["anchor_kind"] == "span"
-    assert columns["byte_start"] == 3
-    assert columns["byte_end"] == 8

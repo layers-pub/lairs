@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from lairs.atproto.pds import RecordEnvelope
 from lairs.discovery.models import DatasetFilter, DatasetSummary
 from lairs.discovery.summary import (
+    corpus_from_value,
     listcorpora_params,
     matches,
     summary_from_corpus,
@@ -92,6 +93,31 @@ def test_summary_from_corpus_detects_adjudication() -> None:
     )
     summary = summary_from_corpus(corpus, uri=_URI, did="did:plc:x")
     assert summary.has_adjudication is True
+
+
+def test_corpus_from_value_decodes_and_drops_type() -> None:
+    corpus = corpus_from_value(
+        {
+            "$type": "pub.layers.corpus.corpus",
+            "name": "demo",
+            "createdAt": "2026-06-18T00:00:00Z",
+            "domain": "biomedical",
+        },
+    )
+    assert corpus is not None
+    assert corpus.name == "demo"
+    assert corpus.domain == "biomedical"
+
+
+def test_corpus_from_value_non_dict_returns_none() -> None:
+    assert corpus_from_value("not a record") is None
+    assert corpus_from_value(["also", "not"]) is None
+    assert corpus_from_value(None) is None
+
+
+def test_corpus_from_value_invalid_returns_none() -> None:
+    # missing the required name field => validation fails => None, not a crash.
+    assert corpus_from_value({"createdAt": "2026-06-18T00:00:00Z"}) is None
 
 
 def _envelope(value: JsonValue) -> RecordEnvelope:

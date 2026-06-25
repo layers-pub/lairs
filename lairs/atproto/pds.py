@@ -23,6 +23,7 @@ import libipld
 
 from lairs._types import JsonValue  # noqa: TC001  (runtime: didactic field sort)
 from lairs.atproto._car import cid_to_base32, ipld_to_json
+from lairs.records.blobref import normalize_blob_refs
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
@@ -35,6 +36,7 @@ __all__ = [
     "QueryParams",
     "RecordDecodeFailure",
     "RecordEnvelope",
+    "RecordNotFoundError",
     "RepoDescription",
     "decode",
     "decode_all",
@@ -111,6 +113,18 @@ class RecordDecodeFailure(dx.Model):
         description="content identifier of the record that failed to decode",
     )
     error: str = dx.field(description="human-readable validation failure description")
+
+
+class RecordNotFoundError(LookupError):
+    """Raised when a record lookup returns no usable record.
+
+    A real ATProto record-not-found is a non-success status that surfaces as
+    ``httpx.HTTPStatusError``. This exception covers the narrower case of a
+    ``200`` response whose body is not a usable ``{uri, cid, value}`` record
+    object (an empty or malformed body), which would otherwise be silently
+    coerced into an envelope with an empty ``uri`` that a caller could not tell
+    apart from a real record.
+    """
 
 
 class RepoDescription(dx.Model):
@@ -193,7 +207,11 @@ def _record_object(envelope: RecordEnvelope) -> dict[str, JsonValue]:
     """
     value = envelope.value
     if isinstance(value, dict):
-        return {key: item for key, item in value.items() if key != "$type"}
+        return {
+            key: normalize_blob_refs(item)
+            for key, item in value.items()
+            if key != "$type"
+        }
     entry = dx.ValidationErrorEntry(
         loc=("value",),
         type="type_error",
@@ -523,6 +541,9 @@ class PdsClient:
         ------
         httpx.HTTPStatusError
             If the PDS returns a non-success status.
+        RecordNotFoundError
+            If the PDS returns a ``200`` whose body is not a usable record
+            object (an empty or malformed body with no string ``uri``).
         """
         params = {"repo": repo, "collection": collection, "rkey": rkey}
         response = self._client.get(
@@ -531,8 +552,10 @@ class PdsClient:
         )
         response.raise_for_status()
         body = response.json()
-        record = body if isinstance(body, dict) else {}
-        return _envelope_from_record(record)
+        if not isinstance(body, dict) or not isinstance(body.get("uri"), str):
+            msg = f"getRecord returned no usable record for {repo}/{collection}/{rkey}"
+            raise RecordNotFoundError(msg)
+        return _envelope_from_record(body)
 
     def list_records(
         self,
@@ -753,6 +776,8 @@ def get_record(
     ------
     httpx.HTTPStatusError
         If the PDS returns a non-success status.
+    RecordNotFoundError
+        If the PDS returns a ``200`` whose body is not a usable record object.
     """
     with PdsClient(endpoint) as client:
         return client.get_record(repo, collection, rkey)

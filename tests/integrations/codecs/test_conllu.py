@@ -162,6 +162,22 @@ def test_iso_token_tag_layer_uses_token_anchor() -> None:
     assert first["label"] == "DET"
 
 
+def test_iso_segmentation_byte_offsets_track_the_text() -> None:
+    # every token's textSpan must slice the expression text back to its form,
+    # so a non-first token has byteStart > 0 (not the old all-zero offset bug).
+    fragment = ConlluIso().forward(_sentence())
+    seg = next(r for r in fragment.records if r.local_id == "segmentation")
+    tokens = json.loads(seg.value_json)["tokenizations"][0]["tokens"]
+    text = b"The dog runs"
+    starts = []
+    for token in tokens:
+        span = token["textSpan"]
+        starts.append(span["byteStart"])
+        sliced = text[span["byteStart"] : span["byteEnd"]].decode()
+        assert sliced == token["text"]
+    assert starts == [0, 4, 8]
+
+
 def test_iso_backward_recovers_sentence() -> None:
     iso = ConlluIso()
     assert iso.backward(iso.forward(_sentence())) == _sentence()
@@ -228,6 +244,84 @@ class _RoundTripIso(dx.Iso[_ConlluSentence, _ConlluSentence]):
 
     def backward(self, b: _ConlluSentence, /) -> _ConlluSentence:
         return b
+
+
+# a two-sentence treebank fragment used to exercise multi-sentence decoding.
+_CONLLU_MULTI = (
+    "# text = The dog runs\n"
+    "1\tThe\tthe\tDET\tDT\t_\t2\tdet\t_\t_\n"
+    "2\tdog\tdog\tNOUN\tNN\t_\t3\tnsubj\t_\t_\n"
+    "3\truns\trun\tVERB\tVBZ\t_\t0\troot\t_\t_\n"
+    "\n"
+    "# text = Cats sleep\n"
+    "1\tCats\tcat\tNOUN\tNNS\t_\t2\tnsubj\t_\t_\n"
+    "2\tsleep\tsleep\tVERB\tVBP\t_\t0\troot\t_\t_\n"
+)
+
+
+def test_codec_decode_uses_library_and_builds_layers() -> None:
+    # decode/encode go through the conllu library; exercise them in the default
+    # suite (not only the integration job) so a regression is caught early.
+    pytest.importorskip("conllu")
+    fragment = ConlluCodec().decode(_CONLLU)
+    assert isinstance(fragment, CorpusFragment)
+    locals_ = [record.local_id for record in fragment.records]
+    assert locals_ == [
+        "expression",
+        "segmentation",
+        "upos",
+        "xpos",
+        "lemma",
+        "dependencies",
+    ]
+
+
+def test_codec_round_trips_through_library() -> None:
+    pytest.importorskip("conllu")
+    codec = ConlluCodec()
+    fragment = codec.decode(_CONLLU)
+    reparsed = codec.decode(codec.encode(fragment.records))
+    assert reparsed == fragment
+
+
+def test_codec_encode_returns_str() -> None:
+    pytest.importorskip("conllu")
+    codec = ConlluCodec()
+    fragment = codec.decode(_CONLLU)
+    assert isinstance(codec.encode(fragment.records), str)
+
+
+def test_codec_decodes_every_sentence() -> None:
+    # a multi-sentence file must not silently drop sentences after the first.
+    pytest.importorskip("conllu")
+    fragment = ConlluCodec().decode(_CONLLU_MULTI)
+    locals_ = [record.local_id for record in fragment.records]
+    assert "expression" in locals_
+    assert "expression-1" in locals_
+    expressions = [
+        json.loads(r.value_json)["text"]
+        for r in fragment.records
+        if r.local_id in {"expression", "expression-1"}
+    ]
+    assert expressions == ["The dog runs", "Cats sleep"]
+
+
+def test_codec_multi_sentence_round_trips() -> None:
+    pytest.importorskip("conllu")
+    codec = ConlluCodec()
+    fragment = codec.decode(_CONLLU_MULTI)
+    reparsed = codec.decode(codec.encode(fragment.records))
+    assert reparsed == fragment
+
+
+def test_codec_into_extends_across_sentences() -> None:
+    pytest.importorskip("conllu")
+    codec = ConlluCodec()
+    first = codec.decode(_CONLLU)
+    second = codec.decode(_CONLLU_MULTI, into=first)
+    assert len(second.records) == len(first.records) + len(
+        codec.decode(_CONLLU_MULTI).records
+    )
 
 
 @pytest.mark.integration

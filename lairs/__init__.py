@@ -8,6 +8,8 @@ modalities.
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _distribution_version
 from typing import TYPE_CHECKING
 
 from lairs.atproto.auth import Session, authed_client, login
@@ -49,7 +51,32 @@ __all__ = [
     "table_of_contents",
 ]
 
-__version__ = "0.0.0"
+_FALLBACK_VERSION = "0.1.0"
+"""The version reported when no installed distribution metadata is available.
+
+This literal is the single source of truth for source and editable trees where
+``importlib.metadata`` cannot find an installed ``lairs`` distribution. It must
+be kept in step with the ``version`` field in ``pyproject.toml``.
+"""
+
+
+def _resolve_version() -> str:
+    """Return the installed distribution version, falling back to a literal.
+
+    Returns
+    -------
+    str
+        The version string from the installed ``lairs`` distribution metadata,
+        or ``_FALLBACK_VERSION`` when the package is not installed (for example
+        when running from a source checkout).
+    """
+    try:
+        return _distribution_version("lairs")
+    except PackageNotFoundError:
+        return _FALLBACK_VERSION
+
+
+__version__ = _resolve_version()
 
 
 def codec(name: str) -> type[Codec]:

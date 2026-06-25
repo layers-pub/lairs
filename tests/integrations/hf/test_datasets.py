@@ -108,8 +108,17 @@ def test_task_template_catalogue_is_nonempty() -> None:
 def test_project_keeps_present_columns_in_order() -> None:
     pa = pytest.importorskip("pyarrow")
     table = pa.table({"a": [1], "b": [2], "c": [3]})
-    projected = ds._project(table, ("c", "a", "missing"))
+    projected = ds._project(table, ("c", "a"))
     assert projected.column_names == ["c", "a"]
+
+
+def test_project_raises_on_absent_column() -> None:
+    # a typo or a task-template column the view never produced is a caller error
+    # and is raised rather than silently narrowing the dataset.
+    pa = pytest.importorskip("pyarrow")
+    table = pa.table({"a": [1], "b": [2]})
+    with pytest.raises(KeyError, match="missing"):
+        ds._project(table, ("a", "missing"))
 
 
 def test_project_none_returns_table_unchanged() -> None:
@@ -132,6 +141,42 @@ def test_hf_dtype_token_mapping() -> None:
 def test_is_sequence_token() -> None:
     assert ds._is_sequence_token("sequence<string>")
     assert not ds._is_sequence_token("string")
+
+
+def test_project_batch_applies_projection() -> None:
+    # the streaming path narrows each batch through _project_batch before
+    # yielding its rows; a projected batch keeps the requested columns in order.
+    pa = pytest.importorskip("pyarrow")
+    batch = pa.record_batch({"a": [1, 2], "b": [3, 4], "c": [5, 6]})
+    table = ds._project_batch(batch, ("c", "a"))
+    assert table.column_names == ["c", "a"]
+    assert table.to_pylist() == [{"c": 5, "a": 1}, {"c": 6, "a": 2}]
+
+
+def test_project_batch_none_keeps_all_columns() -> None:
+    pa = pytest.importorskip("pyarrow")
+    batch = pa.record_batch({"a": [1], "b": [2]})
+    table = ds._project_batch(batch, None)
+    assert table.column_names == ["a", "b"]
+
+
+def test_project_preserves_nested_sequence_columns() -> None:
+    # the nested export shape keeps annotations as list-typed (sequence) columns;
+    # projection and to_pylist must carry the list cells through intact.
+    pa = pytest.importorskip("pyarrow")
+    table = pa.table(
+        {
+            "tokens": [["a", "b"], ["c"]],
+            "labels": [[1, 2], [3]],
+            "text": ["ab", "c"],
+        },
+    )
+    projected = ds._project(table, ("tokens", "labels"))
+    assert projected.column_names == ["tokens", "labels"]
+    assert projected.to_pylist() == [
+        {"tokens": ["a", "b"], "labels": [1, 2]},
+        {"tokens": ["c"], "labels": [3]},
+    ]
 
 
 def test_export_without_datasets_raises_import_error(
@@ -199,3 +244,58 @@ def test_to_hf_iterable_live() -> None:
     iterable = HuggingFaceExporter().to_hf_iterable(source)
     rows = list(iterable)
     assert [row["label"] for row in rows] == ["a", "b"]
+
+
+@pytest.mark.integration
+def test_to_hf_iterable_applies_projection_over_multiple_batches() -> None:
+    pa = pytest.importorskip("pyarrow")
+    pytest.importorskip("datasets")
+
+    def source() -> Iterator[pa.RecordBatch]:
+        yield pa.record_batch({"label": ["a"], "extra": [1]})
+        yield pa.record_batch({"label": ["b", "c"], "extra": [2, 3]})
+
+    spec = ExportSpec(columns=("label",))
+    iterable = HuggingFaceExporter().to_hf_iterable(source, spec=spec)
+    rows = list(iterable)
+    # all batches are concatenated and narrowed to the projected column.
+    assert [row["label"] for row in rows] == ["a", "b", "c"]
+    assert all(set(row) == {"label"} for row in rows)
+
+
+@pytest.mark.integration
+def test_to_hf_iterable_reiterates_via_fresh_source() -> None:
+    # from_generator may drive the source more than once; a factory that returns
+    # a fresh iterator each call yields the same rows on re-iteration.
+    pa = pytest.importorskip("pyarrow")
+    pytest.importorskip("datasets")
+    calls = {"n": 0}
+
+    def source() -> Iterator[pa.RecordBatch]:
+        calls["n"] += 1
+        yield pa.record_batch({"label": ["a", "b"]})
+
+    iterable = HuggingFaceExporter().to_hf_iterable(source)
+    first = [row["label"] for row in iterable]
+    second = [row["label"] for row in iterable]
+    assert first == ["a", "b"]
+    assert second == ["a", "b"]
+    assert calls["n"] >= 2
+
+
+@pytest.mark.integration
+def test_export_nested_sequence_shape_live() -> None:
+    # a nested view with list-typed columns survives export and the list cells
+    # round-trip through the dataset rows.
+    pa = pytest.importorskip("pyarrow")
+    pytest.importorskip("datasets")
+    table = pa.table(
+        {
+            "tokens": [["a", "b"], ["c"]],
+            "labels": [[1, 2], [3]],
+        },
+    )
+    dataset = HuggingFaceExporter().export(table)
+    assert dataset[0]["tokens"] == ["a", "b"]
+    assert dataset[0]["labels"] == [1, 2]
+    assert dataset[1]["tokens"] == ["c"]

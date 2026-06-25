@@ -7,19 +7,22 @@ and MLflow. Requires the ``lairs[tracking]`` extra at runtime.
 Reproducibility comes from the revision id: a logged run records the exact
 commit (or tag) and the vendored lexicon manifest hash that the records were
 generated against, so the dataset behind a run can always be rebuilt. The
-backend libraries are imported lazily inside :func:`log_revision`, so importing
-this module never pulls in ``wandb`` or ``mlflow``.
+revision is validated against the Repository before anything is logged, so a
+typo'd commit id fails loudly rather than pinning confidently-wrong provenance.
+The backend libraries are imported lazily inside their ``_import_*`` gates, so
+importing this module never pulls in ``wandb`` or ``mlflow``.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import tomllib
 from pathlib import Path
+from types import ModuleType  # noqa: TC003  (runtime: return annotation)
 from typing import TYPE_CHECKING
 
 import didactic.api as dx
+import panproto
 
 if TYPE_CHECKING:
     from lairs._types import JsonValue
@@ -116,25 +119,78 @@ def _build_bundle(repo: dx.Repository, revision: str) -> ProvenanceBundle:
     )
 
 
-def _require(backend: str) -> None:
-    """Raise a clear error when a backend's optional dependency is missing.
+def _import_wandb() -> ModuleType:
+    """Import and return the ``wandb`` module, or raise a clear error.
 
-    Parameters
-    ----------
-    backend : str
-        The tracking backend whose import to probe.
+    Returns
+    -------
+    types.ModuleType
+        The imported ``wandb`` module.
 
     Raises
     ------
     ImportError
-        If the backend's package is not installed.
+        When ``wandb`` is not installed.
     """
-    if importlib.util.find_spec(backend) is None:
+    try:
+        import wandb  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover - exercised only without wandb
         msg = (
-            f"the {backend!r} backend needs the optional 'lairs[tracking]' extra; "
-            f"install it with 'pip install lairs[tracking]'"
+            "the 'wandb' backend needs the optional 'lairs[tracking]' extra; "
+            "install it with 'pip install lairs[tracking]'"
         )
-        raise ImportError(msg)
+        raise ImportError(msg) from exc
+    return wandb
+
+
+def _import_mlflow() -> ModuleType:
+    """Import and return the ``mlflow`` module, or raise a clear error.
+
+    Returns
+    -------
+    types.ModuleType
+        The imported ``mlflow`` module.
+
+    Raises
+    ------
+    ImportError
+        When ``mlflow`` is not installed.
+    """
+    try:
+        import mlflow  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover - exercised only without mlflow
+        msg = (
+            "the 'mlflow' backend needs the optional 'lairs[tracking]' extra; "
+            "install it with 'pip install lairs[tracking]'"
+        )
+        raise ImportError(msg) from exc
+    return mlflow
+
+
+def _validate_revision(repo: dx.Repository, revision: str) -> None:
+    """Validate that ``revision`` resolves to a commit in ``repo``.
+
+    Parameters
+    ----------
+    repo : didactic.api.Repository
+        The Repository the revision must resolve in.
+    revision : str
+        The revision (commit id, tag, or branch) to validate.
+
+    Raises
+    ------
+    ValueError
+        When ``revision`` does not resolve to a commit in the Repository, so a
+        typo'd revision fails loudly rather than pinning wrong provenance.
+    """
+    try:
+        repo.resolve_ref(revision)
+    except panproto.VcsError as exc:
+        msg = (
+            f"revision {revision!r} does not resolve to a commit in the "
+            f"Repository at {repo.working_dir}"
+        )
+        raise ValueError(msg) from exc
 
 
 def log_revision(repo: dx.Repository, revision: str, *, backend: str) -> str:
@@ -143,46 +199,56 @@ def log_revision(repo: dx.Repository, revision: str, *, backend: str) -> str:
     The revision itself (not a copy of the data) is recorded together with a
     :class:`ProvenanceBundle`, so a logged run pins the exact commit and the
     vendored lexicon manifest hash that the records were generated against. The
-    backend library is imported lazily, so a missing optional dependency raises a
-    clear error only when that backend is used.
+    revision is validated against the Repository first, so a typo'd commit id
+    raises before anything is logged. The backend library is imported lazily, so
+    a missing optional dependency raises a clear error only when that backend is
+    used.
 
     Parameters
     ----------
     repo : didactic.api.Repository
         The Repository holding the revision.
     revision : str
-        The revision (commit or tag) to log.
+        The revision (commit id, tag, or branch) to log. It must resolve to a
+        commit in ``repo``.
     backend : str
         The tracking backend (``"wandb"`` or ``"mlflow"``).
 
     Returns
     -------
     str
-        The tracked artifact identifier.
+        The tracked artifact identifier, as ``"lairs-revision:<revision>"``.
 
     Raises
     ------
     ValueError
-        If ``backend`` is not a recognised tracking backend.
+        If ``backend`` is not a recognised tracking backend, or ``revision``
+        does not resolve to a commit in the Repository.
     ImportError
         If the backend's optional dependency is not installed.
+    RuntimeError
+        For the ``"wandb"`` backend, when there is no active run to log into.
     """
     if backend not in _VALID_BACKENDS:
         valid = sorted(_VALID_BACKENDS)
         msg = f"unknown tracking backend {backend!r}; expected one of {valid}"
         raise ValueError(msg)
-    _require(backend)
-    bundle = _build_bundle(repo, revision)
     if backend == _BACKEND_WANDB:
-        return _log_wandb(bundle)
-    return _log_mlflow(bundle)
+        wandb = _import_wandb()
+        _validate_revision(repo, revision)
+        return _log_wandb(wandb, _build_bundle(repo, revision))
+    mlflow = _import_mlflow()
+    _validate_revision(repo, revision)
+    return _log_mlflow(mlflow, _build_bundle(repo, revision))
 
 
-def _log_wandb(bundle: ProvenanceBundle) -> str:
+def _log_wandb(wandb: ModuleType, bundle: ProvenanceBundle) -> str:
     """Log a provenance bundle to Weights & Biases as an artifact.
 
     Parameters
     ----------
+    wandb : types.ModuleType
+        The imported ``wandb`` module.
     bundle : ProvenanceBundle
         The provenance to record.
 
@@ -190,22 +256,33 @@ def _log_wandb(bundle: ProvenanceBundle) -> str:
     -------
     str
         The logged artifact name and revision, as ``"name:revision"``.
-    """
-    import wandb  # noqa: PLC0415
 
+    Raises
+    ------
+    RuntimeError
+        When there is no active ``wandb`` run; the artifact would otherwise be
+        built but never persisted, silently dropping the run provenance.
+    """
+    run = wandb.run
+    if run is None:
+        msg = (
+            'log_revision(backend="wandb") requires an active wandb run; '
+            "call wandb.init() first"
+        )
+        raise RuntimeError(msg)
     metadata: dict[str, JsonValue] = json.loads(bundle.model_dump_json())
     artifact = wandb.Artifact(_ARTIFACT_NAME, type="dataset", metadata=metadata)
-    run = wandb.run
-    if run is not None:
-        run.log_artifact(artifact)
+    run.log_artifact(artifact)
     return f"{_ARTIFACT_NAME}:{bundle.revision}"
 
 
-def _log_mlflow(bundle: ProvenanceBundle) -> str:
+def _log_mlflow(mlflow: ModuleType, bundle: ProvenanceBundle) -> str:
     """Log a provenance bundle to MLflow as run parameters and a tag.
 
     Parameters
     ----------
+    mlflow : types.ModuleType
+        The imported ``mlflow`` module.
     bundle : ProvenanceBundle
         The provenance to record.
 
@@ -214,8 +291,6 @@ def _log_mlflow(bundle: ProvenanceBundle) -> str:
     str
         The logged artifact name and revision, as ``"name:revision"``.
     """
-    import mlflow  # noqa: PLC0415
-
     params: dict[str, JsonValue] = json.loads(bundle.model_dump_json())
     mlflow.log_params(params)
     mlflow.set_tag(_ARTIFACT_NAME, bundle.revision)

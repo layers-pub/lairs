@@ -10,11 +10,13 @@ import asyncio
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import pytest
 from textual.widgets import DataTable, Input, RadioSet, TabbedContent, TextArea, Tree
 
 from lairs.discovery.cards import CardFreshness, CardProvenance, DatasetCard
 from lairs.discovery.models import DatasetSummary
 from lairs.tui.app import HelpScreen, LairsApp
+from lairs.tui.query import QueryError
 from lairs.tui.screens.explore import (
     ExplorePane,
     _card_markdown,
@@ -387,5 +389,26 @@ def test_query_without_corpus_is_inert() -> None:
             pane.action_run()
             await pilot.pause()
             assert app.query_one("#qresults", DataTable).row_count == 0
+
+    asyncio.run(scenario())
+
+
+def test_query_pane_closes_engine_on_unmount(corpus_dir: Path) -> None:
+    """Unmounting the Query pane closes its DuckDB connection (no leak)."""
+
+    async def scenario() -> None:
+        app = LairsApp(data_path=str(corpus_dir))
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            app.query_one(TabbedContent).active = "query"
+            await pilot.pause()
+            pane = app.query_one(QueryPane)
+            engine = pane._engine
+            assert engine is not None
+            pane.on_unmount()
+            # the engine is released and its connection is closed.
+            assert pane._engine is None
+            with pytest.raises(QueryError):
+                engine.run_sql("SELECT 1")
 
     asyncio.run(scenario())

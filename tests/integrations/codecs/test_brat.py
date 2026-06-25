@@ -14,9 +14,11 @@ from lairs.integrations.codecs.brat import (
     BratIso,
     _Attribute,
     _Entity,
+    _parse_entity,
     _Relation,
     _Standoff,
     canonical_standoff,
+    split_standoff,
 )
 from lairs.integrations.ports import Codec
 
@@ -73,13 +75,15 @@ def test_decode_attributes_become_features() -> None:
     assert {"key": "Confidence", "value": "high"} in entries
 
 
-def test_decode_binary_flag_attribute_is_true() -> None:
+def test_decode_binary_flag_attribute_uses_flag_sentinel() -> None:
+    # a brat binary flag (no value) is carried as an empty feature value so it
+    # cannot collide with a genuine value such as the literal "true".
     fragment = BratCodec().decode(_SRC)
     entities = next(r for r in fragment.records if r.local_id == "entities")
     layer = json.loads(entities.value_json)
     obama = layer["annotations"][0]
     entries = obama["features"]["entries"]
-    assert {"key": "Negation", "value": "true"} in entries
+    assert {"key": "Negation", "value": ""} in entries
 
 
 def test_decode_relation_arguments() -> None:
@@ -95,6 +99,89 @@ def test_decode_relation_arguments() -> None:
 def test_decode_accepts_bytes() -> None:
     fragment = BratCodec().decode(_SRC.encode("utf-8"))
     assert fragment.records[0].local_id == "expression"
+
+
+def test_encode_returns_str() -> None:
+    # the Codec port permits bytes or str; the brat codec always emits str.
+    fragment = BratCodec().decode(_SRC)
+    assert isinstance(BratCodec().encode(fragment.records), str)
+
+
+def test_decode_discontinuous_entity_collapses_to_enclosing_span() -> None:
+    # a fragmented entity (Type 0 5;8 12) is collapsed to the enclosing span.
+    fragment = BratCodec().decode(
+        "abcdefghijklm\n===ANN===\nT1\tFrag 0 5;8 12\tabcde lm"
+    )
+    entities = next(r for r in fragment.records if r.local_id == "entities")
+    layer = json.loads(entities.value_json)
+    span = layer["annotations"][0]["anchor"]["textSpan"]
+    assert span["byteStart"] == 0
+    assert span["byteEnd"] == 12
+
+
+def test_parse_entity_handles_single_and_fragmented_offsets() -> None:
+    single = _parse_entity("T1\tType 3 7\tword")
+    assert single is not None
+    assert (single.byte_start, single.byte_end) == (3, 7)
+    fragmented = _parse_entity("T2\tType 3 7;10 14\tword frag")
+    assert fragmented is not None
+    assert (fragmented.byte_start, fragmented.byte_end) == (3, 14)
+
+
+def test_parse_entity_rejects_malformed_offsets() -> None:
+    assert _parse_entity("T1\tType notanumber 7\tword") is None
+    assert _parse_entity("T1\tType 3\tword") is None
+
+
+def test_decode_skips_unsupported_line_kinds() -> None:
+    # event, normalisation, equivalence, and note lines are silently dropped;
+    # the supported T line still decodes.
+    src = (
+        "x\n===ANN===\n"
+        "T1\tType 0 1\tx\n"
+        "E1\tType:T1\n"
+        "N1\tReference T1 Wikipedia:123\n"
+        "*\tEquiv T1 T1\n"
+        "#1\tAnnotatorNotes T1\ta note"
+    )
+    fragment = BratCodec().decode(src)
+    entities = next(r for r in fragment.records if r.local_id == "entities")
+    layer = json.loads(entities.value_json)
+    assert len(layer["annotations"]) == 1
+    assert "relations" not in [r.local_id for r in fragment.records]
+
+
+def test_attribute_value_true_round_trips_distinct_from_flag() -> None:
+    # a binary flag and an attribute whose value is literally "true" must not
+    # collapse onto each other through encode/decode.
+    src = "word\n===ANN===\nT1\tType 0 4\tword\nA1\tFlag T1\nA2\tStatus T1 true"
+    codec = BratCodec()
+    once = codec.decode(src)
+    twice = codec.decode(codec.encode(once.records))
+    assert once == twice
+    entities = next(r for r in twice.records if r.local_id == "entities")
+    layer = json.loads(entities.value_json)
+    entries = layer["annotations"][0]["features"]["entries"]
+    by_key = {entry["key"]: entry["value"] for entry in entries}
+    assert by_key["Flag"] == ""
+    assert by_key["Status"] == "true"
+
+
+def test_split_standoff_recovers_txt_and_ann_halves() -> None:
+    codec = BratCodec()
+    encoded = codec.encode(codec.decode(_SRC).records)
+    txt, ann = split_standoff(encoded)
+    assert txt == _TXT
+    assert ann == _ANN
+
+
+def test_split_standoff_accepts_bytes_and_bare_ann() -> None:
+    txt, ann = split_standoff(b"doc\n===ANN===\nT1\tType 0 1\td")
+    assert txt == "doc"
+    assert ann == "T1\tType 0 1\td"
+    bare_txt, bare_ann = split_standoff("T1\tType 0 1\td")
+    assert bare_txt == ""
+    assert bare_ann == "T1\tType 0 1\td"
 
 
 def test_decode_into_extends_existing_fragment() -> None:

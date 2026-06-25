@@ -8,18 +8,18 @@ unreachable actor does not abort the sweep.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import TYPE_CHECKING
 
 import httpx
 
-from lairs.atproto.identity import IdentityError
+from lairs.atproto.identity import IdentityError, IdentityResolver
 from lairs.discovery.actor import list_datasets
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from lairs.atproto.appview import AppviewClient
-    from lairs.atproto.identity import IdentityResolver
     from lairs.atproto.pds import PdsClient
     from lairs.discovery.models import DatasetFilter, DatasetSummary
 
@@ -38,12 +38,15 @@ def discover_datasets(  # noqa: PLR0913  (optional source knobs plus injection s
 ) -> tuple[DatasetSummary, ...]:
     """List datasets across a seed of actors, deduplicated by corpus AT-URI.
 
-    Each actor is listed through :func:`lairs.discovery.actor.list_datasets`;
-    a shared resolver caches identity lookups across the seed. Duplicate corpora
-    (the same AT-URI seen via more than one actor or source) collapse to the
-    first occurrence. A per-actor transport or resolution failure is skipped, so
-    the sweep is best-effort; a ``ValueError`` (an unknown source or a missing
-    endpoint) propagates.
+    Each actor is listed through :func:`lairs.discovery.actor.list_datasets`.
+    A single resolver is shared across the whole seed so identity lookups (handle
+    to DID, and the DID document that carries the PDS endpoint) are cached and the
+    underlying HTTP client is opened once: an injected ``resolver`` is reused as
+    is, and when none is given a throwaway resolver is created for the sweep and
+    closed before returning. Duplicate corpora (the same AT-URI seen via more than
+    one actor or source) collapse to the first occurrence. A per-actor transport
+    or resolution failure is skipped, so the sweep is best-effort; a ``ValueError``
+    (an unknown source or a missing endpoint) propagates.
 
     Parameters
     ----------
@@ -68,23 +71,26 @@ def discover_datasets(  # noqa: PLR0913  (optional source knobs plus injection s
         The merged, deduplicated summaries, in seed-then-corpus order.
     """
     merged: dict[str, DatasetSummary] = {}
-    for actor in actors:
-        try:
-            rows = list_datasets(
-                actor,
-                source=source,
-                appview=appview,
-                filters=filters,
-                resolver=resolver,
-                pds_client=pds_client,
-                appview_client=appview_client,
-            )
-        except httpx.HTTPError, IdentityError:
-            # best-effort fan-out: skip an unreachable or unresolvable actor.
-            continue
-        for row in rows:
-            if row.uri not in merged:
-                merged[row.uri] = row
+    owns_resolver = resolver is None
+    shared = IdentityResolver() if owns_resolver else nullcontext(resolver)
+    with shared as active:
+        for actor in actors:
+            try:
+                rows = list_datasets(
+                    actor,
+                    source=source,
+                    appview=appview,
+                    filters=filters,
+                    resolver=active,
+                    pds_client=pds_client,
+                    appview_client=appview_client,
+                )
+            except httpx.HTTPError, IdentityError:
+                # best-effort fan-out: skip an unreachable or unresolvable actor.
+                continue
+            for row in rows:
+                if row.uri not in merged:
+                    merged[row.uri] = row
     return tuple(merged.values())
 
 

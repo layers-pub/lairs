@@ -334,6 +334,22 @@ def test_cql_truncates(corpus_dir: Path) -> None:
     assert result.truncated is True
 
 
+@pytest.mark.parametrize("quantifier", ["*", "+", "?", "{2}"])
+def test_cql_rejects_repetition_quantifier(corpus_dir: Path, quantifier: str) -> None:
+    # an unsupported quantifier must fail loudly, not be silently dropped and run
+    # the block as a single required token.
+    query = f'[label="DET"] [label="ADJ"]{quantifier} [label="NOUN"]'
+    with pytest.raises(CqlError, match="quantifier"):
+        QueryEngine.open(corpus_dir).cql(query)
+
+
+def test_cql_quantifier_rejected_before_running(corpus_dir: Path) -> None:
+    # the documented [DET] [ADJ]* [NOUN] example is rejected rather than treated
+    # as three mandatory tokens (which would wrongly match L1's DET ADJ ... ADJ).
+    with pytest.raises(CqlError, match="not supported"):
+        QueryEngine.open(corpus_dir).cql('[label="DET"] [label="ADJ"]* [label="NOUN"]')
+
+
 # ---- result models / lifecycle -------------------------------------------
 
 

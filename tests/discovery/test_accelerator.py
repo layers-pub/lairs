@@ -27,6 +27,8 @@ def _card(  # noqa: PLR0913  (a test builder with many optional card facets)
     license_id: str | None = None,
     expression_count: int | None = None,
     description: str | None = None,
+    quality_metrics: tuple[str, ...] = (),
+    annotation_rounds: int | None = None,
 ) -> DatasetCard:
     summary = DatasetSummary(
         uri=f"at://did:plc:x/pub.layers.corpus.corpus/{name}",
@@ -46,6 +48,8 @@ def _card(  # noqa: PLR0913  (a test builder with many optional card facets)
             discovered_via="seed",
         ),
         freshness=CardFreshness(first_seen_at=_NOW, last_updated_at=_NOW),
+        quality_metrics=quality_metrics,
+        annotation_rounds=annotation_rounds,
     )
 
 
@@ -115,3 +119,75 @@ def test_accelerated_no_match_returns_empty(tmp_path: Path) -> None:
     index = _seeded_index(tmp_path)
     hits = search_accelerated(index, SearchQuery(domain="news"), out_dir=tmp_path / "a")
     assert hits == []
+
+
+def test_accelerated_license_matches_in_memory(tmp_path: Path) -> None:
+    # "license" is a SQL reserved word; the pre-filter quotes the identifier.
+    _assert_parity(
+        _seeded_index(tmp_path),
+        SearchQuery(license="CC-BY-4.0"),
+        tmp_path / "a",
+    )
+
+
+def test_accelerated_max_expressions_matches_in_memory(tmp_path: Path) -> None:
+    _assert_parity(
+        _seeded_index(tmp_path),
+        SearchQuery(max_expressions=100),
+        tmp_path / "a",
+    )
+
+
+def test_accelerated_text_hits_description_matches_in_memory(tmp_path: Path) -> None:
+    # "weather" appears only in a description, not a name, exercising the
+    # combined name-OR-description text clause.
+    _assert_parity(_seeded_index(tmp_path), SearchQuery(text="weather"), tmp_path / "a")
+
+
+def test_accelerated_combined_facets_matches_in_memory(tmp_path: Path) -> None:
+    _assert_parity(
+        _seeded_index(tmp_path),
+        SearchQuery(text="corpus", license="CC-BY-4.0", max_expressions=100),
+        tmp_path / "a",
+    )
+
+
+def _metric_index(tmp_path: Path) -> DiscoveryIndex:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    index.put_card(
+        _card(
+            "kappa corpus",
+            domain="scientific",
+            expression_count=100,
+            quality_metrics=("cohen-kappa",),
+            annotation_rounds=3,
+        ),
+    )
+    index.put_card(
+        _card(
+            "plain corpus",
+            domain="scientific",
+            expression_count=100,
+        ),
+    )
+    return index
+
+
+def test_accelerated_annotation_metric_matches_in_memory(tmp_path: Path) -> None:
+    # annotation_metric is not a Parquet column, so the pre-filter keeps both
+    # cards and the final in-memory search applies the exact metric predicate.
+    index = _metric_index(tmp_path)
+    query = SearchQuery(annotation_metric="cohen-kappa")
+    _assert_parity(index, query, tmp_path / "a")
+    hits = search_accelerated(index, query, out_dir=tmp_path / "b")
+    assert _uris(hits) == ["at://did:plc:x/pub.layers.corpus.corpus/kappa corpus"]
+
+
+def test_accelerated_min_rounds_matches_in_memory(tmp_path: Path) -> None:
+    # min_annotation_rounds is also not materialized to Parquet; the relaxation
+    # must still match the in-memory search exactly.
+    index = _metric_index(tmp_path)
+    query = SearchQuery(min_annotation_rounds=2)
+    _assert_parity(index, query, tmp_path / "a")
+    hits = search_accelerated(index, query, out_dir=tmp_path / "b")
+    assert _uris(hits) == ["at://did:plc:x/pub.layers.corpus.corpus/kappa corpus"]

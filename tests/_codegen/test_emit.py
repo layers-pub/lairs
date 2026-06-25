@@ -113,3 +113,74 @@ def test_emission_is_deterministic() -> None:
     first = emit_module([_model("Demo", fields)], manifest_hash=_HASH)
     second = emit_module([_model("Demo", fields)], manifest_hash=_HASH)
     assert first == second
+
+
+def test_overlong_description_keeps_an_e501_suppression() -> None:
+    long_text = "word " * 40
+    fields = (
+        FieldSpec(name="text", type_kind="str", required=True, description=long_text),
+    )
+    text = emit_module([_model("Demo", fields)], manifest_hash=_HASH)
+    over_length = [
+        line
+        for line in text.split("\n")
+        if "word word" in line and len(line) > 88 and "# noqa: E501" not in line
+    ]
+    assert over_length == []
+    assert "# noqa: E501" in text
+
+
+def test_quote_and_backslash_in_description_are_escaped(tmp_path: Path) -> None:
+    fields = (
+        FieldSpec(
+            name="text",
+            type_kind="str",
+            required=True,
+            description='a "quoted" path C:\\x and a """ triple',
+        ),
+    )
+    text = emit_module([_model("Demo", fields)], manifest_hash=_HASH)
+    # the emitted module imports cleanly, proving the escaping is valid python
+    module = _load_module(text, tmp_path, "emit_escape_module")
+    spec = module.Demo.__field_specs__["text"]
+    assert spec.description == 'a "quoted" path C:\\x and a """ triple'
+
+
+def test_optional_array_emits_default_factory_tuple(tmp_path: Path) -> None:
+    item = FieldSpec(name="tag", type_kind="str", required=True)
+    fields = (FieldSpec(name="tags", type_kind="array", item=item),)
+    text = emit_module([_model("Demo", fields)], manifest_hash=_HASH)
+    assert "default_factory=tuple," in text
+    module = _load_module(text, tmp_path, "emit_array_default_module")
+    assert module.Demo().tags == ()
+
+
+def test_bytes_field_emits_opaque(tmp_path: Path) -> None:
+    fields = (FieldSpec(name="payload", type_kind="bytes", required=True),)
+    text = emit_module([_model("Demo", fields)], manifest_hash=_HASH)
+    assert "opaque=True," in text
+    module = _load_module(text, tmp_path, "emit_bytes_module")
+    instance = module.Demo(payload=b"abc")
+    assert module.Demo.model_validate(instance.model_dump()) == instance
+
+
+def test_array_of_embed_element_annotation(tmp_path: Path) -> None:
+    item = FieldSpec(name="inner", type_kind="embed", target="Inner", required=True)
+    holder_fields = (FieldSpec(name="inners", type_kind="array", item=item),)
+    holder = ModelSpec(
+        name="Holder",
+        nsid="pub.layers.demo.demo",
+        def_name="holder",
+        fields=holder_fields,
+    )
+    inner = ModelSpec(
+        name="Inner",
+        nsid="pub.layers.demo.demo",
+        def_name="inner",
+        fields=(FieldSpec(name="x", type_kind="str", required=True),),
+    )
+    text = emit_module([inner, holder], manifest_hash=_HASH)
+    assert "tuple[dx.Embed[Inner], ...]" in text
+    module = _load_module(text, tmp_path, "emit_array_embed_module")
+    instance = module.Holder(inners=(module.Inner(x="a"),))
+    assert module.Holder.model_validate(instance.model_dump()) == instance

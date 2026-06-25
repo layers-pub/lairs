@@ -9,6 +9,7 @@ millisecond-to-sample math and slicing are pure Python and need no extra.
 
 from __future__ import annotations
 
+import io
 from typing import TYPE_CHECKING
 
 import didactic.api as dx
@@ -140,14 +141,14 @@ def decode_audio(handle: MediaHandle) -> AudioBuffer:
         msg = "media handle has no bytes to decode; resolve it first"
         raise ValueError(msg)
     try:
-        import io  # noqa: PLC0415
-
         import soundfile  # noqa: PLC0415
     except ModuleNotFoundError as exc:  # pragma: no cover - exercised via test patch
         msg = "audio decoding requires the lairs[audio] extra (soundfile)"
         raise ModuleNotFoundError(msg) from exc
     data, rate = soundfile.read(io.BytesIO(handle.data), always_2d=True)
-    channels = len(data[0]) if len(data) else 1
+    # always_2d gives shape (frames, channels); take the channel count from the
+    # trailing shape axis so it is correct even for a zero-frame (empty) decode.
+    channels = int(data.shape[-1]) if data.shape[-1] else 1
     flat: list[float] = [float(value) for row in data for value in row]
     return AudioBuffer(sample_rate=int(rate), channels=channels, samples=tuple(flat))
 

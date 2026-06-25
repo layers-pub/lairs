@@ -19,11 +19,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal, Protocol
 
 import didactic.api as dx
+import pyarrow as pa
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-    import pyarrow as pa
     from datasets import (
         Dataset,
         IterableDataset,
@@ -290,8 +290,14 @@ def _hf_dtype_token(token: str) -> str:
     """Return the HuggingFace ``Value`` dtype for a lairs feature token.
 
     Sequence tokens (``sequence<inner>``) are reduced to their inner token's
-    dtype; the caller wraps that in a ``datasets.Sequence`` when building the
-    feature. Unknown tokens degrade to ``"string"`` so the mapping is total.
+    dtype; the caller wraps that in a single ``datasets.Sequence`` when building
+    the feature. Multi-level sequences (``sequence<sequence<...>>``) recurse
+    through every wrapper to the innermost scalar, so a nested-list column is
+    represented as a single-level ``Sequence`` of that scalar rather than a
+    nested ``Sequence`` of ``Sequence``; the Layers flattened views never emit
+    nested-list columns, so this flattening is a documented degradation rather
+    than a reachable shape. ``struct`` and any unknown token degrade to
+    ``"string"`` (a JSON string column) so the mapping is total.
 
     Parameters
     ----------
@@ -400,11 +406,18 @@ class HuggingFaceExporter:
         scan, so a large corpus trains without a full download. Each batch is
         narrowed by the spec's column projection before its rows are yielded.
 
+        ``datasets.IterableDataset.from_generator`` may invoke the underlying
+        generator more than once (re-iteration, multi-epoch training), so
+        ``source`` must yield a *fresh* iterator on each call. A one-shot factory
+        that returns an already-consumed iterator on a later call yields no rows
+        on re-iteration; callers driving a cursor must reset it per call.
+
         Parameters
         ----------
         source : collections.abc.Callable
             A zero-argument factory returning a fresh iterator of Arrow record
-            batches.
+            batches. Called once per iteration of the resulting dataset, so it
+            must return a fresh iterator each time.
         spec : ExportSpec or None, optional
             An optional export specification (column projection).
 
@@ -457,7 +470,13 @@ def _import_datasets() -> _DatasetsModule:
 
 
 def _project(view: pa.Table, columns: tuple[str, ...] | None) -> pa.Table:
-    """Return the view narrowed to ``columns`` (in order), skipping absent ones.
+    """Return the view narrowed to ``columns`` (in order).
+
+    Every requested column must be present in the view: a projection naming a
+    column the view lacks (a typo in :attr:`ExportSpec.columns` or a task
+    template column the flattened view never produced) is a caller error and is
+    raised rather than silently narrowing the dataset. This mirrors the
+    selection contract of the sibling :mod:`lairs.integrations.torch` exporter.
 
     Parameters
     ----------
@@ -470,11 +489,20 @@ def _project(view: pa.Table, columns: tuple[str, ...] | None) -> pa.Table:
     -------
     pyarrow.Table
         The projected table; the original table when ``columns`` is ``None``.
+
+    Raises
+    ------
+    KeyError
+        When any requested column is absent from the view.
     """
     if columns is None:
         return view
-    present = [name for name in columns if name in view.column_names]
-    return view.select(present)
+    available = set(view.column_names)
+    missing = [name for name in columns if name not in available]
+    if missing:
+        msg = f"columns not in view: {sorted(missing)}"
+        raise KeyError(msg)
+    return view.select(list(columns))
 
 
 def _project_batch(
@@ -495,7 +523,5 @@ def _project_batch(
     pyarrow.Table
         The projected single-batch table.
     """
-    import pyarrow as pa  # noqa: PLC0415 - lazy: keep pyarrow imports local to the data path
-
     table = pa.Table.from_batches([batch])
     return _project(table, columns)

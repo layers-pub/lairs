@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 __all__ = [
     "Session",
     "SessionAuth",
+    "SessionRenewalError",
     "SessionStore",
     "authed_client",
     "login",
@@ -86,6 +87,18 @@ class Session(dx.Model):
         default=None,
         description="app password retained for re-authentication",
     )
+
+
+class SessionRenewalError(httpx.HTTPError):
+    """Raised when a 401 cannot be recovered by renewing the session.
+
+    This is raised by ``SessionAuth`` when the access token is rejected and
+    neither ``refreshSession`` nor a stored-password ``createSession`` login
+    can mint a fresh token. It subclasses ``httpx.HTTPError`` so a caller that
+    already catches transport errors catches it too. Raising rather than
+    re-sending the original request means a non-idempotent write whose renewal
+    fails is attempted against the target endpoint exactly once.
+    """
 
 
 def _xrpc(endpoint: str, nsid: str) -> str:
@@ -198,16 +211,32 @@ class SessionAuth(httpx.Auth):
     ) -> Generator[httpx.Request, httpx.Response]:
         """Attach the access token, renewing it once on a 401.
 
-        The original request is always retried after a renewal attempt so the
-        response the caller receives is the target endpoint's, not an
-        intermediate refresh response. On a failed renewal the retry reuses the
-        unchanged token and the endpoint's 401 stands.
+        The original request is retried only when renewal actually rotated the
+        access token, so the response the caller receives is the target
+        endpoint's and not an intermediate refresh response. When renewal does
+        not yield a new token (a dead refresh token and no stored password) the
+        request is not re-sent with the unchanged stale token; instead a
+        ``SessionRenewalError`` is raised. This means a non-idempotent write
+        whose renewal fails is attempted against the target endpoint exactly
+        once rather than twice.
+
+        Raises
+        ------
+        SessionRenewalError
+            If the access token is rejected and renewal mints no new token.
         """
         request.headers["Authorization"] = f"Bearer {self.session.access_jwt}"
         response = yield request
         if response.status_code != httpx.codes.UNAUTHORIZED:
             return
+        previous_token = self.session.access_jwt
         yield from self._renew()
+        if self.session.access_jwt == previous_token:
+            msg = (
+                f"session renewal failed for {self.session.did}: "
+                "the access token was rejected and no fresh token could be minted"
+            )
+            raise SessionRenewalError(msg)
         request.headers["Authorization"] = f"Bearer {self.session.access_jwt}"
         yield request
 

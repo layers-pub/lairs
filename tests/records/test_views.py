@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
+import didactic.api as dx
+
 from lairs.records import views
 from lairs.records._generated import annotation, defs
 
@@ -83,3 +85,56 @@ def test_explode_layer_rows_are_json_valued() -> None:
     rows = list(views.explode_layer(_layer()))
     # the rows serialise without custom encoders, confirming they are json-shaped
     assert json.loads(json.dumps(rows)) == rows
+
+
+def test_anchor_kind_none_for_non_mapping_row() -> None:
+    assert views._anchor_kind_of_row("not a mapping") == "none"
+
+
+def test_anchor_kind_falls_back_to_unknown_property() -> None:
+    # an anchor row that sets only a property outside the known anchor set
+    # still names a kind via the tolerant sorted-keys fallback
+    row = {"futureKind": {"value": 1}, "zlast": None}
+    assert views._anchor_kind_of_row(row) == "futureKind"
+
+
+def test_anchor_kind_known_property_wins_over_fallback() -> None:
+    row = {"futureKind": {"value": 1}, "textSpan": {"byteStart": 0, "byteEnd": 1}}
+    assert views._anchor_kind_of_row(row) == "textSpan"
+
+
+class _LayerWithoutAnnotations(dx.Model):
+    """A layer-shaped model whose annotations field is absent."""
+
+    kind: str = dx.field(description="the layer kind")
+
+
+class _LayerWithScalarAnnotations(dx.Model):
+    """A layer-shaped model whose annotations field is not a list."""
+
+    annotations: str = dx.field(description="a non-list annotations value")
+
+
+class _LayerWithScalarEntries(dx.Model):
+    """A layer-shaped model whose annotations entries are non-dict scalars."""
+
+    annotations: tuple[int, ...] = dx.field(
+        default_factory=tuple,
+        description="non-dict annotation entries",
+    )
+
+
+def test_explode_layer_yields_nothing_when_annotations_absent() -> None:
+    layer = _LayerWithoutAnnotations(kind="token-tag")
+    assert list(views.explode_layer(layer)) == []
+
+
+def test_explode_layer_yields_nothing_when_annotations_not_a_list() -> None:
+    layer = _LayerWithScalarAnnotations(annotations="oops")
+    assert list(views.explode_layer(layer)) == []
+
+
+def test_explode_layer_skips_non_dict_annotation_entries() -> None:
+    # entries that dump to non-dict scalars are skipped by the per-entry guard
+    layer = _LayerWithScalarEntries(annotations=(1, 2, 3))
+    assert list(views.explode_layer(layer)) == []

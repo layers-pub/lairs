@@ -6,10 +6,15 @@ signal buffer is a didactic model carrying per-channel samples in an opaque
 field. The decode path requires the ``lairs[neural]`` extra (``mne``) at
 runtime, but the millisecond-to-window math and slicing are pure Python and
 need no extra.
+
+``decode_signal`` dispatches on the handle's MIME type to the matching ``mne``
+reader and temp-file suffix (FIF, EDF, BDF, EEGLAB SET, BrainVision). A MIME
+type ``mne`` cannot read raises a clear error rather than being mis-read as FIF.
 """
 
 from __future__ import annotations
 
+import tempfile
 from typing import TYPE_CHECKING
 
 import didactic.api as dx
@@ -27,6 +32,54 @@ __all__ = [
     "select_channels",
     "window_by_temporal",
 ]
+
+# MIME type (lowercased) -> (mne reader attribute, temp-file suffix). The MIME
+# vocabulary for biosignal formats is not standardized, so common variants and
+# the bare extension-style tokens are all mapped to the same reader.
+_SIGNAL_READERS: dict[str, tuple[str, str]] = {
+    "application/x-fif": ("read_raw_fif", "_raw.fif"),
+    "application/fif": ("read_raw_fif", "_raw.fif"),
+    "application/x-edf": ("read_raw_edf", ".edf"),
+    "application/edf": ("read_raw_edf", ".edf"),
+    "application/x-bdf": ("read_raw_bdf", ".bdf"),
+    "application/bdf": ("read_raw_bdf", ".bdf"),
+    "application/x-eeglab": ("read_raw_eeglab", ".set"),
+    "application/set": ("read_raw_eeglab", ".set"),
+    "application/x-brainvision": ("read_raw_brainvision", ".vhdr"),
+    "application/brainvision": ("read_raw_brainvision", ".vhdr"),
+}
+
+# bare format/extension tokens recovered from a MIME subtype, for handles whose
+# mime_type is a generic octet-stream carrying only the format name.
+_SIGNAL_SUFFIX_READERS: dict[str, tuple[str, str]] = {
+    "fif": ("read_raw_fif", "_raw.fif"),
+    "edf": ("read_raw_edf", ".edf"),
+    "bdf": ("read_raw_bdf", ".bdf"),
+    "set": ("read_raw_eeglab", ".set"),
+    "vhdr": ("read_raw_brainvision", ".vhdr"),
+    "brainvision": ("read_raw_brainvision", ".vhdr"),
+}
+
+
+def _reader_for(mime_type: str) -> tuple[str, str]:
+    """Return the ``mne`` reader attribute and temp suffix for a MIME type.
+
+    Raises
+    ------
+    ValueError
+        If no ``mne`` reader is known for the MIME type.
+    """
+    token = mime_type.strip().lower()
+    if token in _SIGNAL_READERS:
+        return _SIGNAL_READERS[token]
+    subtype = token.rsplit("/", 1)[-1].removeprefix("x-")
+    if subtype in _SIGNAL_SUFFIX_READERS:
+        return _SIGNAL_SUFFIX_READERS[subtype]
+    msg = (
+        f"no signal reader for MIME type {mime_type!r}; supported formats are "
+        "FIF, EDF, BDF, EEGLAB SET, and BrainVision"
+    )
+    raise ValueError(msg)
 
 
 class SignalBuffer(dx.Model):
@@ -88,8 +141,14 @@ def decode_signal(handle: MediaHandle) -> SignalBuffer:
     """Decode a media handle into a multi-channel signal buffer.
 
     Decoding uses ``mne`` (the ``lairs[neural]`` extra), imported lazily so
-    importing this module never pulls in the heavy dependency. The raw bytes are
-    written to a temporary file because ``mne`` readers operate on paths.
+    importing this module never pulls in the heavy dependency. The handle's MIME
+    type selects the matching ``mne`` reader (FIF, EDF, BDF, EEGLAB SET, or
+    BrainVision) and temp-file suffix; the raw bytes are written to a temporary
+    file because ``mne`` readers operate on paths.
+
+    The temporary file is created, written, closed, read, and then removed
+    explicitly (rather than read while still open) so the path can be reopened by
+    ``mne`` on platforms that do not allow concurrent reopen of an open temp file.
 
     Parameters
     ----------
@@ -106,24 +165,27 @@ def decode_signal(handle: MediaHandle) -> SignalBuffer:
     ModuleNotFoundError
         If the ``lairs[neural]`` extra (``mne``) is not installed.
     ValueError
-        If the handle carries no bytes to decode.
+        If the handle carries no bytes to decode, or its MIME type names a
+        format no ``mne`` reader supports.
     """
     if not handle.data:
         msg = "media handle has no bytes to decode; resolve it first"
         raise ValueError(msg)
+    reader_name, suffix = _reader_for(handle.mime_type)
     try:
-        import tempfile  # noqa: PLC0415
-
         import mne  # noqa: PLC0415
     except ModuleNotFoundError as exc:  # pragma: no cover - exercised via test patch
         msg = "signal decoding requires the lairs[neural] extra (mne)"
         raise ModuleNotFoundError(msg) from exc
-    # use the canonical mne raw suffix so the reader does not warn about the
-    # temporary filename not matching its naming conventions.
-    with tempfile.NamedTemporaryFile(suffix="_raw.fif") as tmp:
+    read_raw = getattr(mne.io, reader_name)
+    # close the temp file before mne reopens it by name: some platforms do not
+    # permit reopening a NamedTemporaryFile while the original handle is open.
+    # delete_on_close=False keeps the file on disk after close so mne can read
+    # it, while the context manager still removes it on exit.
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete_on_close=False) as tmp:
         tmp.write(handle.data)
-        tmp.flush()
-        raw = mne.io.read_raw_fif(tmp.name, preload=True, verbose=False)
+        tmp.close()
+        raw = read_raw(tmp.name, preload=True, verbose=False)
     data = raw.get_data()
     channels = tuple(str(name) for name in raw.ch_names)
     samples = tuple(tuple(float(value) for value in row) for row in data)

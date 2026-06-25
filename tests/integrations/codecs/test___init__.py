@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 from lairs.integrations import codecs
 from lairs.integrations.codecs import CorpusFragment, FragmentRecord
 from lairs.integrations.ports import Codec
@@ -9,7 +14,29 @@ from lairs.integrations.registry import available, get_codec
 
 
 def test_exports() -> None:
-    assert set(codecs.__all__) == {"CorpusFragment", "FragmentRecord"}
+    assert set(codecs.__all__) == {
+        "BratCodec",
+        "BratIso",
+        "ConlluCodec",
+        "ConlluIso",
+        "CorpusFragment",
+        "FragmentRecord",
+    }
+
+
+def test_reference_codecs_reachable_from_package() -> None:
+    # every public codec and Iso is importable from the package surface, not
+    # only from the private-looking submodules.
+    for name in ("BratCodec", "BratIso", "ConlluCodec", "ConlluIso"):
+        assert hasattr(codecs, name)
+
+
+def test_importing_package_does_not_import_conllu(
+    assert_lazy_import: Callable[..., None],
+) -> None:
+    # re-exporting the codec classes must not pull the conllu codec's optional
+    # third-party extra into a core install.
+    assert_lazy_import("lairs.integrations.codecs", "conllu")
 
 
 def test_fragment_record_construction() -> None:

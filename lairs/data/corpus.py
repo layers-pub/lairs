@@ -7,6 +7,15 @@ is held in a :class:`lairs.store.pool.ModelPool` keyed by AT-URI, so cross-refs
 segmentation's ``expression``) resolve to model instances. The join helpers walk
 those refs to group related records per expression.
 
+Membership records (``pub.layers.corpus.membership``) tie an expression to a
+corpus via ``corpusRef`` and carry an optional ``split`` slug. When the pool
+holds membership records for this corpus, the expression views and joins are
+restricted to the expressions those memberships reference, so loading one corpus
+from an authority that hosts several does not bleed the others' expressions in.
+When no membership records are present (for example a freshly authored corpus
+built only through the ``add_*`` helpers) every pooled expression is treated as a
+member, which keeps direct authoring ergonomic.
+
 Loading dispatches on a source. The ``pds`` source enumerates the relevant
 collections of an authority's repository through a PDS client; the ``appview``
 source uses the appview query API; ``auto`` prefers the appview and falls back to
@@ -20,6 +29,8 @@ The record :class:`pub.layers.corpus.Corpus` model is imported qualified as
 from __future__ import annotations
 
 import json
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import didactic.api as dx
@@ -30,13 +41,13 @@ from lairs.records._generated import corpus as corpus_records
 from lairs.records._generated import expression as expression_records
 from lairs.records._generated import media as media_records
 from lairs.records._generated import segmentation as segmentation_records
+from lairs.records.blobref import normalize_blob_refs
 from lairs.store.arrow import annotations_table, expressions_table, materialize
 from lairs.store.pool import ModelPool
 from lairs.store.repository import Repository
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
     from lairs.atproto.pds import PdsClient, RecordEnvelope
 
@@ -229,31 +240,84 @@ class Corpus:
                 if model is not None:
                     yield ref, model
 
+    def _memberships(self) -> Iterator[corpus_records.Membership]:
+        """Yield the membership records that bind expressions to this corpus.
+
+        When :attr:`uri` is set only memberships whose ``corpusRef`` equals it
+        are yielded; otherwise every membership in the pool is yielded.
+
+        Yields
+        ------
+        pub.layers.corpus.Membership
+            The membership records tying expressions to this corpus.
+        """
+        for _, model in self._models_of(_MEMBERSHIP_NSID):
+            if not isinstance(model, corpus_records.Membership):
+                continue
+            if self.uri is not None and model.corpusRef != self.uri:
+                continue
+            yield model
+
+    def _member_uris(self) -> frozenset[str] | None:
+        """Return the expression AT-URIs that are members of this corpus.
+
+        Returns
+        -------
+        frozenset of str or None
+            The set of member expression AT-URIs drawn from the corpus's
+            membership records, or ``None`` when the pool holds no membership
+            record for this corpus (in which case every pooled expression is
+            treated as a member).
+        """
+        members = {membership.expressionRef for membership in self._memberships()}
+        return frozenset(members) if members else None
+
+    def _member_expressions(
+        self,
+    ) -> Iterator[tuple[str, expression_records.Expression]]:
+        """Yield ``(uri, expression)`` pairs for the corpus member expressions.
+
+        Expressions not bound to this corpus by a membership record are skipped
+        when any membership exists; otherwise every pooled expression is yielded.
+
+        Yields
+        ------
+        tuple of (str, pub.layers.expression.Expression)
+            The AT-URI and expression model of each member.
+        """
+        members = self._member_uris()
+        for uri, model in self._models_of(_EXPRESSION_NSID):
+            if not isinstance(model, expression_records.Expression):
+                continue
+            if members is not None and uri not in members:
+                continue
+            yield uri, model
+
     @property
     def expressions(self) -> Dataset[expression_records.Expression]:
-        """Return a dataset of the corpus expressions.
+        """Return a dataset of the corpus member expressions.
+
+        When the pool holds membership records for this corpus only the
+        expressions those memberships reference are returned; otherwise every
+        pooled expression is returned.
 
         Returns
         -------
         lairs.data.dataset.Dataset
             A dataset of expression models, in pool order.
         """
-        records = [
-            model
-            for _, model in self._models_of(_EXPRESSION_NSID)
-            if isinstance(model, expression_records.Expression)
-        ]
+        records = [model for _, model in self._member_expressions()]
         return Dataset(records, model=expression_records.Expression)
 
     def expression_uris(self) -> list[str]:
-        """Return the AT-URIs of the corpus expressions.
+        """Return the AT-URIs of the corpus member expressions.
 
         Returns
         -------
         list of str
-            The expression AT-URIs, in pool order.
+            The member expression AT-URIs, in pool order.
         """
-        return [uri for uri, _ in self._models_of(_EXPRESSION_NSID)]
+        return [uri for uri, _ in self._member_expressions()]
 
     def annotation_layers(
         self,
@@ -316,6 +380,99 @@ class Corpus:
         ]
         return Dataset(records, model=media_records.Media)
 
+    def memberships(self) -> Dataset[corpus_records.Membership]:
+        """Return a dataset of the corpus membership records.
+
+        Each membership ties an expression to this corpus via ``corpusRef`` and
+        may carry a ``split`` slug and an ``ordinal``. When :attr:`uri` is set
+        only the memberships whose ``corpusRef`` equals it are returned.
+
+        Returns
+        -------
+        lairs.data.dataset.Dataset
+            A dataset of membership models, in pool order.
+        """
+        return Dataset(
+            list(self._memberships()),
+            model=corpus_records.Membership,
+        )
+
+    @property
+    def corpus_record(self) -> corpus_records.Corpus | None:
+        """Return the backing corpus record, if one is loaded.
+
+        The record is looked up in the pool at :attr:`uri`; it is ``None`` when
+        the corpus has no AT-URI or when no corpus record was loaded for it.
+
+        Returns
+        -------
+        pub.layers.corpus.Corpus or None
+            The backing corpus record, or ``None`` when absent.
+        """
+        if self.uri is None:
+            return None
+        model = self.pool.get(self.uri)
+        return model if isinstance(model, corpus_records.Corpus) else None
+
+    def split(self, name: str) -> Dataset[expression_records.Expression]:
+        """Return the corpus member expressions assigned to a named split.
+
+        Expressions are joined to their membership records by AT-URI and kept
+        when a membership's ``split`` slug equals ``name`` (for example
+        ``"train"``, ``"dev"``, ``"test"``, or ``"unlabeled"``). An expression
+        with several memberships is included when any of them carries the split.
+
+        Parameters
+        ----------
+        name : str
+            The split slug to select.
+
+        Returns
+        -------
+        lairs.data.dataset.Dataset
+            A dataset of the expression models in that split, in pool order.
+        """
+        split_uris = {
+            membership.expressionRef
+            for membership in self._memberships()
+            if membership.split == name
+        }
+        records = [
+            model for uri, model in self._member_expressions() if uri in split_uris
+        ]
+        return Dataset(records, model=expression_records.Expression)
+
+    def splits(self) -> tuple[str, ...]:
+        """Return the distinct split slugs present in the corpus memberships.
+
+        Returns
+        -------
+        tuple of str
+            The split slugs, sorted, excluding memberships with no split.
+        """
+        names = {
+            membership.split
+            for membership in self._memberships()
+            if membership.split is not None
+        }
+        return tuple(sorted(names))
+
+    def add_membership(
+        self,
+        uri: str,
+        membership: corpus_records.Membership,
+    ) -> None:
+        """Add a membership record to the corpus graph.
+
+        Parameters
+        ----------
+        uri : str
+            The AT-URI of the membership record.
+        membership : pub.layers.corpus.Membership
+            The membership record binding an expression to a corpus.
+        """
+        self.pool.add(uri, membership)
+
     # graph-aware joins --------------------------------------------------------
 
     def with_annotations(self) -> Dataset[ExpressionWithAnnotations]:
@@ -334,17 +491,14 @@ class Corpus:
         for _, model in self._models_of(_ANNOTATION_LAYER_NSID):
             if isinstance(model, annotation_records.AnnotationLayer):
                 grouped.setdefault(model.expression, []).append(model)
-        rows: list[ExpressionWithAnnotations] = []
-        for uri, model in self._models_of(_EXPRESSION_NSID):
-            if not isinstance(model, expression_records.Expression):
-                continue
-            rows.append(
-                ExpressionWithAnnotations(
-                    expression=model,
-                    uri=uri,
-                    annotation_layers=tuple(grouped.get(uri, ())),
-                ),
+        rows = [
+            ExpressionWithAnnotations(
+                expression=model,
+                uri=uri,
+                annotation_layers=tuple(grouped.get(uri, ())),
             )
+            for uri, model in self._member_expressions()
+        ]
         return Dataset(rows, model=ExpressionWithAnnotations)
 
     def with_media(self) -> Dataset[ExpressionWithMedia]:
@@ -359,9 +513,7 @@ class Corpus:
             A dataset of expression-and-media join rows.
         """
         rows: list[ExpressionWithMedia] = []
-        for uri, model in self._models_of(_EXPRESSION_NSID):
-            if not isinstance(model, expression_records.Expression):
-                continue
+        for uri, model in self._member_expressions():
             resolved: media_records.Media | None = None
             if model.mediaRef is not None:
                 target = self.pool.resolve(model.mediaRef)
@@ -387,17 +539,14 @@ class Corpus:
         for _, model in self._models_of(_SEGMENTATION_NSID):
             if isinstance(model, segmentation_records.Segmentation):
                 grouped.setdefault(model.expression, []).append(model)
-        rows: list[ExpressionWithSegmentation] = []
-        for uri, model in self._models_of(_EXPRESSION_NSID):
-            if not isinstance(model, expression_records.Expression):
-                continue
-            rows.append(
-                ExpressionWithSegmentation(
-                    expression=model,
-                    uri=uri,
-                    segmentations=tuple(grouped.get(uri, ())),
-                ),
+        rows = [
+            ExpressionWithSegmentation(
+                expression=model,
+                uri=uri,
+                segmentations=tuple(grouped.get(uri, ())),
             )
+            for uri, model in self._member_expressions()
+        ]
         return Dataset(rows, model=ExpressionWithSegmentation)
 
     # authoring ----------------------------------------------------------------
@@ -476,7 +625,8 @@ class Corpus:
 
         Builds the normalized ``expressions`` and ``annotations`` Arrow views
         from the graph and delegates writing to the store's Arrow
-        :func:`lairs.store.arrow.materialize`.
+        :func:`lairs.store.arrow.materialize`. The expressions view holds the
+        corpus member expressions only (see :attr:`expressions`).
 
         Parameters
         ----------
@@ -488,11 +638,7 @@ class Corpus:
         list of pathlib.Path
             The written view files, in name order.
         """
-        expressions = [
-            model
-            for _, model in self._models_of(_EXPRESSION_NSID)
-            if isinstance(model, expression_records.Expression)
-        ]
+        expressions = [model for _, model in self._member_expressions()]
         layers = [
             (uri, model) for uri, model in self._models_of(_ANNOTATION_LAYER_NSID)
         ]
@@ -501,10 +647,12 @@ class Corpus:
             "annotations": annotations_table(layers),
         }
         # materialize takes a repository for the default derive path, but it is
-        # unused when explicit views are passed; a throwaway in-memory repo
-        # satisfies the signature without touching disk for record data.
-        repo = Repository.init(out_dir / ".repo")
-        return materialize(repo, out_dir, views=views)
+        # unused when explicit views are passed; a throwaway repo in a temporary
+        # directory satisfies the signature without leaving a stray .repo inside
+        # the caller's output directory.
+        with tempfile.TemporaryDirectory(prefix="lairs-materialize-") as scratch:
+            repo = Repository.init(Path(scratch) / "repo")
+            return materialize(repo, out_dir, views=views)
 
 
 def _decode_envelope(
@@ -526,7 +674,9 @@ def _decode_envelope(
     -------
     tuple of (str, didactic.api.Model) or None
         The AT-URI and decoded model, or ``None`` when the collection is not a
-        known Layers record type or the value is not a decodable object.
+        known Layers record type, the value is not a decodable object, or the
+        value fails validation. A single undecodable record is skipped rather
+        than aborting a whole-corpus load.
     """
     model_cls = _NSID_MODELS.get(_nsid_of(envelope.uri))
     if model_cls is None:
@@ -534,7 +684,13 @@ def _decode_envelope(
     if not isinstance(envelope.value, dict):
         return None
     try:
-        model = model_cls.model_validate_json(json.dumps(envelope.value))
+        serialized = json.dumps(normalize_blob_refs(envelope.value))
+    except TypeError, ValueError:
+        # a value carrying a non-JSON-serializable object is not a record this
+        # loader can decode; skip it like a validation failure.
+        return None
+    try:
+        model = model_cls.model_validate_json(serialized)
     except dx.ValidationError:
         return None
     return envelope.uri, model
@@ -563,6 +719,12 @@ def _load_from_pds(
 ) -> Corpus:
     """Load a corpus graph by enumerating an authority's collections via a PDS.
 
+    Every Layers collection of the authority is read into the pool, including
+    its membership records. The returned :class:`Corpus` carries ``uri``, so its
+    expression views and joins are restricted to the expressions whose
+    memberships reference this corpus; records belonging to other corpora hosted
+    by the same authority remain in the pool but do not surface in the views.
+
     Parameters
     ----------
     uri : str
@@ -573,7 +735,7 @@ def _load_from_pds(
     Returns
     -------
     Corpus
-        The loaded corpus graph.
+        The loaded corpus graph, scoped to this corpus's members.
     """
     authority = _authority_of(uri)
     pool = ModelPool()
@@ -596,9 +758,12 @@ def load_corpus(
     """Load a corpus by AT-URI from a PDS or the appview.
 
     The loader enumerates the Layers record collections of the AT-URI's
-    authority and builds the joined graph. The ``pds`` source reads directly from
-    a PDS; ``appview`` and ``auto`` are not implemented without an appview client
-    yet and currently require the ``pds`` source with an injected client.
+    authority and builds the joined graph. The corpus's expression views and
+    joins are then scoped to the expressions reachable through membership records
+    whose ``corpusRef`` matches ``uri``, so an authority that hosts several
+    corpora yields only this corpus's members. The ``pds`` source reads directly
+    from a PDS; ``appview`` and ``auto`` are not implemented without an appview
+    client yet and currently require the ``pds`` source with an injected client.
 
     Parameters
     ----------

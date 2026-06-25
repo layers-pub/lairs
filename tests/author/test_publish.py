@@ -8,12 +8,15 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import httpx
+import libipld
 import pytest
+from multiformats import CID, multihash
 
 from lairs.atproto.pds import PdsClient, decode
 from lairs.author import publish
 from lairs.records._generated.expression import Expression
 from lairs.records._generated.media import Media
+from lairs.records.blobref import BlobRef
 from lairs.store.repository import Repository
 
 if TYPE_CHECKING:
@@ -52,13 +55,6 @@ def test_collection_of_extracts_nsid() -> None:
 
 def test_collection_of_handles_short_uri() -> None:
     assert publish.collection_of("at://did:plc:abc") == ""
-
-
-def test_deterministic_rkey_is_stable_and_order_independent() -> None:
-    first = publish.deterministic_rkey({"a": 1, "b": 2})
-    second = publish.deterministic_rkey({"b": 2, "a": 1})
-    assert first == second
-    assert len(first) == 24
 
 
 def test_content_address_changes_with_bytes() -> None:
@@ -155,6 +151,23 @@ def test_upload_blob_returns_pds_blob_and_is_idempotent() -> None:
     assert first == second
     # the same bytes upload once; the second call reuses the cached reference.
     assert sum(1 for path in calls if path.endswith("uploadBlob")) == 1
+
+
+def test_upload_blob_raises_when_response_lacks_blob() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        # a 200 response with no usable 'blob' object must not be cached or
+        # returned as a (None) reference.
+        return httpx.Response(200, json={"ok": True})
+
+    with (
+        publish.WriteClient(
+            "https://pds.example",
+            "did:plc:me",
+            _mock_client(handler),
+        ) as client,
+        pytest.raises(publish.WriteError),
+    ):
+        client.upload_blob(b"audio-bytes", "audio/wav")
 
 
 def test_upload_blob_enforces_size_cap() -> None:
@@ -353,6 +366,80 @@ def test_apply_writes_retries_per_record_on_batch_failure() -> None:
     assert {r.status for r in results} == {"updated"}
 
 
+def test_post_rejects_non_object_body() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[1, 2, 3])
+
+    with (
+        publish.WriteClient(
+            "https://pds.example",
+            "did:plc:me",
+            _mock_client(handler),
+        ) as client,
+        pytest.raises(publish.WriteError),
+    ):
+        client.create_record("pub.layers.media.media", {"kind": "audio"})
+
+
+def test_apply_writes_populates_cids_from_results_array() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        # the PDS returns a results array aligned with the input writes.
+        results = [
+            {"$type": f"{publish._APPLY_WRITES_NSID}#createResult", "cid": f"cid-{i}"}
+            for i, _ in enumerate(body["writes"])
+        ]
+        return httpx.Response(200, json={"results": results})
+
+    ops = [
+        publish.WriteOp(
+            action="create",
+            collection="pub.layers.expression.expression",
+            rkey="e",
+            uri="at://did:plc:me/pub.layers.expression.expression/e",
+            value={"id": "x", "kind": "sentence"},
+        ),
+        publish.WriteOp(
+            action="create",
+            collection="pub.layers.annotation.annotationLayer",
+            rkey="a",
+            uri="at://did:plc:me/pub.layers.annotation.annotationLayer/a",
+            value={"kind": "span"},
+        ),
+    ]
+    with publish.WriteClient(
+        "https://pds.example",
+        "did:plc:me",
+        _mock_client(handler),
+    ) as client:
+        results = client.apply_writes(ops)
+
+    # the bulk path now carries the committed CID for each write, in order.
+    assert [r.cid for r in results] == ["cid-0", "cid-1"]
+
+
+def test_apply_writes_reports_deleted_on_batch_success() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"results": []})
+
+    op = publish.WriteOp(
+        action="delete",
+        collection="pub.layers.media.media",
+        rkey="m",
+        uri="at://did:plc:me/pub.layers.media.media/m",
+    )
+    with publish.WriteClient(
+        "https://pds.example",
+        "did:plc:me",
+        _mock_client(handler),
+    ) as client:
+        results = client.apply_writes([op])
+
+    assert len(results) == 1
+    assert results[0].status == "deleted"
+    assert results[0].cid is None
+
+
 def test_apply_writes_records_per_record_failure_reasons() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -427,6 +514,115 @@ def test_plan_publish_diffs_updates_and_deletes(tmp_path: Path) -> None:
     assert [op.uri for op in plan.deletes] == [
         "at://did:plc:me/pub.layers.corpus.corpus/c1"
     ]
+
+
+def test_record_cid_matches_pds_form_for_blob_record() -> None:
+    # a blob-bearing record's locally computed CID must match the CID a PDS
+    # computes over the DAG-CBOR it stores, so re-publishing it is a no-op.
+    real_cid = "bafkreibvjvcv745gig4mvqs4hctx4zfkono4rjejm2ta6gtyzkqxfjeily"
+    media = Media(
+        kind="audio",
+        createdAt=datetime(2026, 6, 16, tzinfo=UTC),
+        blob=BlobRef(cid=real_cid, mime_type="audio/wav", size=12345),
+    )
+    raw = json.loads(media.model_dump_json())
+    collection = "pub.layers.media.media"
+    wire = publish._value_with_type(raw, collection)
+    assert isinstance(wire, dict)
+    # the lairs BlobRef form is rewritten to the ATProto blob wire form.
+    blob = wire["blob"]
+    assert isinstance(blob, dict)
+    assert blob["$type"] == "blob"
+    assert blob["ref"] == {"$link": real_cid}
+    assert blob["mimeType"] == "audio/wav"
+    assert blob["size"] == 12345
+
+    local_cid = publish._record_cid(wire)
+
+    # recompute the CID the way a PDS does: encode the wire form with the
+    # cid-link as a real DAG-CBOR CID link, sha-256, dag-cbor codec.
+    def _pds_form(node: object) -> object:
+        if isinstance(node, dict):
+            link = node.get("$link")
+            if len(node) == 1 and isinstance(link, str):
+                return bytes(CID.decode(link))
+            return {key: _pds_form(item) for key, item in node.items()}
+        if isinstance(node, list):
+            return [_pds_form(item) for item in node]
+        return node
+
+    pds_bytes = libipld.encode_dag_cbor(_pds_form(wire))
+    pds_cid = str(
+        CID("base32", 1, "dag-cbor", multihash.digest(pds_bytes, "sha2-256")),
+    )
+    assert local_cid == pds_cid
+
+
+def test_plan_publish_is_idempotent_for_blob_record(tmp_path: Path) -> None:
+    # diffing a blob-bearing revision against a PDS state that reports the same
+    # locally-computed CID yields an empty plan (the core of blob idempotency).
+    repo = Repository.init(tmp_path)
+    real_cid = "bafkreibvjvcv745gig4mvqs4hctx4zfkono4rjejm2ta6gtyzkqxfjeily"
+    media_uri = "at://did:plc:me/pub.layers.media.media/m1"
+    repo.save(
+        media_uri,
+        Media(
+            kind="audio",
+            createdAt=datetime(2026, 6, 16, tzinfo=UTC),
+            blob=BlobRef(cid=real_cid, mime_type="audio/wav", size=12345),
+        ),
+    )
+    revision = repo.commit("seed media")
+    local = publish._pds_state(repo, revision)
+    plan = publish.plan_publish(repo, revision, to="did:plc:me", pds_cids=local)
+    assert plan.is_empty()
+
+
+def test_fetch_pds_cids_raises_on_server_error() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        # the first collection enumerated returns a 5xx: the diff must abort
+        # rather than treating the collection as empty.
+        return httpx.Response(500, json={"error": "Internal"})
+
+    with pytest.raises(publish.WriteError):
+        publish._fetch_pds_cids(
+            "did:plc:me",
+            endpoint="https://pds.example",
+            client=_mock_client(handler),
+        )
+
+
+def test_fetch_pds_cids_treats_404_as_empty_collection() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        collection = request.url.params.get("collection")
+        if collection == "pub.layers.expression.expression":
+            return httpx.Response(
+                200,
+                json={
+                    "records": [
+                        {
+                            "uri": "at://did:plc:me/pub.layers.expression.expression/e",
+                            "cid": "cidE",
+                            "value": {},
+                        },
+                    ],
+                    "cursor": "",
+                },
+            )
+        return httpx.Response(404, json={"error": "NotFound"})
+
+    cids = publish._fetch_pds_cids(
+        "did:plc:me",
+        endpoint="https://pds.example",
+        client=_mock_client(handler),
+    )
+    assert cids == {"at://did:plc:me/pub.layers.expression.expression/e": "cidE"}
+
+
+def test_publish_requires_endpoint_for_live_run(tmp_path: Path) -> None:
+    repo, revision, _expr_uri, _media_uri = _seed_repo(tmp_path)
+    with pytest.raises(publish.WriteError):
+        publish.publish(repo, revision, to="did:plc:me", dry_run=False)
 
 
 def test_publish_dry_run_returns_plan_without_writing(tmp_path: Path) -> None:
@@ -809,6 +1005,70 @@ def test_publish_creates_then_is_idempotent_live(
         env = reader.get_record(did, collection, "rec1")
         assert decode(env, Expression).text == "publish me"
         # the unchanged revision re-publishes to an empty plan.
+        again = publish.publish(
+            repo,
+            revision,
+            to=did,
+            endpoint=pds_server.endpoint,
+            client=client,
+            dry_run=True,
+        )
+        assert again.is_empty()
+
+
+@pytest.mark.integration
+def test_publish_blob_record_is_idempotent_live(
+    pds_server: PdsServer,
+    tmp_path: Path,
+) -> None:
+    # publishing a blob-bearing media record and re-publishing the unchanged
+    # revision is a no-op: the locally computed CID, with the blob rewritten to
+    # the ATProto wire form, matches the PDS-reported CID.
+    did, jwt = _fresh_account(pds_server)
+    collection = "pub.layers.media.media"
+    uri = f"at://{did}/{collection}/media1"
+    with httpx.Client(headers={"Authorization": f"Bearer {jwt}"}) as client:
+        writer = publish.WriteClient(pds_server.endpoint, did, client)
+        # upload real bytes; the PDS returns its blob reference object.
+        raw_blob = writer.upload_blob(b"fake audio bytes" * 64, "audio/wav")
+        assert isinstance(raw_blob, dict)
+        ref = raw_blob["ref"]
+        assert isinstance(ref, dict)
+        blob_cid = ref["$link"]
+        assert isinstance(blob_cid, str)
+        size = raw_blob.get("size")
+        repo = Repository.init(tmp_path / "blobrepo")
+        repo.save(
+            uri,
+            Media(
+                kind="audio",
+                createdAt=datetime(2026, 6, 16, tzinfo=UTC),
+                blob=BlobRef(
+                    cid=blob_cid,
+                    mime_type="audio/wav",
+                    size=size if isinstance(size, int) else None,
+                ),
+            ),
+        )
+        revision = repo.commit("seed media", author="lairs <lairs@layers.pub>")
+        first = publish.publish(
+            repo,
+            revision,
+            to=did,
+            endpoint=pds_server.endpoint,
+            client=client,
+            dry_run=False,
+        )
+        assert [op.uri for op in first.creates] == [uri]
+        # the stored record carries the blob in ATProto wire form.
+        reader = PdsClient(pds_server.endpoint, client)
+        env = reader.get_record(did, collection, "media1")
+        assert isinstance(env.value, dict)
+        stored_blob = env.value["blob"]
+        assert isinstance(stored_blob, dict)
+        assert stored_blob["$type"] == "blob"
+        assert stored_blob["ref"]["$link"] == blob_cid
+        # re-publishing the unchanged revision is a no-op.
         again = publish.publish(
             repo,
             revision,

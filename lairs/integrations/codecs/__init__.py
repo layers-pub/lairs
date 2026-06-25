@@ -2,15 +2,34 @@
 
 This package defines the shared :class:`CorpusFragment` and
 :class:`FragmentRecord` models (didactic models holding a batch of decoded
-records) plus the optional codec adapters that bind to the
+records) plus the reference codec adapters that bind to the
 :class:`~lairs.integrations.ports.Codec` port.
+
+The two reference codecs and their dependency-free
+:class:`~didactic.api.Iso` round-trip pivots are re-exported here so a consumer
+can reach the whole public codec surface from the package:
+
+- :class:`~lairs.integrations.codecs.brat.BratCodec` /
+  :class:`~lairs.integrations.codecs.brat.BratIso` (brat standoff).
+- :class:`~lairs.integrations.codecs.conllu.ConlluCodec` /
+  :class:`~lairs.integrations.codecs.conllu.ConlluIso` (CoNLL-U).
+
+Importing this package does not import either codec's optional third-party
+extra: each codec module only requires its extra inside its own methods.
 """
 
 from __future__ import annotations
 
 import didactic.api as dx
 
-__all__ = ["CorpusFragment", "FragmentRecord"]
+__all__ = [
+    "BratCodec",
+    "BratIso",
+    "ConlluCodec",
+    "ConlluIso",
+    "CorpusFragment",
+    "FragmentRecord",
+]
 
 
 class FragmentRecord(dx.Model):
@@ -55,3 +74,9 @@ class CorpusFragment(dx.Model):
         default=None,
         description="originating format name, when known",
     )
+
+
+# the codec modules import CorpusFragment/FragmentRecord from this package, so
+# they are imported only after those models are defined to break the cycle.
+from lairs.integrations.codecs.brat import BratCodec, BratIso  # noqa: E402
+from lairs.integrations.codecs.conllu import ConlluCodec, ConlluIso  # noqa: E402

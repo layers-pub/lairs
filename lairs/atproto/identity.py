@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from lairs._types import JsonValue
 
 __all__ = [
+    "IdentityError",
     "IdentityResolution",
     "IdentityResolver",
     "resolve_did",

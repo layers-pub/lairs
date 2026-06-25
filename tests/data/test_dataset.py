@@ -84,17 +84,95 @@ def test_map_is_lazy_and_applies() -> None:
     assert [record.text for record in out] == ["D0", "D1"]
 
 
-def test_map_batched_matches_unbatched() -> None:
+def test_map_takes_model_for_reshaped_output() -> None:
+    ds: Dataset[Expression] = Dataset(_records(2))
+    mapped = ds.map(lambda e: e, model=Expression)
+    assert "id" in mapped.features.names()
+
+
+def test_map_batched_receives_whole_batch() -> None:
+    seen: list[int] = []
+
+    def dedupe(batch: tuple[Expression, ...]) -> list[Expression]:
+        seen.append(len(batch))
+        # collapse each batch to a single representative record.
+        return [batch[0]]
+
     ds: Dataset[Expression] = Dataset(_records(5))
-    plain = [r.id for r in ds.map(lambda e: e)]
-    batched = [r.id for r in ds.map(lambda e: e, batched=True, batch_size=2)]
-    assert plain == batched
+    out = list(ds.map_batched(dedupe, batch_size=2))
+    # the callable saw batches of 2, 2, 1, not individual records.
+    assert seen == [2, 2, 1]
+    # one record survives per batch, so the output count drops.
+    assert [r.id for r in out] == ["d0", "d2", "d4"]
+
+
+def test_map_batched_is_lazy() -> None:
+    calls: list[int] = []
+
+    def grow(batch: tuple[Expression, ...]) -> tuple[Expression, ...]:
+        calls.append(len(batch))
+        return batch
+
+    ds: Dataset[Expression] = Dataset(_records(4))
+    mapped = ds.map_batched(grow, batch_size=2)
+    # nothing runs until the result is iterated.
+    assert calls == []
+    out = [r.id for r in mapped]
+    assert out == ["d0", "d1", "d2", "d3"]
+    assert calls == [2, 2]
+
+
+def test_map_batched_rejects_nonpositive_batch_size() -> None:
+    ds: Dataset[Expression] = Dataset(_records(1))
+    with pytest.raises(ValueError, match="positive"):
+        ds.map_batched(lambda batch: batch, batch_size=0)
+
+
+def test_map_batched_over_streaming_source() -> None:
+    def source() -> Iterator[Expression]:
+        yield from _records(5)
+
+    ds = Dataset.streaming(source, model=Expression)
+    mapped = ds.map_batched(lambda batch: batch, batch_size=2)
+    assert mapped.is_streaming is True
+    # the streaming transform is re-iterable through the fresh-iterator factory.
+    assert [r.id for r in mapped] == ["d0", "d1", "d2", "d3", "d4"]
+    assert [r.id for r in mapped] == ["d0", "d1", "d2", "d3", "d4"]
 
 
 def test_filter_is_lazy() -> None:
     ds: Dataset[Expression] = Dataset(_records(4))
     kept = list(ds.filter(lambda e: e.id in {"d1", "d3"}))
     assert [r.id for r in kept] == ["d1", "d3"]
+
+
+def test_filter_over_streaming_source_is_reiterable() -> None:
+    def source() -> Iterator[Expression]:
+        yield from _records(4)
+
+    ds = Dataset.streaming(source, model=Expression)
+    kept = ds.filter(lambda e: e.id in {"d0", "d2"})
+    assert kept.is_streaming is True
+    # the fresh-iterator factory means a streaming filter is re-iterable.
+    assert [r.id for r in kept] == ["d0", "d2"]
+    assert [r.id for r in kept] == ["d0", "d2"]
+
+
+def test_map_over_streaming_chains_with_filter() -> None:
+    def source() -> Iterator[Expression]:
+        yield from _records(4)
+
+    ds = Dataset.streaming(source, model=Expression)
+    chained = ds.filter(lambda e: e.id != "d1").map(
+        lambda e: Expression(
+            id=e.id,
+            kind=e.kind,
+            createdAt=e.createdAt,
+            text=e.id.upper(),
+        ),
+    )
+    assert chained.is_streaming is True
+    assert [r.text for r in chained] == ["D0", "D2", "D3"]
 
 
 def test_features_from_records() -> None:

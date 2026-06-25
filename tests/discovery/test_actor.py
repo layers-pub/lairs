@@ -10,7 +10,12 @@ import pytest
 from lairs.atproto.appview import AppviewClient
 from lairs.atproto.identity import IdentityResolver
 from lairs.atproto.pds import PdsClient
-from lairs.discovery.actor import list_datasets, table_of_contents
+from lairs.discovery.actor import (
+    _appview_for,
+    _pds_for,
+    list_datasets,
+    table_of_contents,
+)
 from lairs.discovery.models import DatasetFilter
 
 if TYPE_CHECKING:
@@ -124,6 +129,40 @@ def test_list_datasets_unknown_source_raises() -> None:
 def test_list_datasets_appview_requires_endpoint() -> None:
     with pytest.raises(ValueError, match="appview endpoint or client"):
         list_datasets(_DID, source="appview")
+
+
+def test_pds_for_requires_endpoint_or_client() -> None:
+    # the defensive guard: neither an endpoint nor an injected client.
+    with pytest.raises(ValueError, match="pds endpoint or client"):
+        _pds_for(None, None)
+
+
+def test_pds_for_returns_caller_owned_client_for_endpoint() -> None:
+    client, owns = _pds_for(_ENDPOINT, None)
+    try:
+        assert owns is True
+    finally:
+        client.close()
+
+
+def test_pds_for_reuses_injected_client() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return _corpus_page()
+
+    with _pds(handler) as injected:
+        client, owns = _pds_for(None, injected)
+        assert client is injected
+        assert owns is False
+
+
+def test_appview_for_requires_endpoint_or_client() -> None:
+    with pytest.raises(ValueError, match="appview endpoint or client"):
+        _appview_for(None, None)
+
+
+def test_table_of_contents_unknown_source_raises() -> None:
+    with pytest.raises(ValueError, match="unknown source"):
+        table_of_contents(_DID, source="bogus")
 
 
 def test_list_datasets_resolves_handle() -> None:

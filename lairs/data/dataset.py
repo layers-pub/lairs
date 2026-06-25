@@ -239,46 +239,90 @@ class Dataset[ModelT: "dx.Model"]:
         self,
         fn: Callable[[ModelT], ModelT],
         *,
-        batched: bool = False,
-        batch_size: int = 1000,
+        model: type[ModelT] | None = None,
     ) -> Dataset[ModelT]:
-        """Apply a lazy transform to each record.
+        """Apply a lazy per-record transform.
 
         The transform is not applied eagerly: it is composed onto the dataset's
         source so it runs as records flow through a later iteration or
         materialization. The result preserves the source's laziness and
         streaming behaviour.
 
+        This is strictly per-record. There is no ``batched`` mode that hands the
+        callable a batch, because the transform signature is fixed to one record
+        in and one record out; group the records yourself with :meth:`iter` when
+        a batch view is needed.
+
         Parameters
         ----------
         fn : collections.abc.Callable
-            The per-record transform mapping a model to a model. When
-            ``batched`` is true the callable is still applied per record, after
-            the records are grouped into batches for iteration.
-        batched : bool, optional
-            Whether to drive the transform over batches of records. The output
-            is identical to the unbatched form; batching only controls how
-            records are grouped while the transform runs.
-        batch_size : int, optional
-            The batch size used when ``batched`` is true.
+            The per-record transform mapping a model to a model.
+        model : type of ModelT or None, optional
+            The model type the transformed dataset yields. Defaults to this
+            dataset's model type; supply it when the transform changes the
+            feature shape and the new shape must be derivable.
 
         Returns
         -------
         Dataset
             A new lazy dataset with the transform applied.
         """
-        model = self._model
+        result_model = model if model is not None else self._model
 
         def transformed() -> Iterator[ModelT]:
-            if batched:
-                for batch in self.iter(batch_size=batch_size):
-                    for record in batch:
-                        yield fn(record)
-            else:
-                for record in self._iter_records():
-                    yield fn(record)
+            for record in self._iter_records():
+                yield fn(record)
 
-        return Dataset(source=transformed, model=model)
+        return Dataset(source=transformed, model=result_model)
+
+    def map_batched(
+        self,
+        fn: Callable[[Sequence[ModelT]], Iterable[ModelT]],
+        *,
+        batch_size: int = 1000,
+        model: type[ModelT] | None = None,
+    ) -> Dataset[ModelT]:
+        """Apply a lazy transform over batches of records.
+
+        Unlike :meth:`map`, the callable receives a batch (a sequence of
+        records) and returns an iterable of records, so a transform can add,
+        drop, or reshape records across a batch (the HuggingFace
+        ``map(batched=True)`` affordance). The transform is composed lazily onto
+        the source and preserves streaming behaviour; the output record count
+        need not match the input count.
+
+        Parameters
+        ----------
+        fn : collections.abc.Callable
+            The batch transform mapping a sequence of records to an iterable of
+            records.
+        batch_size : int, optional
+            The number of records handed to ``fn`` per call. The final batch may
+            be smaller.
+        model : type of ModelT or None, optional
+            The model type the transformed dataset yields. Defaults to this
+            dataset's model type.
+
+        Returns
+        -------
+        Dataset
+            A new lazy dataset with the batch transform applied.
+
+        Raises
+        ------
+        ValueError
+            When ``batch_size`` is not positive.
+        """
+        if batch_size < 1:
+            msg = "batch_size must be a positive integer"
+            raise ValueError(msg)
+        result_model = model if model is not None else self._model
+
+        def transformed() -> Iterator[ModelT]:
+            for batch in self.iter(batch_size=batch_size):
+                yield from fn(batch)
+
+        return Dataset(source=transformed, model=result_model)
 
     def filter(self, predicate: Callable[[ModelT], bool]) -> Dataset[ModelT]:
         """Filter the dataset by a per-record predicate, lazily.
@@ -339,6 +383,10 @@ class Dataset[ModelT: "dx.Model"]:
         machinery: scalar fields become columns and any ``anchor`` field is
         expanded into the typed anchor columns.
 
+        This is a full materialization: a streaming dataset is drained and every
+        row is buffered in memory while the table is built, so this should not be
+        called on an unbounded stream without a bounding :meth:`take` first.
+
         Returns
         -------
         pyarrow.Table
@@ -349,8 +397,10 @@ class Dataset[ModelT: "dx.Model"]:
     def to_pandas(self) -> pd.DataFrame:
         """Materialize the dataset to a pandas DataFrame.
 
-        pandas is an optional dependency; this raises a clear error when it is
-        not installed.
+        pandas is an optional dependency, resolved through pyarrow's
+        :meth:`pyarrow.Table.to_pandas`, which raises a clear ``ImportError``
+        when pandas is not installed. Like :meth:`to_arrow`, this is a full
+        materialization that drains and buffers a streaming dataset.
 
         Returns
         -------
@@ -362,11 +412,6 @@ class Dataset[ModelT: "dx.Model"]:
         ImportError
             When pandas is not installed.
         """
-        try:
-            import pandas as pd  # noqa: F401, PLC0415
-        except ImportError as exc:
-            msg = "to_pandas requires the optional 'pandas' dependency"
-            raise ImportError(msg) from exc
         return self.to_arrow().to_pandas()
 
     @classmethod

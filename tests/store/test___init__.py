@@ -8,6 +8,7 @@ import lairs.store as mod
 def test_all_exports_the_public_surface() -> None:
     assert set(mod.__all__) == {
         "BlobCache",
+        "BlobCacheError",
         "ModelPool",
         "RecordDiff",
         "Repository",
