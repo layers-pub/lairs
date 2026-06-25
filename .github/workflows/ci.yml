@@ -4,63 +4,93 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# cancel superseded runs on the same ref (a new push to a PR supersedes the old).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # pin the Python the whole workflow resolves against.
+  UV_PYTHON: "3.14"
 
 jobs:
-  check:
+  # static gates: formatting, lint, types, the Any/object ban, codegen drift,
+  # and a strict docs build. no docker, so this finishes fast and fails early.
+  quality:
+    name: Quality gates
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
-      - name: Set up Python 3.14
-        run: uv python install 3.14
+      - name: Install Python ${{ env.UV_PYTHON }}
+        run: uv python install ${{ env.UV_PYTHON }}
 
-      - name: Sync dependencies
-        run: uv sync --frozen
+      - name: Sync dependencies (dev + docs)
+        run: uv sync --frozen --group docs
 
-      - name: Ruff format check
+      - name: Ruff format
         run: uv run ruff format --check lairs tests
 
       - name: Ruff lint
         run: uv run ruff check lairs tests
 
       - name: Type check (ty)
-        run: uvx ty check --python .venv --error-on-warning
+        run: uv run ty check --error-on-warning
 
-      - name: Pytest
-        run: uv run pytest
+      - name: Forbid Any in annotations
+        # `Any` is the unsound escape hatch; ruff ANN401 (part of the ALL
+        # ruleset above) flags it in annotation positions precisely, with no
+        # docstring false positives. sound `object` is allowed: it must be
+        # narrowed before use, and the ALL ruleset itself requires annotating
+        # ignored *args/**kwargs, for which `object` is the only sound choice.
+        run: uv run ruff check lairs tests --select ANN401
 
-      - name: Forbid Any and bare object in annotations
-        run: |
-          set -euo pipefail
-          # fail if Any or a bare object appears in a type-annotation position
-          # anywhere under lairs/ or tests/. docstring and string prose use no
-          # such punctuation, so they do not match.
-          gate='(->|:|\[|\||,)[[:space:]]*(Any|object)\b|\b(Any|object)[[:space:]]*(\]|\||,|:)|[[:space:]]import[[:space:]].*\bAny\b|\btype\[object\]'
-          if grep -rnE "$gate" lairs tests --include='*.py' | grep -v __pycache__; then
-            echo "::error::found Any or bare object in a type annotation"
-            exit 1
-          fi
-          echo "no Any or bare object in annotations"
+      - name: Generated-model drift gate
+        run: uv run lairs gen --check
 
-  integration:
+      - name: Build documentation (strict)
+        run: uv run --group docs mkdocs build --strict
+
+  # the full suite, including every integration test. the pds_server fixture
+  # starts a real bluesky PDS through docker compose (docker and compose v2 are
+  # preinstalled on the runner), so --run-integration exercises the genuine
+  # read/write path rather than skipping it.
+  test:
+    name: Test suite (all tests, with Docker PDS)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
-      - name: Set up Python 3.14
-        run: uv python install 3.14
+      - name: Install Python ${{ env.UV_PYTHON }}
+        run: uv python install ${{ env.UV_PYTHON }}
 
-      - name: Sync dependencies
+      - name: Sync dependencies (dev group with every installable extra)
         run: uv sync --frozen
 
-      # the pds_server fixture starts a local PDS via docker compose (docker is
-      # preinstalled on the runner) and skips cleanly if it cannot. integration
-      # tests needing optional extras or external network skip cleanly too.
-      - name: Integration tests (local PDS in Docker)
-        run: uv run pytest --run-integration -m integration
+      - name: Confirm Docker is available
+        run: |
+          docker version
+          docker compose version
+
+      - name: Pre-pull the PDS image
+        # warm the integration container so the health check does not race a
+        # cold image pull. the fixture manages compose lifecycle per session.
+        run: docker compose -f tests/pds/docker-compose.yml pull
+
+      - name: Run the full test suite
+        run: uv run pytest --run-integration -v
