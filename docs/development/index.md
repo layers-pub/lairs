@@ -22,9 +22,10 @@ uv sync
 `uv sync` creates `.venv` and installs the project together with the `dev`
 dependency group. The dev group pulls in every optional extra that has a
 `cp314` wheel, so the test suite exercises the integrations rather than skipping
-them. Three integrations have no `cp314` wheel yet and stay unexercised until
-upstream publishes one: TensorFlow, decord, and label-studio-sdk. Their tests
-skip cleanly.
+them. TensorFlow has no stable `cp314` wheel yet; install the nightly
+(`uv pip install tf-nightly`) to exercise the tfdata exporter, which CI does on
+every run. decord and label-studio-sdk have no `cp314` wheel at all, so a few of
+their tests skip cleanly until upstream publishes one.
 
 Run tools through `uv run`, or activate the environment and call them directly:
 
@@ -84,7 +85,8 @@ The codebase is deliberately uniform. New code matches the code around it.
 
 - **didactic models for all structured data.** No dataclasses, `TypedDict`, or
   `pydantic` for record-shaped values.
-- **No `Any` and no bare `object`** in annotations (enforced in CI).
+- **No `Any`** in annotations (enforced in CI via ruff `ANN401`); sound `object`,
+  narrowed before use, is allowed.
 - **Imports at module top level.** Function- or method-level imports are a ruff
   error (`PLC0415`). The only exception is a lazy import of a heavy optional
   extra that must not load unless its extra is installed; never silence the rule
