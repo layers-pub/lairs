@@ -5,6 +5,109 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      host:
+      - huggingface.co
+      user-agent:
+      - python-httpx/0.28.1
+      x-amzn-trace-id:
+      - f0b2300e-ea3d-4de8-9615-7f0a541c1f84
+    method: GET
+    uri: https://huggingface.co/api/agent-harnesses
+  response:
+    body:
+      string: !!binary |
+        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
+        AA==
+    headers:
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      access-control-max-age:
+      - '86400'
+      connection:
+      - keep-alive
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      date:
+      - Thu, 25 Jun 2026 21:31:42 GMT
+      etag:
+      - W/"1385-Y8rr//XuUWwLSEAs3xBVYxJE/Ek"
+      ratelimit:
+      - '"api";r=499;t=158'
+      ratelimit-policy:
+      - '"fixed window";"api";q=500;w=300'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - Accept-Encoding
+      via:
+      - 1.1 6f6a74f12dc7de2c455092348b6c9f28.cloudfront.net (CloudFront)
+      x-amz-cf-id:
+      - wg6s_y2S0OQfhCkN2GVcJSzv9l3-R7pMNCi6sE4GaHZHruw9R1EW4g==
+      x-amz-cf-pop:
+      - JFK50-P9
+      x-cache:
+      - Miss from cloudfront
+      x-powered-by:
+      - huggingface-moon
+      x-request-id:
+      - Root=1-6a3d9e3e-1bee244801a6804e6a63bef3;f0b2300e-ea3d-4de8-9615-7f0a541c1f84
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
       - identity
       connection:
       - keep-alive
@@ -14,7 +117,7 @@ interactions:
       - datasets/5.0.0; hf_hub/1.19.0; python/3.14.5; torch/2.12.0; agent/claude-code;
         pyarrow/24.0.0
       x-amzn-trace-id:
-      - dc091953-0813-45ce-8955-fbab49a2b547
+      - be1e2d49-98bf-4686-9a81-1d7eb14d20d5
     method: HEAD
     uri: https://huggingface.co/datasets/hf-internal-testing/fixtures_ade20k/resolve/main/README.md
   response:
@@ -42,11 +145,11 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       date:
-      - Thu, 18 Jun 2026 18:18:56 GMT
+      - Thu, 25 Jun 2026 21:31:43 GMT
       location:
       - /api/resolve-cache/datasets/hf-internal-testing/fixtures_ade20k/850d349e5038f291284e7999fcacbedc0922534b/README.md?%2Fdatasets%2Fhf-internal-testing%2Ffixtures_ade20k%2Fresolve%2Fmain%2FREADME.md=&etag=%2223c38170ab47b058c557171fca4aba93376279f8%22
       ratelimit:
-      - '"resolvers";r=4999;t=249'
+      - '"resolvers";r=4999;t=82'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -54,11 +157,11 @@ interactions:
       vary:
       - Origin, Accept
       via:
-      - 1.1 43cd35d154fe606336f72858d8bd76ec.cloudfront.net (CloudFront)
+      - 1.1 6f6a74f12dc7de2c455092348b6c9f28.cloudfront.net (CloudFront)
       x-amz-cf-id:
-      - fhLWpaUh86kS77oPHuIqtdPWl23ovcLERzdUcUxbcMPGqZcuzw2w0Q==
+      - ixLK0OoSyfket3_EZi4VwugZmI9MLGOLRqCFREcMKNP4nH0HVWX_ww==
       x-amz-cf-pop:
-      - MSP50-P1
+      - JFK50-P9
       x-cache:
       - Miss from cloudfront
       x-hub-cache:
@@ -70,7 +173,7 @@ interactions:
       x-repo-commit:
       - 850d349e5038f291284e7999fcacbedc0922534b
       x-request-id:
-      - Root=1-6a343690-3b86b33710615a185a31d42e;dc091953-0813-45ce-8955-fbab49a2b547
+      - Root=1-6a3d9e3f-5cb1a4a77a82d7535b78b6a2;be1e2d49-98bf-4686-9a81-1d7eb14d20d5
     status:
       code: 307
       message: Temporary Redirect
@@ -89,7 +192,7 @@ interactions:
       - datasets/5.0.0; hf_hub/1.19.0; python/3.14.5; torch/2.12.0; agent/claude-code;
         pyarrow/24.0.0
       x-amzn-trace-id:
-      - 4b0257a3-6ba2-49dd-b241-97426040c56f
+      - db33d1d4-2399-4fea-b487-1e7014328fff
     method: HEAD
     uri: https://huggingface.co/api/resolve-cache/datasets/hf-internal-testing/fixtures_ade20k/850d349e5038f291284e7999fcacbedc0922534b/README.md
   response:
@@ -104,8 +207,6 @@ interactions:
       - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
       access-control-max-age:
       - '86400'
-      age:
-      - '200'
       connection:
       - keep-alive
       content-disposition:
@@ -119,11 +220,11 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       date:
-      - Thu, 18 Jun 2026 18:15:36 GMT
+      - Thu, 25 Jun 2026 21:31:43 GMT
       etag:
       - '"23c38170ab47b058c557171fca4aba93376279f8"'
       ratelimit:
-      - '"resolvers";r=4998;t=149'
+      - '"resolvers";r=4998;t=82'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -131,21 +232,21 @@ interactions:
       vary:
       - Origin
       via:
-      - 1.1 43cd35d154fe606336f72858d8bd76ec.cloudfront.net (CloudFront)
+      - 1.1 6f6a74f12dc7de2c455092348b6c9f28.cloudfront.net (CloudFront)
       x-amz-cf-id:
-      - s8hyIMPupokIY-7Hs-wBmfj0Rec-jYxzzmZ5zdJGGkbBzgioCnXxeQ==
+      - v0Gc4Ga_QOmG65hllzI1dcBh4sISsFszd0r4uS8smTWMKWiruvCmkA==
       x-amz-cf-pop:
-      - MSP50-P1
+      - JFK50-P9
       x-cache:
-      - Hit from cloudfront
+      - Miss from cloudfront
       x-hub-cache:
-      - HIT
+      - MISS
       x-powered-by:
       - huggingface-moon
       x-repo-commit:
       - 850d349e5038f291284e7999fcacbedc0922534b
       x-request-id:
-      - Root=1-6a3435c8-47fbc834580e5d7626c4e647;2678dbbb-aca8-4ddf-993b-14a6db1df34e
+      - Root=1-6a3d9e3f-317b88c6061268492329e9c5;db33d1d4-2399-4fea-b487-1e7014328fff
     status:
       code: 200
       message: OK
@@ -164,7 +265,7 @@ interactions:
       - datasets/5.0.0; hf_hub/1.19.0; python/3.14.5; torch/2.12.0; agent/claude-code;
         pyarrow/24.0.0
       x-amzn-trace-id:
-      - dd7598b4-388c-467e-a824-f24941072134
+      - 893ef557-1323-40cd-a69e-18b1eb395407
     method: HEAD
     uri: https://huggingface.co/datasets/hf-internal-testing/fixtures_ade20k/resolve/850d349e5038f291284e7999fcacbedc0922534b/fixtures_ade20k.py
   response:
@@ -188,11 +289,11 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       date:
-      - Thu, 18 Jun 2026 18:18:56 GMT
+      - Thu, 25 Jun 2026 21:31:43 GMT
       etag:
       - W/"f-mY2VvLxuxB7KhsoOdQTlMTccuAQ"
       ratelimit:
-      - '"resolvers";r=4998;t=249'
+      - '"resolvers";r=4997;t=82'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -200,11 +301,11 @@ interactions:
       vary:
       - Origin
       via:
-      - 1.1 43cd35d154fe606336f72858d8bd76ec.cloudfront.net (CloudFront)
+      - 1.1 6f6a74f12dc7de2c455092348b6c9f28.cloudfront.net (CloudFront)
       x-amz-cf-id:
-      - sUoxsCgyYzgf4nnc204LhfNJa52jfHVGCgknaVJ8e0Hb8mmQiZR9gw==
+      - EeFddJfCEZnq_dzosGo3hNNOoXzoLjkTl3MtsPP0ZMHm77Lyg8vTGg==
       x-amz-cf-pop:
-      - MSP50-P1
+      - JFK50-P9
       x-cache:
       - Error from cloudfront
       x-error-code:
@@ -218,7 +319,7 @@ interactions:
       x-repo-commit:
       - 850d349e5038f291284e7999fcacbedc0922534b
       x-request-id:
-      - Root=1-6a343690-024d470570f5cf221cad1744;dd7598b4-388c-467e-a824-f24941072134
+      - Root=1-6a3d9e3f-144c5b77066540747103a1d1;893ef557-1323-40cd-a69e-18b1eb395407
     status:
       code: 404
       message: Not Found
@@ -236,7 +337,7 @@ interactions:
       user-agent:
       - datasets/5.0.0; python/3.14.5; hf_hub/1.19.0; pyarrow/24.0.0; torch/2.12.0
       x-amzn-trace-id:
-      - 1c4f3698-a0cf-4d51-9485-e63d1bf1044c
+      - 72780710-0381-4f20-ab8b-1a2a8ae06ee1
     method: HEAD
     uri: https://s3.amazonaws.com/datasets.huggingface.co/datasets/datasets/hf-internal-testing/fixtures_ade20k/hf-internal-testing/fixtures_ade20k.py
   response:
@@ -246,15 +347,15 @@ interactions:
       content-type:
       - application/xml
       date:
-      - Thu, 18 Jun 2026 18:18:55 GMT
+      - Thu, 25 Jun 2026 21:31:42 GMT
       server:
       - AmazonS3
       transfer-encoding:
       - chunked
       x-amz-id-2:
-      - 7nAOqyFmjaHJD54d1oTMjOP+bKLQsOGV0d/D07tiQ8RiZcBUjsDMivwBtYKdTI6PIqNaoP60qhE=
+      - EwCCQFrcbbypxhYmfkdWXbUjmyS2Nezkmk22ZWT6qFsvtdaQKzRVr6I5nCeJMyLRGSHx51H+yKA=
       x-amz-request-id:
-      - 7G18X9X7C7ZK8PPV
+      - TYD4Z1WDBDCH30SB
     status:
       code: 404
       message: Not Found
@@ -272,7 +373,7 @@ interactions:
       user-agent:
       - unknown/None; hf_hub/1.19.0; python/3.14.5; torch/2.12.0; agent/claude-code
       x-amzn-trace-id:
-      - 1f0de956-642b-48d9-b1b2-89f8061c22b5
+      - 04e59295-0126-46a5-a0a2-d8487d170e91
     method: GET
     uri: https://huggingface.co/api/datasets/hf-internal-testing/fixtures_ade20k/revision/850d349e5038f291284e7999fcacbedc0922534b
   response:
@@ -284,13 +385,13 @@ interactions:
         SYihoZWRoZWJmZ6BgUGUko5SQVFmWWJJqpJVWmJOcaqOUnpiCUgLlJeSWZyYlIMkUJKYXqxkFa1U
         nFmVGp+cWJKanl+UmVpslWdj6K2ko5SWX5SbWGJVkFhUWJpaoqSjlJufkpiTWVJplZmbmJ4Kcllm
         UlFiUaVVSmJJYnFqSTGSUEFiXkoiskBuTnJRfmZxcWIeyKgcqM6C/JzEIpCyotT0zPw8q9JipVgd
-        pZT88ryc/MSUYiUrI0sTS0sdpZzM7NRiJSsDHaXkxKIUl8SSRCWraiWovfGZeWn5IH5aaiI4LpSs
+        pZT88ryc/MSUYiUrI3MTQ0MdpZzM7NRiJSsDHaXkxKIUl8SSRCWraiWovfGZeWn5IH5aaiI4LpSs
         oquV8hJzU5WsQBGno5RSUlkA5uSVmJko1eogZKE+gSsA85EU5CYWKCHph0jH6igVF+RkloBCD24U
         KEEo6SjllebGJ1WWgFxraWJkZAIRSa1IzC3IAQka1SJ5MB4U9EpWhoYGJhaWOnD/QETB2mt1lJLz
         89IywTFVDWXHQ/2WkpqWWJoDCk9QSMSnZYJtiK6GuE7JSgnqpoLEkgwlK7Dx+iAhXS2l2tja2Fod
         peLMpJzMPKjhRSADoEbrpWeWJJaUFGUmlYL8AgoRZGlHF9f4ssSceAMIMNTLKkgHhyteRQV5BBUZ
         EWOSkR42k4JcHV18XfVyUzAcAgodiMfBztXNT9MFMQz1YGkbFCfJRamg7OJYomSlZGRgZKRrYKxr
-        YBRiZGxlZGllZATLY6XFqSnBJflFoBxgZWRhYGlkUgsAAAD//wMAAEYTpkAEAAA=
+        YBRiZGxlZGllZATLY6XFqSnBJflFoBxgZWRhYGlkUgsAAAD//wMAT7DNEEAEAAA=
     headers:
       access-control-allow-origin:
       - https://huggingface.co
@@ -307,11 +408,11 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       date:
-      - Thu, 18 Jun 2026 18:18:56 GMT
+      - Thu, 25 Jun 2026 21:31:43 GMT
       etag:
-      - W/"440-aAWOEIWq+wbXjnrAE0dGtYXXb9Y"
+      - W/"440-B/bw/+XD9tbyUPHi3opVT+F0md0"
       ratelimit:
-      - '"api";r=999;t=249'
+      - '"api";r=999;t=82'
       ratelimit-policy:
       - '"fixed window";"api";q=1000;w=300'
       referrer-policy:
@@ -322,17 +423,17 @@ interactions:
       - Origin
       - Accept-Encoding
       via:
-      - 1.1 43cd35d154fe606336f72858d8bd76ec.cloudfront.net (CloudFront)
+      - 1.1 6f6a74f12dc7de2c455092348b6c9f28.cloudfront.net (CloudFront)
       x-amz-cf-id:
-      - TkBBdZLPrr9wKOv6_nFsnX6d1olRj5tAvD5EvcDMEe71qCzWuJOHuQ==
+      - z4l8EyHcpCu88-BHLfBcT79XVy1yHSamRTE2U1Uz-PuLuW9KnzRnaQ==
       x-amz-cf-pop:
-      - MSP50-P1
+      - JFK50-P9
       x-cache:
       - Miss from cloudfront
       x-powered-by:
       - huggingface-moon
       x-request-id:
-      - Root=1-6a343690-7b5fb4cd4db3432d72dedb53;1f0de956-642b-48d9-b1b2-89f8061c22b5
+      - Root=1-6a3d9e3f-49f7bcf92cf2a0b03ba97b27;04e59295-0126-46a5-a0a2-d8487d170e91
     status:
       code: 200
       message: OK
@@ -351,7 +452,7 @@ interactions:
       - datasets/5.0.0; hf_hub/1.19.0; python/3.14.5; torch/2.12.0; agent/claude-code;
         pyarrow/24.0.0
       x-amzn-trace-id:
-      - 8c217aef-835d-4a63-b0da-ff7b64c115f7
+      - 1b0205a7-cf55-4b18-a097-3d95df42116c
     method: HEAD
     uri: https://huggingface.co/datasets/hf-internal-testing/fixtures_ade20k/resolve/850d349e5038f291284e7999fcacbedc0922534b/.huggingface.yaml
   response:
@@ -375,11 +476,11 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       date:
-      - Thu, 18 Jun 2026 18:18:56 GMT
+      - Thu, 25 Jun 2026 21:31:43 GMT
       etag:
       - W/"f-mY2VvLxuxB7KhsoOdQTlMTccuAQ"
       ratelimit:
-      - '"resolvers";r=4997;t=249'
+      - '"resolvers";r=4996;t=82'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -387,11 +488,11 @@ interactions:
       vary:
       - Origin
       via:
-      - 1.1 43cd35d154fe606336f72858d8bd76ec.cloudfront.net (CloudFront)
+      - 1.1 6f6a74f12dc7de2c455092348b6c9f28.cloudfront.net (CloudFront)
       x-amz-cf-id:
-      - h9OrC78KH9pJTCsRo1IRrbPhdQvXaxeKAEXiyg1PDfhsJbX_TbNT8w==
+      - MTyZngqtpLJImD6M6-nGl_hQKqQK1tVSjWRdTiMDBnBPM4KwLyio8A==
       x-amz-cf-pop:
-      - MSP50-P1
+      - JFK50-P9
       x-cache:
       - Error from cloudfront
       x-error-code:
@@ -405,7 +506,7 @@ interactions:
       x-repo-commit:
       - 850d349e5038f291284e7999fcacbedc0922534b
       x-request-id:
-      - Root=1-6a343690-31b009b81846caab0548f63a;8c217aef-835d-4a63-b0da-ff7b64c115f7
+      - Root=1-6a3d9e3f-41943bf129ca400c39de7dad;1b0205a7-cf55-4b18-a097-3d95df42116c
     status:
       code: 404
       message: Not Found
@@ -423,13 +524,13 @@ interactions:
       user-agent:
       - datasets/5.0.0; hf_hub/1.19.0; python/3.14.5; torch/2.12.0; agent/claude-code
       x-amzn-trace-id:
-      - da56648d-80e6-4a8f-b275-0445db7cac15
+      - 91671829-8cd0-4ca7-9ba3-5fdfcd834273
     method: GET
     uri: https://datasets-server.huggingface.co/info?dataset=hf-internal-testing/fixtures_ade20k
   response:
     body:
       string: !!binary |
-        H4sIAJE2NGoC/21R207DMAz9Fz9XqBsVsP4BP8DLhCKvcTdDmoTGgY1q/06StkxCqC/nYp34uBNo
+        H4sIAD+ePWoC/21R207DMAz9Fz9XqBsVsP4BP8DLhCKvcTdDmoTGgY1q/06StkxCqC/nYp34uBNo
         FAwkim3voJ1AU4/RyAxDN7IXdhZagAo6FryxkxvI45FmZrgjGxbSE0ocKeQU1iVLLj6bbOWhSRNq
         4S9oIsG1Ah5K1PTrPBchOQP6f/RkHCIbTaOyOGTD4/gRSVL42mkxej6XbRRq2tbvuYizPR9Xf61c
         wSeNofSbVqiCjGmkvksf5F3eXOJ1QmwX5FG6U0Jpo+ANS2ktFMoNlycKrcDGQR0ukg+za+43j7NC
@@ -445,7 +546,7 @@ interactions:
       content-type:
       - application/json
       date:
-      - Thu, 18 Jun 2026 18:18:57 GMT
+      - Thu, 25 Jun 2026 21:31:43 GMT
       server:
       - uvicorn
       transfer-encoding:
@@ -453,9 +554,9 @@ interactions:
       vary:
       - Accept-Encoding
       via:
-      - 1.1 fc34781ab7aa403dba42cfccdb88981a.cloudfront.net (CloudFront)
+      - 1.1 1600051e9ac5d9cd9f5329cf4d5a06f8.cloudfront.net (CloudFront)
       x-amz-cf-id:
-      - x7_1uKXrP_NjqiJqKqYqH2GB82d92K6K6aEAJbDY2xxfA4w6TpMciw==
+      - UkYXVrWc6zLR6Igy4R1QF50MczB9YIMIXgV-4Ca3K2Tl64LqfRagKQ==
       x-amz-cf-pop:
       - JFK52-P8
       x-cache:
@@ -479,7 +580,7 @@ interactions:
       user-agent:
       - unknown/None; hf_hub/1.19.0; python/3.14.5; torch/2.12.0; agent/claude-code
       x-amzn-trace-id:
-      - df469779-1d18-4bc6-b65b-29a9c8a8c1f2
+      - 91f048a5-f985-44a6-bbe0-0bfecb5ac677
     method: GET
     uri: https://huggingface.co/api/datasets/hf-internal-testing/fixtures_ade20k/tree/850d349e5038f291284e7999fcacbedc0922534b/data?recursive=true&expand=false
   response:
@@ -501,11 +602,11 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       date:
-      - Thu, 18 Jun 2026 18:18:57 GMT
+      - Thu, 25 Jun 2026 21:31:43 GMT
       etag:
       - W/"138-ucJfeJSuoT2GD7EFSRXAeNlQZ08"
       ratelimit:
-      - '"api";r=998;t=248'
+      - '"api";r=998;t=82'
       ratelimit-policy:
       - '"fixed window";"api";q=1000;w=300'
       referrer-policy:
@@ -513,17 +614,17 @@ interactions:
       vary:
       - Origin
       via:
-      - 1.1 43cd35d154fe606336f72858d8bd76ec.cloudfront.net (CloudFront)
+      - 1.1 6f6a74f12dc7de2c455092348b6c9f28.cloudfront.net (CloudFront)
       x-amz-cf-id:
-      - -i2OEKj96L9w6-eGerZEJ_RfU2RUN2d5KFKwFj6qk2KPB34q6rPt9w==
+      - BNg0zaoaQr0GnY4oHWAgKvP8gekkHZdLRMgjclztopaDJzKX4aVCOA==
       x-amz-cf-pop:
-      - MSP50-P1
+      - JFK50-P9
       x-cache:
       - Miss from cloudfront
       x-powered-by:
       - huggingface-moon
       x-request-id:
-      - Root=1-6a343691-301a9504209fd21c2c9fd4cb;df469779-1d18-4bc6-b65b-29a9c8a8c1f2
+      - Root=1-6a3d9e3f-179f5886745e4e010ac4fef0;91f048a5-f985-44a6-bbe0-0bfecb5ac677
     status:
       code: 200
       message: OK
@@ -541,7 +642,7 @@ interactions:
       user-agent:
       - unknown/None; hf_hub/1.19.0; python/3.14.5; torch/2.12.0; agent/claude-code
       x-amzn-trace-id:
-      - 74e71a01-9065-44cb-980a-4c94540fcaa9
+      - 403be18a-2929-45b5-929a-e1c14a0fe86f
     method: GET
     uri: https://huggingface.co/api/datasets/hf-internal-testing/fixtures_ade20k/tree/850d349e5038f291284e7999fcacbedc0922534b?recursive=false&expand=false
   response:
@@ -563,11 +664,11 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       date:
-      - Thu, 18 Jun 2026 18:18:57 GMT
+      - Thu, 25 Jun 2026 21:31:43 GMT
       etag:
       - W/"2d0-b44mdOZZhaYfS0FIFfr5nyzPrRY"
       ratelimit:
-      - '"api";r=997;t=248'
+      - '"api";r=997;t=82'
       ratelimit-policy:
       - '"fixed window";"api";q=1000;w=300'
       referrer-policy:
@@ -575,17 +676,17 @@ interactions:
       vary:
       - Origin
       via:
-      - 1.1 43cd35d154fe606336f72858d8bd76ec.cloudfront.net (CloudFront)
+      - 1.1 6f6a74f12dc7de2c455092348b6c9f28.cloudfront.net (CloudFront)
       x-amz-cf-id:
-      - cuGm1w6SzR0rTGVhvn6Oc6U5FoptNLkPq2QzkCreMxMtpnbqLHFKqA==
+      - utj0M-Qd2rz3kMkGfYhkQ0Kww02AV0hvbquda7gCoxfxjgvLyx8IoQ==
       x-amz-cf-pop:
-      - MSP50-P1
+      - JFK50-P9
       x-cache:
       - Miss from cloudfront
       x-powered-by:
       - huggingface-moon
       x-request-id:
-      - Root=1-6a343691-4d16ed3259399d0121aebe26;74e71a01-9065-44cb-980a-4c94540fcaa9
+      - Root=1-6a3d9e3f-51773de22e691637337b69a4;403be18a-2929-45b5-929a-e1c14a0fe86f
     status:
       code: 200
       message: OK
@@ -604,7 +705,7 @@ interactions:
       - datasets/5.0.0; hf_hub/1.19.0; python/3.14.5; torch/2.12.0; agent/claude-code;
         pyarrow/24.0.0
       x-amzn-trace-id:
-      - a60251bf-989c-45a5-bf31-6f3e10167890
+      - 098e0ff8-8293-4b7e-91c6-2eb9b5d8bdf2
     method: HEAD
     uri: https://huggingface.co/datasets/hf-internal-testing/fixtures_ade20k/resolve/850d349e5038f291284e7999fcacbedc0922534b/dataset_infos.json
   response:
@@ -628,11 +729,11 @@ interactions:
       cross-origin-opener-policy:
       - same-origin
       date:
-      - Thu, 18 Jun 2026 18:18:57 GMT
+      - Thu, 25 Jun 2026 21:31:44 GMT
       etag:
       - W/"f-mY2VvLxuxB7KhsoOdQTlMTccuAQ"
       ratelimit:
-      - '"resolvers";r=4996;t=248'
+      - '"resolvers";r=4995;t=81'
       ratelimit-policy:
       - '"fixed window";"resolvers";q=5000;w=300'
       referrer-policy:
@@ -640,11 +741,11 @@ interactions:
       vary:
       - Origin
       via:
-      - 1.1 43cd35d154fe606336f72858d8bd76ec.cloudfront.net (CloudFront)
+      - 1.1 6f6a74f12dc7de2c455092348b6c9f28.cloudfront.net (CloudFront)
       x-amz-cf-id:
-      - ZGYQDBYDblqcjOLEbH6mOlX90M7mk1EN5rVQbNSL3AUvX-EBPJHIcA==
+      - DX-4lDKtFi5c-xBnaiaTac5bmuWdQEuUXDlwmiwBgTSn41mX6UffJQ==
       x-amz-cf-pop:
-      - MSP50-P1
+      - JFK50-P9
       x-cache:
       - Error from cloudfront
       x-error-code:
@@ -658,7 +759,7 @@ interactions:
       x-repo-commit:
       - 850d349e5038f291284e7999fcacbedc0922534b
       x-request-id:
-      - Root=1-6a343691-7228bcf833258da77c56611c;a60251bf-989c-45a5-bf31-6f3e10167890
+      - Root=1-6a3d9e40-7693b0a670225f5525dfc409;098e0ff8-8293-4b7e-91c6-2eb9b5d8bdf2
     status:
       code: 404
       message: Not Found

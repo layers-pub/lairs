@@ -310,6 +310,11 @@ def test_load_from_hub_reads_public_dataset(
     # the concrete-type assertion pins.
     datasets = pytest.importorskip("datasets")
     monkeypatch.setenv("HF_HOME", str(tmp_path))
+    # pin the standard (non-Xet) download path. hf_xet ships only free-threaded
+    # (cp314t) wheels, so whether the Xet backend is active depends on the
+    # interpreter's free-threaded status, which varies across machines and CI.
+    # disabling it keeps the recorded request set deterministic and replayable.
+    monkeypatch.setenv("HF_HUB_DISABLE_XET", "1")
     loaded = hub.load_from_hub("hf-internal-testing/fixtures_ade20k")
     assert isinstance(loaded, datasets.DatasetDict)
     assert len(loaded) >= 1
