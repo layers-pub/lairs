@@ -14,6 +14,7 @@ from multiformats import CID, multihash
 
 from lairs.atproto.pds import PdsClient, decode
 from lairs.author import publish
+from lairs.records import changelog as changelog_records
 from lairs.records._generated.expression import Expression
 from lairs.records._generated.media import Media
 from lairs.records.blobref import BlobRef
@@ -24,6 +25,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from conftest import PdsServer
+
+    from lairs._types import JsonValue
 
 
 def _mock_client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
@@ -741,6 +744,188 @@ def test_apply_writes_module_function() -> None:
     assert results[0].status == "created"
 
 
+# changelog hook -----------------------------------------------------------
+
+
+def _seed_two_commits(path: Path) -> tuple[Repository, str, str, str, str]:
+    """Initialise a repo with a base commit and a head that edits the text."""
+    repo = Repository.init(path)
+    now = datetime(2026, 6, 16, tzinfo=UTC)
+    expr_uri = "at://did:plc:me/pub.layers.expression.expression/e1"
+    media_uri = "at://did:plc:me/pub.layers.media.media/m1"
+    repo.save(
+        expr_uri, Expression(id="doc-1", kind="sentence", createdAt=now, text="hi")
+    )
+    repo.save(media_uri, Media(kind="audio", createdAt=now))
+    base = repo.commit("base")
+    repo.save(
+        expr_uri, Expression(id="doc-1", kind="sentence", createdAt=now, text="bye")
+    )
+    head = repo.commit("head")
+    return repo, base, head, expr_uri, media_uri
+
+
+def _changelog_value(
+    subject: str,
+    version: changelog_records.SemanticVersion,
+    created: datetime,
+) -> JsonValue:
+    """Return the JSON value of a published changelog entry for a subject."""
+    entry = changelog_records.Entry(
+        createdAt=created,
+        sections=(
+            changelog_records.ChangeSection(
+                category="text",
+                items=(changelog_records.ChangeItem(description="seed"),),
+            ),
+        ),
+        subject=subject,
+        subjectCollection="pub.layers.expression.expression",
+        summary="seed",
+        version=version,
+    )
+    value: JsonValue = json.loads(entry.model_dump_json())
+    return value
+
+
+def test_publish_changelog_emits_entry_for_changed_record(tmp_path: Path) -> None:
+    # offline dry run: the field diff between base and head drives one changelog
+    # entry for the changed expression and none for the unchanged media.
+    repo, base, head, expr_uri, _media_uri = _seed_two_commits(tmp_path)
+    plan = publish.publish(
+        repo,
+        head,
+        to="did:plc:me",
+        dry_run=True,
+        changelog=True,
+        changelog_base=base,
+    )
+    changelog_ops = [
+        op for op in plan.creates if op.collection == "pub.layers.changelog.entry"
+    ]
+    assert len(changelog_ops) == 1
+    op = changelog_ops[0]
+    assert isinstance(op.value, dict)
+    assert op.value["$type"] == "pub.layers.changelog.entry"
+    assert op.value["subject"] == expr_uri
+    assert op.value["version"] == {"major": 0, "minor": 0, "patch": 1}
+    assert op.rkey == "e1.0.0.1"
+
+
+def test_publish_changelog_disabled_by_default(tmp_path: Path) -> None:
+    repo, _base, head, _expr_uri, _media_uri = _seed_two_commits(tmp_path)
+    plan = publish.publish(repo, head, to="did:plc:me", dry_run=True)
+    assert all(op.collection != "pub.layers.changelog.entry" for op in plan.creates)
+
+
+def test_publish_changelog_is_monotonic_from_published_version(
+    tmp_path: Path,
+) -> None:
+    repo, base, head, expr_uri, _media_uri = _seed_two_commits(tmp_path)
+    prior = _changelog_value(
+        expr_uri,
+        changelog_records.SemanticVersion(major=1, minor=0, patch=0),
+        datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if not request.url.path.endswith("listRecords"):
+            return httpx.Response(404)
+        if request.url.params.get("collection") == "pub.layers.changelog.entry":
+            return httpx.Response(
+                200,
+                json={
+                    "records": [
+                        {
+                            "uri": "at://did:plc:me/pub.layers.changelog.entry/e1.1.0.0",
+                            "cid": "cidP",
+                            "value": prior,
+                        },
+                    ],
+                    "cursor": "",
+                },
+            )
+        return httpx.Response(200, json={"records": [], "cursor": ""})
+
+    plan = publish.publish(
+        repo,
+        head,
+        to="did:plc:me",
+        endpoint="https://pds.example",
+        client=_mock_client(handler),
+        dry_run=True,
+        changelog=True,
+        changelog_base=base,
+    )
+    changelog_ops = [
+        op for op in plan.creates if op.collection == "pub.layers.changelog.entry"
+    ]
+    assert len(changelog_ops) == 1
+    op = changelog_ops[0]
+    assert isinstance(op.value, dict)
+    assert op.value["version"] == {"major": 1, "minor": 0, "patch": 1}
+    assert op.value["previousVersion"] == {"major": 1, "minor": 0, "patch": 0}
+
+
+def test_latest_published_versions_picks_newest_per_subject() -> None:
+    expr_uri = "at://did:plc:me/pub.layers.expression.expression/e1"
+    older = _changelog_value(
+        expr_uri,
+        changelog_records.SemanticVersion(major=1, minor=0, patch=0),
+        datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    newer = _changelog_value(
+        expr_uri,
+        changelog_records.SemanticVersion(major=1, minor=1, patch=0),
+        datetime(2026, 2, 1, tzinfo=UTC),
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if not request.url.path.endswith("listRecords"):
+            return httpx.Response(404)
+        if request.url.params.get("collection") == "pub.layers.changelog.entry":
+            return httpx.Response(
+                200,
+                json={
+                    "records": [
+                        {
+                            "uri": "at://did:plc:me/pub.layers.changelog.entry/a",
+                            "cid": "c1",
+                            "value": older,
+                        },
+                        {
+                            "uri": "at://did:plc:me/pub.layers.changelog.entry/b",
+                            "cid": "c2",
+                            "value": newer,
+                        },
+                    ],
+                    "cursor": "",
+                },
+            )
+        return httpx.Response(200, json={"records": [], "cursor": ""})
+
+    versions = publish._latest_published_versions(
+        "did:plc:me",
+        endpoint="https://pds.example",
+        client=_mock_client(handler),
+    )
+    assert versions == {
+        expr_uri: changelog_records.SemanticVersion(major=1, minor=1, patch=0),
+    }
+
+
+def test_latest_published_versions_treats_404_as_empty() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": "NotFound"})
+
+    versions = publish._latest_published_versions(
+        "did:plc:me",
+        endpoint="https://pds.example",
+        client=_mock_client(handler),
+    )
+    assert versions == {}
+
+
 @pytest.mark.integration
 def test_write_round_trip_live(pds_server: PdsServer) -> None:
     """Create a record through the write client and read it back from the PDS."""
@@ -1080,3 +1265,81 @@ def test_publish_blob_record_is_idempotent_live(
             dry_run=True,
         )
         assert again.is_empty()
+
+
+def _expr_json(text: str) -> str:
+    """Return an expression record JSON payload carrying the given text."""
+    return json.dumps(
+        {
+            "id": "77777777-7777-7777-7777-777777777777",
+            "text": text,
+            "kind": "sentence",
+            "createdAt": "2026-06-16T00:00:00Z",
+        },
+    )
+
+
+@pytest.mark.integration
+def test_publish_emits_monotonic_changelog_live(
+    pds_server: PdsServer,
+    tmp_path: Path,
+) -> None:
+    # publishing with changelog=True writes a changelog entry per changed record
+    # alongside the data, versioned monotonically from the PDS across runs.
+    did, jwt = _fresh_account(pds_server)
+    repo = Repository.init(tmp_path / "clrepo")
+    collection = "pub.layers.expression.expression"
+    uri = f"at://{did}/{collection}/rec1"
+    repo.save(uri, Expression.model_validate_json(_expr_json("v1")))
+    base = repo.commit("c1", author="lairs <lairs@layers.pub>")
+    changelog_nsid = "pub.layers.changelog.entry"
+    with httpx.Client(headers={"Authorization": f"Bearer {jwt}"}) as client:
+        first = publish.publish(
+            repo,
+            base,
+            to=did,
+            endpoint=pds_server.endpoint,
+            client=client,
+            dry_run=False,
+            changelog=True,
+        )
+        first_ops = [op for op in first.creates if op.collection == changelog_nsid]
+        assert len(first_ops) == 1
+        reader = PdsClient(pds_server.endpoint, client)
+        env = reader.get_record(did, changelog_nsid, "rec1.0.1.0")
+        entry = decode(env, changelog_records.Entry)
+        assert entry.subject == uri
+        assert entry.version == changelog_records.SemanticVersion(
+            major=0,
+            minor=1,
+            patch=0,
+        )
+        # a content change bumps the next entry monotonically from the PDS.
+        repo.save(uri, Expression.model_validate_json(_expr_json("v2")))
+        head = repo.commit("c2", author="lairs <lairs@layers.pub>")
+        second = publish.publish(
+            repo,
+            head,
+            to=did,
+            endpoint=pds_server.endpoint,
+            client=client,
+            dry_run=False,
+            changelog=True,
+        )
+        second_ops = [op for op in second.creates if op.collection == changelog_nsid]
+        assert len(second_ops) == 1
+        env2 = reader.get_record(did, changelog_nsid, "rec1.0.1.1")
+        assert decode(env2, changelog_records.Entry).version == (
+            changelog_records.SemanticVersion(major=0, minor=1, patch=1)
+        )
+        # re-publishing the unchanged head writes no further changelog entry.
+        again = publish.publish(
+            repo,
+            head,
+            to=did,
+            endpoint=pds_server.endpoint,
+            client=client,
+            dry_run=True,
+            changelog=True,
+        )
+        assert all(op.collection != changelog_nsid for op in again.creates)

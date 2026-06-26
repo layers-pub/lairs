@@ -457,6 +457,30 @@ class Repository:
         )
         return RecordDiff(added=added, removed=removed, changed=changed)
 
+    def content_at(self, ref: str) -> dict[str, JsonValue]:
+        """Return the committed record values at a revision, keyed by AT-URI.
+
+        Each value is the JSON-decoded record content folded over the
+        revision's commit ancestry, so a record removed by a tombstone at or
+        before ``ref`` is absent. This is the decoded counterpart to the raw
+        byte state behind :meth:`diff`, suitable for a field-level comparison
+        of a record across two revisions.
+
+        Parameters
+        ----------
+        ref : str
+            The revision to read (ref expression).
+
+        Returns
+        -------
+        dict of str to JsonValue
+            The decoded record values at the revision, keyed by AT-URI.
+        """
+        decoded: dict[str, JsonValue] = {}
+        for uri, raw in self._state_at(ref).items():
+            decoded[uri] = json.loads(raw)
+        return decoded
+
     def _state_at(self, ref: str) -> dict[str, bytes]:
         """Reconstruct the committed record values at a revision, keyed by AT-URI.
 
