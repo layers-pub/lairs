@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-26
+
+### Added
+
+- **Aggregate per-dataset changelog entries.** `build_aggregate_entry` assembles
+  a single `pub.layers.changelog.entry` for a dataset anchor from the diffs of the
+  many component records that make up that dataset (a new `ComponentChange` value
+  type), grouping changes into `ChangeSection`s by each component's category and
+  pointing `ChangeItem.targets` at the changed components. The version is bumped
+  once from the whole aggregate, monotonic from the supplied previous version, and
+  an aggregate with no real change does not bump. A scale guard keeps each item's
+  true count in its `description` and caps the enumerated `targets` at
+  `targets_per_item`, so a change touching many records is summarised, never
+  silently truncated.
+
 ## [0.2.0] - 2026-06-25
 
 ### Added
@@ -79,6 +94,7 @@ didactic model.
   repositories, discovering datasets, building and searching the index, managing
   sessions, and launching the explorer.
 
-[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/layers-pub/lairs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/layers-pub/lairs/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/layers-pub/lairs/releases/tag/v0.1.0
