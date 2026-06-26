@@ -29,11 +29,11 @@ from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 import didactic.api as dx
 
-from lairs.records import changelog
+from lairs.records import changelog, defs
 from lairs.store.repository import RecordDiff
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Iterable, Iterator, Mapping, Sequence
 
     from lairs._types import JsonValue
     from lairs.store.repository import Repository
@@ -41,9 +41,11 @@ if TYPE_CHECKING:
 __all__ = [
     "BumpClassifier",
     "BumpLevel",
+    "ComponentChange",
     "DefaultBumpClassifier",
     "FieldChange",
     "FieldDiff",
+    "build_aggregate_entry",
     "build_entry",
     "bump_version",
     "diff_fields",
@@ -65,6 +67,9 @@ _MAX_DESCRIPTION_LEN = 2000
 
 _MAX_SUMMARY_LEN = 500
 """The maximum length of an entry ``summary``."""
+
+_DEFAULT_TARGETS_PER_ITEM = 10
+"""The default cap on enumerated ``ObjectRef`` targets per aggregate change item."""
 
 _NAMESPACE_SEGMENT = 2
 """The dotted segment of a collection NSID holding the lexicon namespace."""
@@ -152,6 +157,35 @@ class FieldDiff(dx.Model):
     changes: tuple[dx.Embed[FieldChange], ...] = dx.field(
         default_factory=tuple,
         description="the field-level changes, empty unless the record changed",
+    )
+
+
+class ComponentChange(dx.Model):
+    """One component record's contribution to a dataset changelog entry.
+
+    A dataset spans many component records (its corpus, expressions,
+    segmentations, annotations, and so on); each :class:`ComponentChange` carries
+    one such record's diff so :func:`build_aggregate_entry` can assemble a single
+    dataset-level entry from them.
+
+    Attributes
+    ----------
+    uri : str
+        The component record AT-URI, used as the changelog target.
+    collection : str
+        The component's collection NSID, mapped to a section category.
+    field_diff : FieldDiff
+        The component's field-level diff between the two revisions.
+    """
+
+    uri: str = dx.field(
+        description="the component record AT-URI, used as the changelog target",
+    )
+    collection: str = dx.field(
+        description="the component's collection NSID, mapped to a section category",
+    )
+    field_diff: dx.Embed[FieldDiff] = dx.field(
+        description="the component's field-level diff between the two revisions",
     )
 
 
@@ -837,4 +871,380 @@ def generate_changelog(  # noqa: PLR0913  (revisions plus entry-shaping knobs)
         classifier=classifier,
         created_at=created_at,
         summary=summary,
+    )
+
+
+def _component_changed(component: ComponentChange) -> bool:
+    """Return whether a component actually changed between the two revisions.
+
+    Parameters
+    ----------
+    component : ComponentChange
+        The component to inspect.
+
+    Returns
+    -------
+    bool
+        ``True`` when the component was added, removed, or changed with at least
+        one field change; ``False`` for an unchanged component.
+    """
+    field_diff = component.field_diff
+    if field_diff.record_change in ("added", "removed"):
+        return True
+    return field_diff.record_change == "changed" and bool(field_diff.changes)
+
+
+def _aggregate_record_diff(components: Sequence[ComponentChange]) -> RecordDiff:
+    """Build a :class:`RecordDiff` aggregating the components' record changes.
+
+    Parameters
+    ----------
+    components : collections.abc.Sequence of ComponentChange
+        The changed components.
+
+    Returns
+    -------
+    lairs.store.repository.RecordDiff
+        A diff naming each component AT-URI in its added, removed, or changed
+        bucket, used to classify the aggregate bump level.
+    """
+    added: list[str] = []
+    removed: list[str] = []
+    changed: list[str] = []
+    for component in components:
+        record_change = component.field_diff.record_change
+        if record_change == "added":
+            added.append(component.uri)
+        elif record_change == "removed":
+            removed.append(component.uri)
+        elif record_change == "changed":
+            changed.append(component.uri)
+    return RecordDiff(
+        added=tuple(sorted(added)),
+        removed=tuple(sorted(removed)),
+        changed=tuple(sorted(changed)),
+    )
+
+
+def _aggregate_field_changes(
+    components: Sequence[ComponentChange],
+) -> dict[str, tuple[FieldChange, ...]]:
+    """Map each component's AT-URI to its field changes.
+
+    Parameters
+    ----------
+    components : collections.abc.Sequence of ComponentChange
+        The changed components.
+
+    Returns
+    -------
+    dict of str to tuple of FieldChange
+        A mapping from component AT-URI to its field changes, for components that
+        have any, used to classify the aggregate bump level.
+    """
+    return {
+        component.uri: tuple(component.field_diff.changes)
+        for component in components
+        if component.field_diff.changes
+    }
+
+
+def _aggregate_targets(
+    uris: Sequence[str],
+    targets_per_item: int | None,
+) -> tuple[defs.ObjectRef, ...]:
+    """Build a bounded set of object-ref targets for changed components.
+
+    The targets are capped at ``targets_per_item`` so a change touching many
+    component records does not enumerate them all (the record-size limit forbids
+    it). The cap is never silent: the true count is carried in the item
+    ``description``, so a reader sees the full scale even when only a
+    representative set is enumerated. ``None`` omits targets entirely.
+
+    Parameters
+    ----------
+    uris : collections.abc.Sequence of str
+        The component AT-URIs that share a change, sorted.
+    targets_per_item : int or None
+        The maximum number of targets to enumerate, or ``None`` to omit them.
+
+    Returns
+    -------
+    tuple of lairs.records.defs.ObjectRef
+        The bounded target set, each pointing at a component by ``recordRef``.
+    """
+    if targets_per_item is None:
+        return ()
+    return tuple(defs.ObjectRef(recordRef=uri) for uri in uris[:targets_per_item])
+
+
+def _aggregate_description(
+    change_type: str,
+    field_path: str | None,
+    count: int,
+    category: str,
+) -> str:
+    """Build a counted description for an aggregate change item.
+
+    Parameters
+    ----------
+    change_type : str
+        The change kind: ``added``, ``removed``, or ``changed``.
+    field_path : str or None
+        The changed field path, or ``None`` for a record-level change.
+    count : int
+        The number of component records sharing this change.
+    category : str
+        The section category the change belongs to.
+
+    Returns
+    -------
+    str
+        A bounded description carrying the true count, for example
+        ``"Added features/adjPosition to 7465 ontology records"``.
+    """
+    noun = "record" if count == 1 else "records"
+    scope = f"{count} {category} {noun}"
+    if field_path is None:
+        verbs = {"added": "Added", "removed": "Removed"}
+        text = f"{verbs.get(change_type, 'Changed')} {scope}"
+    elif change_type == "added":
+        text = f"Added {field_path} to {scope}"
+    elif change_type == "removed":
+        text = f"Removed {field_path} from {scope}"
+    else:
+        text = f"Changed {field_path} in {scope}"
+    return _truncate(text, _MAX_DESCRIPTION_LEN)
+
+
+def _aggregate_item(
+    change_type: str,
+    field_path: str | None,
+    members: Sequence[tuple[str, FieldChange | None]],
+    category: str,
+    targets_per_item: int | None,
+) -> changelog.ChangeItem:
+    """Build one aggregate change item for a (change type, field path) group.
+
+    Parameters
+    ----------
+    change_type : str
+        The shared change kind.
+    field_path : str or None
+        The shared field path, or ``None`` for a record-level change.
+    members : collections.abc.Sequence
+        The ``(component AT-URI, field change or None)`` pairs in this group.
+    category : str
+        The section category.
+    targets_per_item : int or None
+        The cap on enumerated targets, or ``None`` to omit them.
+
+    Returns
+    -------
+    lairs.records.changelog.ChangeItem
+        The summarised change item. Previous and new display values are carried
+        only when the group is a single field change.
+    """
+    count = len(members)
+    previous_value: str | None = None
+    new_value: str | None = None
+    if count == 1 and members[0][1] is not None:
+        change = members[0][1]
+        previous_value = change.previous_value
+        new_value = change.new_value
+    uris = sorted(uri for uri, _ in members)
+    return changelog.ChangeItem(
+        changeType=change_type,
+        description=_aggregate_description(change_type, field_path, count, category),
+        fieldPath=field_path,
+        previousValue=previous_value,
+        newValue=new_value,
+        targets=_aggregate_targets(uris, targets_per_item),
+    )
+
+
+def _aggregate_items(
+    components: Sequence[ComponentChange],
+    category: str,
+    targets_per_item: int | None,
+) -> tuple[changelog.ChangeItem, ...]:
+    """Summarise one category's component changes into change items.
+
+    Changes are grouped by ``(change type, field path)`` so a representation
+    change that touches many records becomes one counted item, not one item per
+    record.
+
+    Parameters
+    ----------
+    components : collections.abc.Sequence of ComponentChange
+        The changed components in this category.
+    category : str
+        The section category.
+    targets_per_item : int or None
+        The cap on enumerated targets per item, or ``None`` to omit them.
+
+    Returns
+    -------
+    tuple of lairs.records.changelog.ChangeItem
+        One item per distinct change signature, ordered for determinism.
+    """
+    groups: dict[tuple[str, str | None], list[tuple[str, FieldChange | None]]] = {}
+    for component in components:
+        record_change = component.field_diff.record_change
+        if record_change in ("added", "removed"):
+            groups.setdefault((record_change, None), []).append((component.uri, None))
+        elif record_change == "changed":
+            for change in component.field_diff.changes:
+                key = (change.change_type, change.field_path)
+                groups.setdefault(key, []).append((component.uri, change))
+    items: list[changelog.ChangeItem] = []
+    for signature in sorted(groups, key=lambda key: (key[0], key[1] or "")):
+        change_type, field_path = signature
+        items.append(
+            _aggregate_item(
+                change_type,
+                field_path,
+                groups[signature],
+                category,
+                targets_per_item,
+            ),
+        )
+    return tuple(items)
+
+
+def _aggregate_sections(
+    components: Sequence[ComponentChange],
+    targets_per_item: int | None,
+) -> tuple[changelog.ChangeSection, ...]:
+    """Group component changes into category sections.
+
+    Parameters
+    ----------
+    components : collections.abc.Sequence of ComponentChange
+        The changed components.
+    targets_per_item : int or None
+        The cap on enumerated targets per item, or ``None`` to omit them.
+
+    Returns
+    -------
+    tuple of lairs.records.changelog.ChangeSection
+        One section per category that has changes, ordered by category.
+    """
+    by_category: dict[str, list[ComponentChange]] = {}
+    for component in components:
+        by_category.setdefault(_category_for(component.collection), []).append(
+            component,
+        )
+    sections: list[changelog.ChangeSection] = []
+    for category in sorted(by_category):
+        items = _aggregate_items(by_category[category], category, targets_per_item)
+        if items:
+            sections.append(changelog.ChangeSection(category=category, items=items))
+    return tuple(sections)
+
+
+def _aggregate_summary(component_count: int, section_count: int) -> str:
+    """Build a one-line summary for an aggregate entry.
+
+    Parameters
+    ----------
+    component_count : int
+        The number of changed component records.
+    section_count : int
+        The number of category sections.
+
+    Returns
+    -------
+    str
+        A bounded one-line summary.
+    """
+    component_noun = "component" if component_count == 1 else "components"
+    section_noun = "category" if section_count == 1 else "categories"
+    return _truncate(
+        f"Changed {component_count} {component_noun} "
+        f"across {section_count} {section_noun}",
+        _MAX_SUMMARY_LEN,
+    )
+
+
+def build_aggregate_entry(  # noqa: PLR0913  (each field of the entry is a distinct knob)
+    *,
+    subject: str,
+    subject_collection: str,
+    components: Iterable[ComponentChange],
+    previous_version: changelog.SemanticVersion | None = None,
+    classifier: BumpClassifier | None = None,
+    created_at: datetime | None = None,
+    summary: str | None = None,
+    targets_per_item: int | None = _DEFAULT_TARGETS_PER_ITEM,
+) -> changelog.Entry:
+    """Assemble one dataset changelog entry from many component diffs.
+
+    A dataset is not one record: it fans out across many component records (its
+    corpus, expressions, segmentations, annotations, and so on). This builder
+    takes one :class:`ComponentChange` per changed component and produces a single
+    :class:`~lairs.records.changelog.Entry` for the dataset ``subject``: changes
+    are grouped into :class:`~lairs.records.changelog.ChangeSection` s by each
+    component's category, summarised into counted change items whose ``targets``
+    point at the changed components, and the version is bumped once from the whole
+    aggregate (additive becomes minor, value-only becomes patch, removals or
+    identity and reference breaks become major), monotonic from
+    ``previous_version``.
+
+    A representation change can touch very many component records, more than a
+    single record can enumerate, so each item carries the true count in its
+    ``description`` and a bounded, representative set of ``targets`` capped at
+    ``targets_per_item``. The cap is never silent: the count in the description
+    always reflects the full scale. An aggregate with no real component change
+    does not bump and emits no sections, so a re-run is idempotent.
+
+    Parameters
+    ----------
+    subject : str
+        The dataset anchor AT-URI the entry describes.
+    subject_collection : str
+        The anchor record's collection NSID.
+    components : collections.abc.Iterable of ComponentChange
+        One change per component record that makes up the dataset.
+    previous_version : lairs.records.changelog.SemanticVersion or None, optional
+        The version the dataset was last published at, written verbatim to
+        ``previousVersion`` and bumped into ``version``.
+    classifier : BumpClassifier or None, optional
+        The bump policy; the default policy is used when omitted.
+    created_at : datetime.datetime or None, optional
+        The entry timestamp; the current UTC time is used when omitted.
+    summary : str or None, optional
+        A one-line summary; a generated summary is used when omitted.
+    targets_per_item : int or None, optional
+        The cap on enumerated ``ObjectRef`` targets per change item; ``None``
+        omits targets entirely.
+
+    Returns
+    -------
+    lairs.records.changelog.Entry
+        The assembled dataset changelog entry.
+    """
+    resolved_classifier = classifier if classifier is not None else _DEFAULT_CLASSIFIER
+    changed = [component for component in components if _component_changed(component)]
+    if not changed:
+        version = previous_version
+        sections: tuple[changelog.ChangeSection, ...] = ()
+        default_summary = f"No changes to {subject_collection} dataset"
+    else:
+        level = resolved_classifier.classify(
+            _aggregate_record_diff(changed),
+            _aggregate_field_changes(changed),
+        )
+        version = bump_version(previous_version, level)
+        sections = _aggregate_sections(changed, targets_per_item)
+        default_summary = _aggregate_summary(len(changed), len(sections))
+    resolved_summary = summary if summary is not None else default_summary
+    return changelog.Entry(
+        createdAt=created_at if created_at is not None else datetime.now(UTC),
+        previousVersion=previous_version,
+        sections=sections,
+        subject=subject,
+        subjectCollection=subject_collection,
+        summary=_truncate(resolved_summary, _MAX_SUMMARY_LEN),
+        version=version,
     )

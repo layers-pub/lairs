@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
+    from lairs._types import JsonValue
     from lairs.author.changelog import BumpLevel, FieldChange
 
 _SemVer = records_changelog.SemanticVersion
@@ -39,9 +40,11 @@ def test_exports() -> None:
     assert set(changelog.__all__) == {
         "BumpClassifier",
         "BumpLevel",
+        "ComponentChange",
         "DefaultBumpClassifier",
         "FieldChange",
         "FieldDiff",
+        "build_aggregate_entry",
         "build_entry",
         "bump_version",
         "diff_fields",
@@ -349,3 +352,204 @@ def test_generate_changelog_absent_in_both_revisions_raises(tmp_path: Path) -> N
             subject=missing,
             subject_collection=_EXPR_NSID,
         )
+
+
+# aggregate per-dataset entries ---------------------------------------------
+
+
+_CORPUS_NSID = "pub.layers.corpus.corpus"
+_ONTOLOGY_NSID = "pub.layers.ontology.ontology"
+_DATASET_URI = f"at://did:plc:abc/{_CORPUS_NSID}/uds"
+
+
+def _component(
+    uri: str,
+    collection: str,
+    old: JsonValue,
+    new: JsonValue,
+) -> changelog.ComponentChange:
+    """Build a component change from a record's old and new values."""
+    return changelog.ComponentChange(
+        uri=uri,
+        collection=collection,
+        field_diff=changelog.diff_record(old, new),
+    )
+
+
+def test_component_change_carries_uri_collection_and_diff() -> None:
+    component = changelog.ComponentChange(
+        uri=f"at://d/{_ONTOLOGY_NSID}/o1",
+        collection=_ONTOLOGY_NSID,
+        field_diff=changelog.diff_record({"a": 1}, {"a": 2}),
+    )
+    assert component.uri.endswith("/o1")
+    assert component.collection == _ONTOLOGY_NSID
+    assert component.field_diff.record_change == "changed"
+
+
+def test_build_aggregate_entry_groups_components_by_category() -> None:
+    components = [
+        _component(f"at://d/{_CORPUS_NSID}/c1", _CORPUS_NSID, None, {"name": "new"}),
+        _component(
+            f"at://d/{_ONTOLOGY_NSID}/o1",
+            _ONTOLOGY_NSID,
+            {"gloss": "a"},
+            {"gloss": "a", "pos": "n"},
+        ),
+    ]
+    entry = changelog.build_aggregate_entry(
+        subject=_DATASET_URI,
+        subject_collection=_CORPUS_NSID,
+        components=components,
+    )
+    assert [s.category for s in entry.sections] == ["corpus", "ontology"]
+    assert entry.subject == _DATASET_URI
+    assert entry.subjectCollection == _CORPUS_NSID
+
+
+def test_build_aggregate_entry_summarizes_many_records_with_count_and_cap() -> None:
+    components = [
+        _component(
+            f"at://d/{_ONTOLOGY_NSID}/n{i}",
+            _ONTOLOGY_NSID,
+            {"gloss": "a"},
+            {"gloss": "a", "pos": "n"},
+        )
+        for i in range(25)
+    ]
+    entry = changelog.build_aggregate_entry(
+        subject=_DATASET_URI,
+        subject_collection=_CORPUS_NSID,
+        components=components,
+        targets_per_item=3,
+    )
+    assert len(entry.sections) == 1
+    item = entry.sections[0].items[0]
+    # the 25 records collapse to one item carrying the true count...
+    assert "25" in item.description
+    assert item.fieldPath == "pos"
+    assert item.changeType == "added"
+    # ...while the enumerated targets are bounded by the cap.
+    assert item.targets is not None
+    assert len(item.targets) == 3
+
+
+def test_build_aggregate_entry_targets_per_item_none_omits_targets() -> None:
+    components = [
+        _component(f"at://d/{_ONTOLOGY_NSID}/n{i}", _ONTOLOGY_NSID, {"a": 1}, {"a": 2})
+        for i in range(5)
+    ]
+    entry = changelog.build_aggregate_entry(
+        subject=_DATASET_URI,
+        subject_collection=_CORPUS_NSID,
+        components=components,
+        targets_per_item=None,
+    )
+    assert entry.sections[0].items[0].targets == ()
+
+
+def test_build_aggregate_entry_targets_point_at_components() -> None:
+    uri = f"at://d/{_ONTOLOGY_NSID}/only"
+    entry = changelog.build_aggregate_entry(
+        subject=_DATASET_URI,
+        subject_collection=_CORPUS_NSID,
+        components=[_component(uri, _ONTOLOGY_NSID, {"a": 1}, {"a": 2})],
+    )
+    targets = entry.sections[0].items[0].targets
+    assert targets is not None
+    assert [t.recordRef for t in targets] == [uri]
+
+
+def test_build_aggregate_entry_single_field_change_keeps_values() -> None:
+    entry = changelog.build_aggregate_entry(
+        subject=_DATASET_URI,
+        subject_collection=_CORPUS_NSID,
+        components=[
+            _component(
+                f"at://d/{_ONTOLOGY_NSID}/o1",
+                _ONTOLOGY_NSID,
+                {"gloss": "old"},
+                {"gloss": "new"},
+            ),
+        ],
+    )
+    item = entry.sections[0].items[0]
+    assert item.previousValue == "old"
+    assert item.newValue == "new"
+
+
+def test_build_aggregate_entry_bumps_by_aggregate_level() -> None:
+    base = _SemVer(major=1, minor=0, patch=0)
+    patch = changelog.build_aggregate_entry(
+        subject=_DATASET_URI,
+        subject_collection=_CORPUS_NSID,
+        components=[
+            _component(
+                f"at://d/{_ONTOLOGY_NSID}/o", _ONTOLOGY_NSID, {"a": 1}, {"a": 2}
+            ),
+        ],
+        previous_version=base,
+    )
+    assert patch.version == _SemVer(major=1, minor=0, patch=1)
+    minor = changelog.build_aggregate_entry(
+        subject=_DATASET_URI,
+        subject_collection=_CORPUS_NSID,
+        components=[
+            _component(f"at://d/{_ONTOLOGY_NSID}/o", _ONTOLOGY_NSID, None, {"a": 1}),
+        ],
+        previous_version=base,
+    )
+    assert minor.version == _SemVer(major=1, minor=1, patch=0)
+    major = changelog.build_aggregate_entry(
+        subject=_DATASET_URI,
+        subject_collection=_CORPUS_NSID,
+        components=[
+            _component(f"at://d/{_ONTOLOGY_NSID}/o", _ONTOLOGY_NSID, {"a": 1}, None),
+        ],
+        previous_version=base,
+    )
+    assert major.version == _SemVer(major=2, minor=0, patch=0)
+
+
+def test_build_aggregate_entry_identity_break_is_major() -> None:
+    entry = changelog.build_aggregate_entry(
+        subject=_DATASET_URI,
+        subject_collection=_CORPUS_NSID,
+        components=[
+            _component(
+                f"at://d/{_ONTOLOGY_NSID}/o1",
+                _ONTOLOGY_NSID,
+                {"localId": "a"},
+                {"localId": "b"},
+            ),
+        ],
+        previous_version=_SemVer(major=1, minor=2, patch=3),
+    )
+    assert entry.version == _SemVer(major=2, minor=0, patch=0)
+
+
+def test_build_aggregate_entry_is_idempotent_when_nothing_changed() -> None:
+    previous = _SemVer(major=3, minor=1, patch=4)
+    entry = changelog.build_aggregate_entry(
+        subject=_DATASET_URI,
+        subject_collection=_CORPUS_NSID,
+        components=[
+            _component(
+                f"at://d/{_ONTOLOGY_NSID}/o", _ONTOLOGY_NSID, {"a": 1}, {"a": 1}
+            ),
+        ],
+        previous_version=previous,
+    )
+    assert entry.version == previous
+    assert entry.sections == ()
+
+
+def test_build_aggregate_entry_no_components_does_not_bump() -> None:
+    entry = changelog.build_aggregate_entry(
+        subject=_DATASET_URI,
+        subject_collection=_CORPUS_NSID,
+        components=[],
+        previous_version=_SemVer(major=2, minor=0, patch=0),
+    )
+    assert entry.version == _SemVer(major=2, minor=0, patch=0)
+    assert entry.sections == ()
