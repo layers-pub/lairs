@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-25
+
+### Added
+
+- **Auto-generated changelogs.** `generate_changelog` and `build_entry` derive a
+  `pub.layers.changelog.entry` and its `SemanticVersion` from the field-level diff
+  of a record between two revisions, behind a pluggable bump classifier (patch for
+  value edits, minor for additions, major for removals or identity breaks). The
+  field walk records a `fieldPath`, previous value, and new value per change, and
+  groups change items into sections by the subject's category.
+- **Publish changelog hook.** `publish(..., changelog=True)` augments the write
+  plan with a changelog entry per changed record alongside the data writes,
+  reading the prior version from the most recently published entry on the PDS so
+  versions stay monotonic across runs. The default `changelog=False` leaves the
+  plan unchanged.
+- **`Repository.content_at`.** Returns the decoded record values present at a
+  revision, keyed by AT-URI, folding the commit ancestry and its tombstones.
+
 ## [0.1.0] - 2026-06-25
 
 The first public release. `lairs` is a read/write dataset client for the
@@ -61,5 +79,6 @@ didactic model.
   repositories, discovering datasets, building and searching the index, managing
   sessions, and launching the explorer.
 
-[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/layers-pub/lairs/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/layers-pub/lairs/releases/tag/v0.1.0

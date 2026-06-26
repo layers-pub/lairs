@@ -37,11 +37,14 @@ import libipld
 from multiformats import CID, multihash
 
 from lairs._types import JsonValue  # noqa: TC001  (runtime: didactic field sort)
-from lairs.atproto.pds import PdsClient
+from lairs.atproto.pds import PdsClient, decode
+from lairs.author.changelog import build_entry, diff_record
+from lairs.records import changelog as changelog_models
 from lairs.records.blobref import BlobRef
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
+    from datetime import datetime
     from types import TracebackType
 
     from lairs.store.repository import Repository
@@ -1264,6 +1267,200 @@ def plan_publish(
     )
 
 
+_CHANGELOG_NSID = "pub.layers.changelog.entry"
+"""The collection NSID of a changelog entry record."""
+
+
+def _first_parent(repo: Repository, revision: str) -> str | None:
+    """Return the first-parent commit of a revision, or ``None`` at the root.
+
+    Parameters
+    ----------
+    repo : Repository
+        The local repository.
+    revision : str
+        The revision (ref expression) whose parent is sought.
+
+    Returns
+    -------
+    str or None
+        The first parent commit id, or ``None`` when the revision is the initial
+        commit.
+    """
+    target = repo.resolve(revision)
+    for entry in repo.log():
+        if str(entry.get("id")) == target:
+            parents = entry.get("parents")
+            if isinstance(parents, list) and parents:
+                return str(parents[0])
+            return None
+    return None
+
+
+def _latest_published_versions(
+    repo: str,
+    *,
+    endpoint: str,
+    client: httpx.Client | None = None,
+) -> dict[str, changelog_models.SemanticVersion]:
+    """Return the latest published semantic version per subject on a PDS.
+
+    The target repository's ``pub.layers.changelog.entry`` collection is
+    enumerated and each entry decoded; for each subject the version from the
+    entry with the most recent ``createdAt`` wins, so a later publish bumps from
+    the version last published rather than from local history, keeping versions
+    monotonic across runs. An unknown or empty collection yields an empty
+    mapping.
+
+    Parameters
+    ----------
+    repo : str
+        The target repository DID.
+    endpoint : str
+        The base URL of the PDS.
+    client : httpx.Client or None, optional
+        An injected HTTP client; a private one is created when omitted.
+
+    Returns
+    -------
+    dict of str to lairs.records.changelog.SemanticVersion
+        A mapping from subject AT-URI to its latest published version.
+
+    Raises
+    ------
+    WriteError
+        If the collection fails to enumerate with a status other than an empty
+        or unknown collection.
+    """
+    with PdsClient(endpoint, client) as pds_client:
+        try:
+            envelopes = list(pds_client.list_records(repo, _CHANGELOG_NSID))
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in _EMPTY_COLLECTION_STATUSES:
+                return {}
+            msg = (
+                f"listing {_CHANGELOG_NSID} on {repo} failed with status "
+                f"{exc.response.status_code}"
+            )
+            raise WriteError(msg) from exc
+    versions: dict[str, changelog_models.SemanticVersion] = {}
+    latest: dict[str, datetime] = {}
+    for envelope in envelopes:
+        try:
+            # decode drops the wire ``$type`` the generated model does not
+            # declare, so a real PDS entry validates rather than being skipped.
+            entry = decode(envelope, changelog_models.Entry)
+        except dx.ValidationError:
+            continue
+        version = entry.version
+        if version is None:
+            continue
+        if entry.subject not in latest or entry.createdAt > latest[entry.subject]:
+            latest[entry.subject] = entry.createdAt
+            versions[entry.subject] = version
+    return versions
+
+
+def _augment_with_changelog(  # noqa: PLR0913  (the hook threads publish's knobs)
+    repo: Repository,
+    revision: str,
+    plan: PublishPlan,
+    *,
+    to: str,
+    base: str | None,
+    endpoint: str | None,
+    client: httpx.Client | None,
+) -> PublishPlan:
+    """Augment a publish plan with a changelog entry per changed record.
+
+    For each record the plan creates, updates, or deletes (excluding changelog
+    entries themselves), a ``pub.layers.changelog.entry`` is generated from the
+    field-level diff of the record between the base revision and ``revision`` and
+    merged into the plan's creates. The base defaults to the revision's first
+    parent. The prior version per subject is read from the most recently
+    published entry on the PDS, so versions stay monotonic across runs. A subject
+    whose content is unchanged contributes no entry, keeping a re-publish
+    idempotent.
+
+    Parameters
+    ----------
+    repo : Repository
+        The local repository holding the revisions.
+    revision : str
+        The revision being published.
+    plan : PublishPlan
+        The data-record plan to augment.
+    to : str
+        The target repository DID.
+    base : str or None
+        The base revision for the content diff, or ``None`` to use the
+        revision's first parent.
+    endpoint : str or None
+        The base URL of the PDS, used to read prior versions; prior versions are
+        empty when omitted.
+    client : httpx.Client or None
+        An injected HTTP client for the prior-version read.
+
+    Returns
+    -------
+    PublishPlan
+        The plan with changelog-entry creates merged in, or the original plan
+        when there is nothing to record.
+    """
+    subjects = sorted(
+        {
+            op.uri
+            for op in (*plan.creates, *plan.updates, *plan.deletes)
+            if collection_of(op.uri) != _CHANGELOG_NSID
+        },
+    )
+    if not subjects:
+        return plan
+    base_revision = base if base is not None else _first_parent(repo, revision)
+    old_state = repo.content_at(base_revision) if base_revision is not None else {}
+    new_state = repo.content_at(revision)
+    prev_versions = (
+        _latest_published_versions(to, endpoint=endpoint, client=client)
+        if endpoint is not None
+        else {}
+    )
+    changelog_ops: list[WriteOp] = []
+    for uri in subjects:
+        field_diff = diff_record(old_state.get(uri), new_state.get(uri))
+        if field_diff.record_change == "unchanged" and not field_diff.changes:
+            continue
+        entry = build_entry(
+            subject=uri,
+            subject_collection=collection_of(uri),
+            field_diff=field_diff,
+            previous_version=prev_versions.get(uri),
+        )
+        version = entry.version
+        if version is None:
+            continue
+        raw = json.loads(entry.model_dump_json())
+        value = _value_with_type(raw, _CHANGELOG_NSID)
+        rkey = f"{_rkey_of(uri)}.{version.major}.{version.minor}.{version.patch}"
+        changelog_ops.append(
+            WriteOp(
+                action="create",
+                collection=_CHANGELOG_NSID,
+                rkey=rkey,
+                uri=f"at://{to}/{_CHANGELOG_NSID}/{rkey}",
+                value=value,
+            ),
+        )
+    if not changelog_ops:
+        return plan
+    return PublishPlan(
+        repo=plan.repo,
+        revision=plan.revision,
+        creates=order_writes((*plan.creates, *changelog_ops)),
+        updates=plan.updates,
+        deletes=plan.deletes,
+    )
+
+
 def publish(  # noqa: PLR0913  (the publish workflow needs these distinct knobs)
     repo: Repository,
     revision: str,
@@ -1272,6 +1469,8 @@ def publish(  # noqa: PLR0913  (the publish workflow needs these distinct knobs)
     endpoint: str | None = None,
     client: httpx.Client | None = None,
     dry_run: bool = False,
+    changelog: bool = False,
+    changelog_base: str | None = None,
 ) -> PublishPlan:
     """Publish a Repository revision to a PDS as the minimal write set.
 
@@ -1281,6 +1480,12 @@ def publish(  # noqa: PLR0913  (the publish workflow needs these distinct knobs)
     plan's writes are applied in dependency order (via
     :meth:`PublishPlan.ordered_writes`) and the computed plan is returned for
     inspection.
+
+    When ``changelog`` is ``True`` the plan is augmented with one
+    ``pub.layers.changelog.entry`` per changed record, generated from the
+    field-level diff between ``changelog_base`` (or the revision's first parent)
+    and ``revision`` and versioned monotonically from the most recently published
+    entry on the PDS. The default ``changelog=False`` leaves the plan unchanged.
 
     Parameters
     ----------
@@ -1298,6 +1503,11 @@ def publish(  # noqa: PLR0913  (the publish workflow needs these distinct knobs)
         writes.
     dry_run : bool, optional
         If ``True``, compute and return the plan without sending writes.
+    changelog : bool, optional
+        If ``True``, augment the plan with a changelog entry per changed record.
+    changelog_base : str or None, optional
+        The base revision for the changelog field diff; defaults to the
+        revision's first parent. Ignored unless ``changelog`` is ``True``.
 
     Returns
     -------
@@ -1315,6 +1525,16 @@ def publish(  # noqa: PLR0913  (the publish workflow needs these distinct knobs)
         else {}
     )
     plan = plan_publish(repo, revision, to=to, pds_cids=pds_cids)
+    if changelog:
+        plan = _augment_with_changelog(
+            repo,
+            revision,
+            plan,
+            to=to,
+            base=changelog_base,
+            endpoint=endpoint,
+            client=client,
+        )
     if dry_run:
         return plan
     if endpoint is None:

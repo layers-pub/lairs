@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import didactic.api as dx
+import panproto
 import pytest
 
 from lairs.store import repository
@@ -217,3 +218,46 @@ def test_diff_reports_removed_after_forget(tmp_path: Path) -> None:
     assert diff.removed == (_EXPR_URI,)
     assert diff.added == ()
     assert diff.changed == ()
+
+
+def test_content_at_returns_decoded_values_keyed_by_uri(tmp_path: Path) -> None:
+    # content_at decodes the committed bytes into JSON values, keyed by AT-URI,
+    # so callers can compare a record's fields across revisions.
+    repo = Repository.init(tmp_path / "repo")
+    repo.save(_EXPR_URI, _Expr(text="hello"))
+    repo.save(_MEDIA_URI, _Expr(text="world"))
+    revision = repo.commit("snapshot")
+    content = repo.content_at(revision)
+    assert content == {
+        _EXPR_URI: {"text": "hello"},
+        _MEDIA_URI: {"text": "world"},
+    }
+
+
+def test_content_at_reflects_update_across_commits(tmp_path: Path) -> None:
+    # the latest value wins, matching the byte-level fold behind diff.
+    repo = Repository.init(tmp_path / "repo")
+    repo.save(_EXPR_URI, _Expr(text="one"))
+    repo.commit("base snapshot")
+    repo.save(_EXPR_URI, _Expr(text="two"))
+    head = repo.commit("head snapshot")
+    assert repo.content_at(head) == {_EXPR_URI: {"text": "two"}}
+
+
+def test_content_at_omits_tombstoned_record(tmp_path: Path) -> None:
+    # a record forgotten before the revision is absent from the decoded state.
+    repo = Repository.init(tmp_path / "repo")
+    repo.save(_EXPR_URI, _Expr(text="gone"))
+    repo.save(_MEDIA_URI, _Expr(text="keep"))
+    repo.commit("base snapshot")
+    repo.forget(_EXPR_URI)
+    head = repo.commit("head snapshot")
+    assert repo.content_at(head) == {_MEDIA_URI: {"text": "keep"}}
+
+
+def test_content_at_unknown_ref_raises(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    repo.save(_EXPR_URI, _Expr(text="hello"))
+    repo.commit("snapshot")
+    with pytest.raises(panproto.VcsError, match="ref not found"):
+        repo.content_at("not-a-real-ref")

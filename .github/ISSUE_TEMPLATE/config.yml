@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://layers.pub/lairs/
+    about: The lairs guide, API reference, and development docs.
+  - name: Contributing guide
+    url: https://github.com/layers-pub/lairs/blob/main/CONTRIBUTING.md
+    about: How to set up a dev environment and the checks your change must pass.
