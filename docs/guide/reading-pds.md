@@ -234,6 +234,16 @@ from the PDS when a client is supplied, while `appview` (and any source
 without a client) raises `NotImplementedError` until endpoint discovery
 lands.
 
+A Layers dataset typically fans out across many single-purpose accounts:
+its corpus, expressions, segmentations, and annotations each live in a
+separate repository, linked by AT-URI. By default `load_corpus` follows
+those references across account boundaries, transitively, fetching the
+component records the corpus cites (its expressions, and the records those
+reference in turn) by exact AT-URI. Pass `follow_refs=False` to read only
+the corpus's own account, for example when the components are already
+materialized locally. The same control is exposed on the CLI as
+`lairs materialize --follow-refs` / `--no-follow-refs`.
+
 ## See also
 
 - [ATProto reference](../reference/atproto.md) for full client and
