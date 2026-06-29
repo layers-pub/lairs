@@ -348,10 +348,13 @@ def test_materialize_loads_and_writes_views(
         *,
         source: str = "auto",
         pds_client: PdsClient | None = None,
+        follow_refs: bool = True,
     ) -> Corpus:
         assert uri == "at://did:plc:me/pub.layers.corpus.corpus/c"
         assert source == "pds"
         assert pds_client is not None
+        # the CLI defaults to following refs across accounts.
+        assert follow_refs is True
         return corpus
 
     monkeypatch.setattr("lairs.data.load_corpus", fake_load)
@@ -391,9 +394,11 @@ def test_inspect_prints_per_type_counts(
         *,
         source: str = "auto",
         pds_client: PdsClient | None = None,
+        follow_refs: bool = True,
     ) -> Corpus:
         assert source == "pds"
         assert pds_client is not None
+        assert follow_refs is True
         return corpus
 
     monkeypatch.setattr("lairs.data.load_corpus", fake_load)

@@ -730,6 +730,44 @@ def test_pull_skips_invalid_records(tmp_path: Path) -> None:
     assert repo.staged_uris() == []
 
 
+def test_pull_decodes_records_carrying_dollar_type(tmp_path: Path) -> None:
+    # a real PDS record carries a $type the generated model does not declare;
+    # pull must drop it (via decode) rather than skip every record.
+    now = datetime.now(UTC)
+    expr = Expression(id="doc-1", kind="sentence", createdAt=now, text="hi")
+    expr_value = json.loads(expr.model_dump_json())
+    expr_value["$type"] = "pub.layers.expression.expression"
+    expr_uri = "at://did:plc:them/pub.layers.expression.expression/e1"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        collection = request.url.params.get("collection")
+        if request.url.path.endswith("listRecords"):
+            if collection == "pub.layers.expression.expression":
+                return httpx.Response(
+                    200,
+                    json={
+                        "records": [
+                            {"uri": expr_uri, "cid": "c", "value": expr_value},
+                        ],
+                        "cursor": "",
+                    },
+                )
+            return httpx.Response(200, json={"records": [], "cursor": ""})
+        return httpx.Response(404)
+
+    repo = Repository.init(tmp_path)
+    publish.pull(
+        "did:plc:them",
+        endpoint="https://pds.example",
+        into=repo,
+        client=_mock_client(handler),
+    )
+    assert repo.staged_uris() == [expr_uri]
+    loaded = repo.load(expr_uri, Expression)
+    assert loaded is not None
+    assert loaded.text == "hi"
+
+
 def test_apply_writes_module_function() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"results": []})

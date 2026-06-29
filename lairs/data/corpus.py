@@ -34,14 +34,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import didactic.api as dx
+import httpx
 
+from lairs.atproto.pds import RecordNotFoundError, decode
 from lairs.data.dataset import Dataset
 from lairs.records._generated import annotation as annotation_records
 from lairs.records._generated import corpus as corpus_records
 from lairs.records._generated import expression as expression_records
 from lairs.records._generated import media as media_records
 from lairs.records._generated import segmentation as segmentation_records
-from lairs.records.blobref import normalize_blob_refs
 from lairs.store.arrow import annotations_table, expressions_table, materialize
 from lairs.store.pool import ModelPool
 from lairs.store.repository import Repository
@@ -49,6 +50,7 @@ from lairs.store.repository import Repository
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from lairs._types import JsonValue
     from lairs.atproto.pds import PdsClient, RecordEnvelope
 
 __all__ = [
@@ -681,17 +683,14 @@ def _decode_envelope(
     model_cls = _NSID_MODELS.get(_nsid_of(envelope.uri))
     if model_cls is None:
         return None
-    if not isinstance(envelope.value, dict):
-        return None
     try:
-        serialized = json.dumps(normalize_blob_refs(envelope.value))
-    except TypeError, ValueError:
-        # a value carrying a non-JSON-serializable object is not a record this
-        # loader can decode; skip it like a validation failure.
-        return None
-    try:
-        model = model_cls.model_validate_json(serialized)
-    except dx.ValidationError:
+        # decode drops the wire ``$type`` the generated model does not declare
+        # (a real PDS record carries it) and normalises blob refs, so the record
+        # validates instead of being skipped.
+        model = decode(envelope, model_cls)
+    except dx.ValidationError, TypeError, ValueError:
+        # a non-object, non-serializable, or non-validating value is not a
+        # record this loader can decode; skip it like a validation failure.
         return None
     return envelope.uri, model
 
@@ -713,17 +712,121 @@ def _authority_of(uri: str) -> str:
     return body.split("/", 1)[0] if body else ""
 
 
+def _collect_at_uris(value: JsonValue, refs: set[str]) -> None:
+    """Collect every ``at://`` string reachable in a JSON value into ``refs``.
+
+    Parameters
+    ----------
+    value : JsonValue
+        The JSON value to walk.
+    refs : set of str
+        The accumulator the discovered AT-URIs are added to.
+    """
+    if isinstance(value, str):
+        if value.startswith("at://"):
+            refs.add(value)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _collect_at_uris(item, refs)
+    elif isinstance(value, list):
+        for item in value:
+            _collect_at_uris(item, refs)
+
+
+def _refs_of(model: dx.Model) -> set[str]:
+    """Return the AT-URIs a record references.
+
+    Every ``at://`` string anywhere in the record value is a reference to
+    another record, possibly in a different account. The value is dumped to JSON
+    and walked, so nested objects, lists, and embedded models are all covered.
+
+    Parameters
+    ----------
+    model : didactic.api.Model
+        The decoded record to scan.
+
+    Returns
+    -------
+    set of str
+        The referenced AT-URIs.
+    """
+    refs: set[str] = set()
+    _collect_at_uris(json.loads(model.model_dump_json()), refs)
+    return refs
+
+
+def _collection_of(uri: str) -> str:
+    """Return the collection NSID segment of an AT-URI, or the empty string.
+
+    Parameters
+    ----------
+    uri : str
+        The AT-URI to parse.
+
+    Returns
+    -------
+    str
+        The collection NSID, or the empty string when absent.
+    """
+    parts = uri.removeprefix("at://").split("/")
+    minimum_with_collection = 2
+    return parts[1] if len(parts) >= minimum_with_collection else ""
+
+
+def _fetch_ref(uri: str, client: PdsClient) -> tuple[str, dx.Model] | None:
+    """Fetch and decode a single referenced record by AT-URI.
+
+    The record is fetched from the authority embedded in the AT-URI, which the
+    PDS resolves whether it is a handle or a DID, so a reference into another
+    account is followed without separate identity resolution. A reference that
+    does not resolve or fails to decode is skipped.
+
+    Parameters
+    ----------
+    uri : str
+        The referenced record's AT-URI.
+    client : lairs.atproto.pds.PdsClient
+        The PDS client to read through.
+
+    Returns
+    -------
+    tuple of (str, didactic.api.Model) or None
+        The AT-URI and decoded model, or ``None`` when it cannot be fetched or
+        decoded.
+    """
+    parts = uri.removeprefix("at://").split("/")
+    minimum_with_rkey = 3
+    if len(parts) < minimum_with_rkey:
+        return None
+    authority, collection, rkey = parts[0], parts[1], parts[2]
+    try:
+        envelope = client.get_record(authority, collection, rkey)
+    except httpx.HTTPError, RecordNotFoundError:
+        return None
+    return _decode_envelope(envelope)
+
+
 def _load_from_pds(
     uri: str,
     client: PdsClient,
+    *,
+    follow_refs: bool = True,
 ) -> Corpus:
-    """Load a corpus graph by enumerating an authority's collections via a PDS.
+    """Load a corpus graph from a PDS, optionally following refs across accounts.
 
-    Every Layers collection of the authority is read into the pool, including
-    its membership records. The returned :class:`Corpus` carries ``uri``, so its
-    expression views and joins are restricted to the expressions whose
-    memberships reference this corpus; records belonging to other corpora hosted
-    by the same authority remain in the pool but do not surface in the views.
+    The corpus's own authority is enumerated first, reading its corpus and
+    membership records (and any other Layers records it hosts). When
+    ``follow_refs`` is true, every AT-URI a loaded record references is then
+    fetched, transitively and across account boundaries, so the component
+    records that make up the corpus (its expressions, and the records those
+    reference in turn) are pulled into the pool even though they live in separate
+    accounts. References are fetched by exact AT-URI, so only the records this
+    corpus actually cites are loaded, not whole shared accounts.
+
+    The returned :class:`Corpus` carries ``uri``, so its expression views and
+    joins are restricted to the expressions whose memberships reference this
+    corpus; records belonging to other corpora remain in the pool but do not
+    surface in the views.
 
     Parameters
     ----------
@@ -731,6 +834,10 @@ def _load_from_pds(
         The corpus AT-URI whose authority is enumerated.
     client : lairs.atproto.pds.PdsClient
         The PDS client to read through.
+    follow_refs : bool, optional
+        Whether to follow AT-URI references into other accounts. When false,
+        only the corpus's own authority is read, so component records hosted in
+        other accounts are not fetched.
 
     Returns
     -------
@@ -739,31 +846,58 @@ def _load_from_pds(
     """
     authority = _authority_of(uri)
     pool = ModelPool()
+    seen: set[str] = set()
+    pending: list[str] = []
     for nsid in _NSID_MODELS:
         for envelope in client.list_records(authority, nsid):
             decoded = _decode_envelope(envelope)
-            if decoded is not None:
-                pool.add(decoded[0], decoded[1])
+            if decoded is None:
+                continue
+            record_uri, model = decoded
+            seen.add(record_uri)
+            pool.add(record_uri, model)
+            if follow_refs:
+                pending.extend(_refs_of(model))
+    while pending:
+        ref = pending.pop()
+        if ref in seen or _collection_of(ref) not in _NSID_MODELS:
+            seen.add(ref)
+            continue
+        seen.add(ref)
+        decoded = _fetch_ref(ref, client)
+        if decoded is None:
+            continue
+        record_uri, model = decoded
+        seen.add(record_uri)
+        pool.add(record_uri, model)
+        pending.extend(_refs_of(model))
     return Corpus(pool, uri=uri)
 
 
-def load_corpus(
+def load_corpus(  # noqa: PLR0913  (the loader threads several optional knobs)
     uri: str,
     *,
     source: str = "auto",
     cache_dir: str | None = None,
     revision: str | None = None,
     pds_client: PdsClient | None = None,
+    follow_refs: bool = True,
 ) -> Corpus:
     """Load a corpus by AT-URI from a PDS or the appview.
 
     The loader enumerates the Layers record collections of the AT-URI's
-    authority and builds the joined graph. The corpus's expression views and
-    joins are then scoped to the expressions reachable through membership records
-    whose ``corpusRef`` matches ``uri``, so an authority that hosts several
-    corpora yields only this corpus's members. The ``pds`` source reads directly
-    from a PDS; ``appview`` and ``auto`` are not implemented without an appview
-    client yet and currently require the ``pds`` source with an injected client.
+    authority and builds the joined graph. A Layers dataset typically fans out
+    across many accounts (its corpus, expressions, segmentations, annotations,
+    and so on each in a separate repository), so by default the loader follows
+    every AT-URI reference across account boundaries, transitively, to pull in
+    the component records the corpus cites. Set ``follow_refs`` to ``False`` to
+    read only the corpus's own authority, for example when the referenced
+    records are already materialized. The corpus's expression views and joins are
+    then scoped to the expressions reachable through membership records whose
+    ``corpusRef`` matches ``uri``, so an authority that hosts several corpora
+    yields only this corpus's members. The ``pds`` source reads directly from a
+    PDS; ``appview`` and ``auto`` are not implemented without an appview client
+    yet and currently require the ``pds`` source with an injected client.
 
     Parameters
     ----------
@@ -778,6 +912,10 @@ def load_corpus(
     pds_client : lairs.atproto.pds.PdsClient or None, optional
         An injected PDS client. Required for the ``pds`` source; supplying it
         avoids network setup in tests.
+    follow_refs : bool, optional
+        Whether to follow AT-URI references across account boundaries to pull in
+        the corpus's component records. Defaults to ``True``; set ``False`` to
+        read only the corpus's own authority.
 
     Returns
     -------
@@ -798,7 +936,7 @@ def load_corpus(
         raise ValueError(msg)
     _ = (cache_dir, revision)
     if source in {_SOURCE_PDS, _SOURCE_AUTO} and pds_client is not None:
-        return _load_from_pds(uri, pds_client)
+        return _load_from_pds(uri, pds_client, follow_refs=follow_refs)
     if source == _SOURCE_APPVIEW:
         msg = "appview corpus loading requires an appview client; inject a pds_client"
         raise NotImplementedError(msg)

@@ -255,6 +255,16 @@ def _add_materialize(subparsers: _Subparsers) -> None:
         type=Path,
         help="the output directory for the Parquet views",
     )
+    sub.add_argument(
+        "--follow-refs",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "follow AT-URI references across accounts to pull in the corpus's "
+            "component records (default: enabled; --no-follow-refs reads only "
+            "the corpus's own account)"
+        ),
+    )
     sub.set_defaults(handler=_run_materialize)
 
 
@@ -312,6 +322,15 @@ def _add_inspect(subparsers: _Subparsers) -> None:
         "--endpoint",
         required=True,
         help="the base URL of the PDS to load from",
+    )
+    sub.add_argument(
+        "--follow-refs",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "follow AT-URI references across accounts (default: enabled; "
+            "--no-follow-refs reads only the corpus's own account)"
+        ),
     )
     sub.set_defaults(handler=_run_inspect)
 
@@ -589,7 +608,12 @@ def _run_materialize(args: argparse.Namespace) -> int:
     out: Path = args.out
     try:
         with PdsClient(args.endpoint) as client:
-            corpus = data.load_corpus(args.uri, source="pds", pds_client=client)
+            corpus = data.load_corpus(
+                args.uri,
+                source="pds",
+                pds_client=client,
+                follow_refs=args.follow_refs,
+            )
         written = corpus.materialize(out)
     except (httpx.HTTPError, IdentityError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -692,7 +716,12 @@ def _run_inspect(args: argparse.Namespace) -> int:
     """
     try:
         with PdsClient(args.endpoint) as client:
-            corpus = data.load_corpus(args.uri, source="pds", pds_client=client)
+            corpus = data.load_corpus(
+                args.uri,
+                source="pds",
+                pds_client=client,
+                follow_refs=args.follow_refs,
+            )
     except (httpx.HTTPError, IdentityError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

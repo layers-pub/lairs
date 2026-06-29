@@ -1587,9 +1587,11 @@ def pull(
                 if not isinstance(envelope.value, dict):
                     continue
                 try:
-                    # decode via the json path: refined types such as datetime
-                    # round-trip from their string form there, not from a dict.
-                    record = model.model_validate_json(json.dumps(envelope.value))
+                    # decode drops the wire ``$type`` the generated model does
+                    # not declare, so a real PDS record validates here rather
+                    # than being skipped (refined types such as datetime also
+                    # round-trip from their string form through the json path).
+                    record = decode(envelope, model)
                 except dx.ValidationError:
                     continue
                 into.save(envelope.uri, record)

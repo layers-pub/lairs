@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import secrets
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import httpx
 import pytest
 
-from lairs.atproto.pds import PdsClient, RecordEnvelope
+from lairs.atproto.pds import PdsClient, RecordEnvelope, RecordNotFoundError
 from lairs.data import corpus
 from lairs.data.corpus import (
     Corpus,
@@ -327,10 +328,15 @@ def test_splits_lists_present_slugs() -> None:
 
 
 class _FakePds:
-    """A fake PDS client returning canned envelopes per collection."""
+    """A fake PDS client returning canned envelopes by collection and AT-URI."""
 
-    def __init__(self, by_collection: dict[str, list[RecordEnvelope]]) -> None:
+    def __init__(
+        self,
+        by_collection: dict[str, list[RecordEnvelope]],
+        by_uri: dict[str, RecordEnvelope] | None = None,
+    ) -> None:
         self._by = by_collection
+        self._by_uri = by_uri if by_uri is not None else {}
 
     def list_records(
         self,
@@ -344,10 +350,128 @@ class _FakePds:
         _ = (repo, limit, cursor)
         yield from self._by.get(collection, [])
 
+    def get_record(self, repo: str, collection: str, rkey: str) -> RecordEnvelope:
+        """Return the canned envelope for an AT-URI, or raise when absent."""
+        uri = f"at://{repo}/{collection}/{rkey}"
+        envelope = self._by_uri.get(uri)
+        if envelope is None:
+            msg = f"no record for {uri}"
+            raise RecordNotFoundError(msg)
+        return envelope
+
 
 def _envelope(uri: str, model: dx.Model) -> RecordEnvelope:
     """Build an envelope whose value is the model's JSON form."""
     return RecordEnvelope(uri=uri, cid="cid", value=json.loads(model.model_dump_json()))
+
+
+def _typed_envelope(uri: str, model: dx.Model, nsid: str) -> RecordEnvelope:
+    """Build an envelope whose value carries the wire ``$type``, like a real PDS."""
+    value = json.loads(model.model_dump_json())
+    value["$type"] = nsid
+    return RecordEnvelope(uri=uri, cid="cid", value=value)
+
+
+# a second account, so refs from the corpus account cross an account boundary.
+_XACCT = "did:plc:xyz"
+_XE1 = f"at://{_XACCT}/pub.layers.expression.expression/xe1"
+_XM1 = f"at://{_XACCT}/pub.layers.media.media/xm1"
+_EXPR_NSID = "pub.layers.expression.expression"
+_MEDIA_NSID = "pub.layers.media.media"
+_CORPUS_NSID = "pub.layers.corpus.corpus"
+_MEMBERSHIP_NSID = "pub.layers.corpus.membership"
+
+
+def test_decode_envelope_strips_dollar_type() -> None:
+    # a real PDS record carries a $type the generated model does not declare;
+    # the loader must drop it rather than skip the record.
+    envelope = _typed_envelope(_E1, _expr("d1"), _EXPR_NSID)
+    decoded = corpus._decode_envelope(envelope)
+    assert decoded is not None
+    assert decoded[1].id == "d1"
+
+
+def test_collection_of_extracts_nsid() -> None:
+    assert corpus._collection_of(_E1) == _EXPR_NSID
+    assert corpus._collection_of("at://did") == ""
+
+
+def test_refs_of_collects_at_uri_fields() -> None:
+    assert corpus._refs_of(_member(_C1, _E1, split="train")) == {_C1, _E1}
+
+
+def test_load_corpus_decodes_records_carrying_dollar_type() -> None:
+    fake = _FakePds({_EXPR_NSID: [_typed_envelope(_E1, _expr("d1"), _EXPR_NSID)]})
+    loaded = load_corpus(_C1, source="pds", pds_client=fake)  # ty: ignore[invalid-argument-type]
+    assert [record.id for record in loaded.expressions] == ["d1"]
+
+
+def _corpus_account_fake() -> _FakePds:
+    """Build a fake whose corpus account references a cross-account expression."""
+    return _FakePds(
+        by_collection={
+            _CORPUS_NSID: [
+                _typed_envelope(
+                    _C1,
+                    CorpusRecord(name="demo", createdAt=_NOW),
+                    _CORPUS_NSID,
+                ),
+            ],
+            _MEMBERSHIP_NSID: [
+                _typed_envelope(_MEM1, _member(_C1, _XE1), _MEMBERSHIP_NSID),
+            ],
+        },
+        by_uri={_XE1: _typed_envelope(_XE1, _expr("d1"), _EXPR_NSID)},
+    )
+
+
+def test_load_corpus_follows_refs_across_accounts() -> None:
+    fake = _corpus_account_fake()
+    loaded = load_corpus(_C1, source="pds", pds_client=fake, follow_refs=True)  # ty: ignore[invalid-argument-type]
+    assert [record.id for record in loaded.expressions] == ["d1"]
+
+
+def test_load_corpus_without_follow_refs_keeps_to_own_account() -> None:
+    fake = _corpus_account_fake()
+    loaded = load_corpus(_C1, source="pds", pds_client=fake, follow_refs=False)  # ty: ignore[invalid-argument-type]
+    assert len(loaded.expressions) == 0
+
+
+def test_load_corpus_follows_refs_transitively() -> None:
+    # the cross-account expression itself references a media record in that other
+    # account; following refs reaches it two hops from the corpus.
+    fake = _FakePds(
+        by_collection={
+            _MEMBERSHIP_NSID: [
+                _typed_envelope(_MEM1, _member(_C1, _XE1), _MEMBERSHIP_NSID),
+            ],
+        },
+        by_uri={
+            _XE1: _typed_envelope(_XE1, _expr("d1", media_ref=_XM1), _EXPR_NSID),
+            _XM1: _typed_envelope(
+                _XM1,
+                Media(kind="audio", createdAt=_NOW),
+                _MEDIA_NSID,
+            ),
+        },
+    )
+    loaded = load_corpus(_C1, source="pds", pds_client=fake, follow_refs=True)  # ty: ignore[invalid-argument-type]
+    assert len(loaded.expressions) == 1
+    assert len(loaded.media()) == 1
+
+
+def test_load_corpus_skips_dangling_ref() -> None:
+    # the membership references an expression that does not resolve; following
+    # refs skips it gracefully rather than raising.
+    fake = _FakePds(
+        by_collection={
+            _MEMBERSHIP_NSID: [
+                _typed_envelope(_MEM1, _member(_C1, _XE1), _MEMBERSHIP_NSID),
+            ],
+        },
+    )
+    loaded = load_corpus(_C1, source="pds", pds_client=fake, follow_refs=True)  # ty: ignore[invalid-argument-type]
+    assert len(loaded.expressions) == 0
 
 
 def test_load_corpus_from_pds_dispatch() -> None:
@@ -443,24 +567,125 @@ def test_load_corpus_without_client_not_implemented() -> None:
 
 @pytest.mark.integration
 def test_load_corpus_from_pds_live(pds_server: PdsServer) -> None:
-    # load a corpus end-to-end from the dockerized PDS through the real client.
-    httpx.post(
-        f"{pds_server.endpoint}/xrpc/com.atproto.repo.createRecord",
-        headers={"Authorization": f"Bearer {pds_server.access_jwt}"},
-        json={
-            "repo": pds_server.did,
-            "collection": "pub.layers.corpus.corpus",
-            "record": {
-                "$type": "pub.layers.corpus.corpus",
-                "name": "live corpus",
-                "createdAt": "2026-06-18T00:00:00Z",
-                "domain": "biomedical",
-            },
+    # load a corpus end-to-end from a fresh account, so it is isolated from
+    # records other tests write to the shared default account.
+    did, jwt = _fresh_account(pds_server)
+    uri = _put_live(
+        pds_server,
+        did,
+        jwt,
+        "pub.layers.corpus.corpus",
+        "c1",
+        {
+            "$type": "pub.layers.corpus.corpus",
+            "name": "live corpus",
+            "createdAt": "2026-06-18T00:00:00Z",
+            "domain": "biomedical",
         },
-        timeout=30.0,
-    ).raise_for_status()
-    uri = f"at://{pds_server.did}/pub.layers.corpus.corpus/c1"
+    )
     loaded = load_corpus(uri, source="pds", pds_client=PdsClient(pds_server.endpoint))
     assert isinstance(loaded, Corpus)
-    # only a corpus record was seeded, so the joined graph has no expressions.
+    # the real PDS record carries a $type; the loader must still decode it.
+    assert loaded.corpus_record is not None
+    assert loaded.corpus_record.name == "live corpus"
+    # the fresh account holds only the corpus record, so no expressions.
     assert len(loaded.expressions) == 0
+
+
+def _fresh_account(server: PdsServer) -> tuple[str, str]:
+    """Create a new empty account on the PDS, returning (did, access_jwt)."""
+    token = secrets.token_hex(6)
+    response = httpx.post(
+        f"{server.endpoint}/xrpc/com.atproto.server.createAccount",
+        json={
+            "handle": f"xc{token}.test",
+            "email": f"xc{token}@example.test",
+            "password": secrets.token_hex(12),
+        },
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    body = response.json()
+    return str(body["did"]), str(body["accessJwt"])
+
+
+def _put_live(  # noqa: PLR0913  (a put needs the repo, auth, and record path)
+    server: PdsServer,
+    did: str,
+    jwt: str,
+    collection: str,
+    rkey: str,
+    record: dict[str, str],
+) -> str:
+    """Upsert a record on the PDS and return its AT-URI."""
+    httpx.post(
+        f"{server.endpoint}/xrpc/com.atproto.repo.putRecord",
+        headers={"Authorization": f"Bearer {jwt}"},
+        json={"repo": did, "collection": collection, "rkey": rkey, "record": record},
+        timeout=30.0,
+    ).raise_for_status()
+    return f"at://{did}/{collection}/{rkey}"
+
+
+@pytest.mark.integration
+def test_load_corpus_follows_refs_across_accounts_live(pds_server: PdsServer) -> None:
+    # publish an expression to a second account, then a corpus and a membership
+    # on the default account that references it; following refs across the
+    # account boundary pulls the expression in, and disabling it does not.
+    expr_did, expr_jwt = _fresh_account(pds_server)
+    expr_uri = _put_live(
+        pds_server,
+        expr_did,
+        expr_jwt,
+        "pub.layers.expression.expression",
+        "xe1",
+        {
+            "$type": "pub.layers.expression.expression",
+            "id": "88888888-8888-8888-8888-888888888888",
+            "kind": "sentence",
+            "text": "cross-account text",
+            "createdAt": "2026-06-18T00:00:00Z",
+        },
+    )
+    corpus_uri = _put_live(
+        pds_server,
+        pds_server.did,
+        pds_server.access_jwt,
+        "pub.layers.corpus.corpus",
+        "xcc",
+        {
+            "$type": "pub.layers.corpus.corpus",
+            "name": "cross-account corpus",
+            "createdAt": "2026-06-18T00:00:00Z",
+        },
+    )
+    _put_live(
+        pds_server,
+        pds_server.did,
+        pds_server.access_jwt,
+        "pub.layers.corpus.membership",
+        "xcm",
+        {
+            "$type": "pub.layers.corpus.membership",
+            "corpusRef": corpus_uri,
+            "expressionRef": expr_uri,
+            "createdAt": "2026-06-18T00:00:00Z",
+        },
+    )
+    with PdsClient(pds_server.endpoint) as client:
+        followed = load_corpus(
+            corpus_uri,
+            source="pds",
+            pds_client=client,
+            follow_refs=True,
+        )
+        assert [record.text for record in followed.expressions] == [
+            "cross-account text",
+        ]
+        local_only = load_corpus(
+            corpus_uri,
+            source="pds",
+            pds_client=client,
+            follow_refs=False,
+        )
+        assert len(local_only.expressions) == 0
