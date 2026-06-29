@@ -31,7 +31,7 @@ def test_version_matches_distribution_metadata() -> None:
 def test_fallback_version_is_release_target() -> None:
     # The fallback literal is the release version and must stay in step with
     # pyproject.toml's version field.
-    assert lairs._FALLBACK_VERSION == "0.4.0"
+    assert lairs._FALLBACK_VERSION == "0.4.1"
     parts = lairs._FALLBACK_VERSION.split(".")
     assert len(parts) == 3
     assert all(part.isdigit() for part in parts)
