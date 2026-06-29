@@ -26,6 +26,7 @@ from lairs.records._generated.expression import Expression
 from lairs.records._generated.media import Media
 from lairs.records._generated.segmentation import Segmentation
 from lairs.store.repository import Repository
+from lairs.tui.query import QueryEngine
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -202,7 +203,11 @@ def test_materialize_writes_views(tmp_path: Path) -> None:
     out = tmp_path / "views"
     written = c.materialize(out)
     names = {path.name for path in written}
-    assert names == {"expressions.parquet", "annotations.parquet"}
+    # the populated corpus has annotation layers but no exploded annotations, so
+    # the annotations view is empty (column-less) and skipped; only the
+    # expressions view is written. The skip itself is covered directly by
+    # test_arrow.test_materialize_skips_column_less_view.
+    assert names == {"expressions.parquet"}
     assert all(path.exists() for path in written)
 
 
@@ -689,3 +694,72 @@ def test_load_corpus_follows_refs_across_accounts_live(pds_server: PdsServer) ->
             follow_refs=False,
         )
         assert len(local_only.expressions) == 0
+
+
+@pytest.mark.integration
+def test_materialize_and_query_annotation_less_corpus_live(
+    pds_server: PdsServer,
+    tmp_path: Path,
+) -> None:
+    # an annotation-less dataset materializes to an expressions view only (the
+    # empty annotations view is skipped), and the Query engine opens and queries
+    # it without choking on a column-less Parquet.
+    expr_did, expr_jwt = _fresh_account(pds_server)
+    expr_uri = _put_live(
+        pds_server,
+        expr_did,
+        expr_jwt,
+        "pub.layers.expression.expression",
+        "qe1",
+        {
+            "$type": "pub.layers.expression.expression",
+            "id": "99999999-9999-9999-9999-999999999999",
+            "kind": "sentence",
+            "text": "queryable text",
+            "createdAt": "2026-06-18T00:00:00Z",
+        },
+    )
+    corpus_did, corpus_jwt = _fresh_account(pds_server)
+    corpus_uri = _put_live(
+        pds_server,
+        corpus_did,
+        corpus_jwt,
+        "pub.layers.corpus.corpus",
+        "qcc",
+        {
+            "$type": "pub.layers.corpus.corpus",
+            "name": "query corpus",
+            "createdAt": "2026-06-18T00:00:00Z",
+        },
+    )
+    _put_live(
+        pds_server,
+        corpus_did,
+        corpus_jwt,
+        "pub.layers.corpus.membership",
+        "qcm",
+        {
+            "$type": "pub.layers.corpus.membership",
+            "corpusRef": corpus_uri,
+            "expressionRef": expr_uri,
+            "createdAt": "2026-06-18T00:00:00Z",
+        },
+    )
+    with PdsClient(pds_server.endpoint) as client:
+        loaded = load_corpus(
+            corpus_uri,
+            source="pds",
+            pds_client=client,
+            follow_refs=True,
+        )
+    out_dir = tmp_path / "qviews"
+    written = loaded.materialize(out_dir)
+    # the empty annotations view is skipped; only the expressions view is written.
+    assert [path.name for path in written] == ["expressions.parquet"]
+    engine = QueryEngine.open(out_dir)
+    try:
+        assert engine.tables == ("expressions",)
+        result = engine.run_sql("SELECT text FROM expressions")
+        assert result.rows[0].cells == ("queryable text",)
+    finally:
+        engine.close()

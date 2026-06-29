@@ -183,11 +183,20 @@ class QueryEngine:
         for path in parquets:
             name = _ident(path.stem)
             escaped = str(path).replace("'", "''")
-            connection.execute(
-                f"CREATE OR REPLACE VIEW {name} AS "  # noqa: S608
-                f"SELECT * FROM read_parquet('{escaped}')"
-            )
+            try:
+                connection.execute(
+                    f"CREATE OR REPLACE VIEW {name} AS "  # noqa: S608
+                    f"SELECT * FROM read_parquet('{escaped}')"
+                )
+            except duckdb.Error:
+                # a column-less or otherwise unreadable Parquet (for example an
+                # empty view) cannot back a view; skip it rather than fail the
+                # whole engine open.
+                continue
             names.append(name)
+        if not names:
+            msg = f"no readable .parquet views found in {data_dir}"
+            raise QueryError(msg)
         ordered = [t for t in _PREFERRED_TABLE_ORDER if t in names]
         ordered += [t for t in names if t not in _PREFERRED_TABLE_ORDER]
         return cls(connection, ordered)

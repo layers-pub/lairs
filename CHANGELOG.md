@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-06-29
+
+### Fixed
+
+- **Querying a materialized dataset with no annotations.** A dataset without
+  annotation layers materialized an `annotations.parquet` with no columns, which
+  DuckDB cannot read, so the Query tab and `QueryEngine` failed to open the
+  dataset (and `tui --data` crashed). `materialize` now skips a column-less view
+  rather than writing an unreadable Parquet, and `QueryEngine.open` skips any
+  Parquet it cannot register (raising only when none are readable), so querying
+  an annotation-less dataset works.
+
 ## [0.4.0] - 2026-06-29
 
 ### Added
@@ -118,7 +130,8 @@ didactic model.
   repositories, discovering datasets, building and searching the index, managing
   sessions, and launching the explorer.
 
-[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/layers-pub/lairs/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/layers-pub/lairs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/layers-pub/lairs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/layers-pub/lairs/compare/v0.1.0...v0.2.0

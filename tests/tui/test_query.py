@@ -44,6 +44,24 @@ def test_open_empty_directory(tmp_path: Path) -> None:
         QueryEngine.open(tmp_path)
 
 
+def test_open_skips_unreadable_parquet(tmp_path: Path) -> None:
+    # a column-less Parquet (an empty materialized view) cannot back a view; it
+    # is skipped rather than failing the whole engine open.
+    _write(tmp_path, "expressions", {"id": [1, 2]})
+    pq.write_table(pa.table({}), tmp_path / "annotations.parquet")
+    engine = QueryEngine.open(tmp_path)
+    assert engine.tables == ("expressions",)
+    assert engine.run_sql("SELECT COUNT(*) AS n FROM expressions").rows[0].cells == (
+        "2",
+    )
+
+
+def test_open_raises_when_no_readable_views(tmp_path: Path) -> None:
+    pq.write_table(pa.table({}), tmp_path / "annotations.parquet")
+    with pytest.raises(QueryError, match="no readable"):
+        QueryEngine.open(tmp_path)
+
+
 def test_open_orders_preferred_then_extras(tmp_path: Path) -> None:
     for name in ("zeta", "annotations", "expressions", "segmentations"):
         pq.write_table(pa.table({"x": [1]}), tmp_path / f"{name}.parquet")
