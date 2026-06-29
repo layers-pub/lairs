@@ -1070,7 +1070,7 @@ wheels = [
 
 [[package]]
 name = "glazing"
-version = "0.2.2"
+version = "0.2.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1083,9 +1083,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8e/b5/83ee9a320e96a39d3370170d1cb4080437c72935f06b3c2405bdd580641f/glazing-0.2.2.tar.gz", hash = "sha256:3ab0fec59435faff2c58f08c651b67527e421a282ddf9d28415af7111f71a868", size = 226087, upload-time = "2026-02-06T21:03:58.315Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ac/f4/a8fd2f75d2875c09a2bdfc44471bf4ae8da5dc09481a91a527d144e87039/glazing-0.2.3.tar.gz", hash = "sha256:b87c91d282ded35cd63da16913131390b5300c0a84747cd66c987ce6d960460a", size = 227361, upload-time = "2026-06-25T23:22:24.365Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/02/246b9024a8bc843441a922c0a5a93f8efb3551970d0f6e2ee841df2726d6/glazing-0.2.2-py3-none-any.whl", hash = "sha256:d6ca887c28aee7c2d2d9badb41c879460e981592bf0ae67f3207c225443323e9", size = 237753, upload-time = "2026-02-06T21:03:56.568Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/25/4d7bcf3a3eb8b557bfc09a003626e86f037472b5a12074f943b736b7b640/glazing-0.2.3-py3-none-any.whl", hash = "sha256:1a30d2f711cdc97bd7c50c6160284c34b07428d5d83ae40e92f5ed18d1234fee", size = 238693, upload-time = "2026-06-25T23:22:22.836Z" },
 ]
 
 [[package]]
@@ -1565,7 +1565,7 @@ wheels = [
 
 [[package]]
 name = "lairs"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "didactic" },
@@ -1695,7 +1695,7 @@ requires-dist = [
     { name = "duckdb" },
     { name = "fsspec", marker = "extra == 'fsspec'" },
     { name = "geopandas", marker = "extra == 'geo'" },
-    { name = "glazing", marker = "extra == 'lexical'", specifier = ">=0.2" },
+    { name = "glazing", marker = "extra == 'lexical'", specifier = ">=0.2.3" },
     { name = "habanero", marker = "extra == 'scholarly'" },
     { name = "httpx" },
     { name = "httpx", marker = "extra == 'appview'" },

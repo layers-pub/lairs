@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-29
+
+### Added
+
+- **Cross-account materialization.** `load_corpus` (and the `lairs materialize`
+  and `lairs inspect` commands built on it) now follow AT-URI references across
+  account boundaries, transitively, to pull in the component records a dataset is
+  built from (its expressions, and the records those reference in turn), since a
+  Layers dataset typically fans out across many single-purpose accounts rather
+  than living in one. A new `follow_refs` parameter, exposed on the CLI as
+  `--follow-refs` / `--no-follow-refs` (enabled by default), controls this, for
+  example to read only the corpus's own account when the components are already
+  materialized. References are fetched by exact AT-URI, so only the records the
+  corpus actually cites are loaded.
+
+### Fixed
+
+- **Reading records back from a PDS.** `lairs pull` and `load_corpus` (and the
+  `materialize` and `inspect` commands) validated each record with the wire
+  `$type` field that the generated models do not declare, so every real PDS
+  record failed validation and was silently skipped (`pull` reported zero
+  records; `materialize` wrote empty views). They now strip `$type` before
+  validation through the shared `decode` helper, so records read back correctly.
+
 ## [0.3.0] - 2026-06-26
 
 ### Added
@@ -94,7 +118,8 @@ didactic model.
   repositories, discovering datasets, building and searching the index, managing
   sessions, and launching the explorer.
 
-[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/layers-pub/lairs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/layers-pub/lairs/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/layers-pub/lairs/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/layers-pub/lairs/releases/tag/v0.1.0
