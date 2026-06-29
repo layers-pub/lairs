@@ -551,8 +551,14 @@ def materialize(
     resolved = views if views is not None else _views_from_repo(repo)
     written: list[Path] = []
     for name in sorted(resolved):
+        table = resolved[name]
+        # an empty view whose schema cannot be derived from its rows has no
+        # columns; a column-less Parquet is not a readable table (DuckDB and
+        # other readers reject it), so skip it rather than write a broken view.
+        if table.num_columns == 0:
+            continue
         target = out_dir / f"{name}.parquet"
-        pq.write_table(resolved[name], target)
+        pq.write_table(table, target)
         written.append(target)
     return written
 

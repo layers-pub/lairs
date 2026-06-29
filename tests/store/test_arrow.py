@@ -263,6 +263,22 @@ def test_records_to_table_empty_input() -> None:
     assert table.num_rows == 0
 
 
+def test_materialize_skips_column_less_view(tmp_path: Path) -> None:
+    # an empty view whose schema cannot be derived from its rows has no columns;
+    # materialize must skip it rather than write a Parquet that readers reject.
+    empty = arrow.annotations_table([(_LAYER_URI, _Layer(name="empty"))])
+    assert empty.num_columns == 0
+    full = arrow.expressions_table([_Expression(text="x")])
+    out_dir = tmp_path / "views"
+    written = arrow.materialize(
+        Repository.init(tmp_path / "repo"),
+        out_dir,
+        views={"annotations": empty, "expressions": full},
+    )
+    assert written == [out_dir / "expressions.parquet"]
+    assert not (out_dir / "annotations.parquet").exists()
+
+
 @pytest.mark.integration
 def test_materialize_writes_parquet_views(tmp_path: Path) -> None:
     table = arrow.expressions_table([_Expression(text="x")])
