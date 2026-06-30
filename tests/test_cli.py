@@ -724,6 +724,73 @@ def test_index_build_reports_crawl(
     assert "cards built: 1" in capsys.readouterr().out
 
 
+def test_index_build_resolves_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # --source resolves a configured source name to its endpoint.
+    monkeypatch.setenv("LAIRS_SOURCES_FILE", str(tmp_path / "absent.toml"))
+    captured: dict[str, object] = {}
+
+    def fake_build_index(
+        _index: object,
+        _dids: object,
+        **kwargs: object,
+    ) -> CrawlReport:
+        captured.update(kwargs)
+        return CrawlReport(repos_seen=1, repos_with_corpora=1, cards_built=1)
+
+    monkeypatch.setattr(cli.discovery, "DiscoveryIndex", _FakeIndex)
+    monkeypatch.setattr(cli.discovery, "build_index", fake_build_index)
+    monkeypatch.setattr(cli, "PdsClient", _FakeBuildClient)
+    code = cli.main(
+        ["index", "build", "--into", str(tmp_path / "idx"), "--source", "layers-pub"],
+    )
+    assert code == 0
+    assert captured["endpoint"] == "https://repo.layers.pub"
+    _ = capsys.readouterr()
+
+
+def test_index_build_unknown_source_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("LAIRS_SOURCES_FILE", str(tmp_path / "absent.toml"))
+    code = cli.main(
+        ["index", "build", "--into", str(tmp_path / "idx"), "--source", "nope"],
+    )
+    assert code == 1
+    assert "unknown source 'nope'" in capsys.readouterr().err
+
+
+def test_sources_list_shows_builtin_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("LAIRS_SOURCES_FILE", str(tmp_path / "absent.toml"))
+    code = cli.main(["sources", "list"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "layers-pub" in out
+    assert "https://repo.layers.pub" in out
+
+
+def test_sources_list_json(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("LAIRS_SOURCES_FILE", str(tmp_path / "absent.toml"))
+    code = cli.main(["sources", "list", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload[0]["name"] == "layers-pub"
+    assert payload[0]["builtin"] is True
+
+
 def test_index_build_reports_http_error(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1032,17 +1099,19 @@ def test_inspect_reports_error(
 def test_tui_delegates_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    seen: dict[str, str | None] = {}
+    seen: dict[str, object] = {}
 
     def fake_run_tui(
         *,
         index_path: str | None = None,
         data_path: str | None = None,
         repo_path: str | None = None,
+        auto_index: bool = False,
     ) -> None:
         seen["index_path"] = index_path
         seen["data_path"] = data_path
         seen["repo_path"] = repo_path
+        seen["auto_index"] = auto_index
 
     monkeypatch.setattr(cli, "run_tui", fake_run_tui)
     code = cli.main(
@@ -1061,7 +1130,37 @@ def test_tui_delegates_paths(
         "index_path": "idx-dir",
         "data_path": "data-dir",
         "repo_path": "repo-dir",
+        "auto_index": True,
     }
+
+
+def test_tui_defaults_index_and_disables_auto_index(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_run_tui(
+        *,
+        index_path: str | None = None,
+        data_path: str | None = None,
+        repo_path: str | None = None,
+        auto_index: bool = False,
+    ) -> None:
+        _ = (data_path, repo_path)
+        seen["index_path"] = index_path
+        seen["auto_index"] = auto_index
+
+    monkeypatch.setattr(cli, "run_tui", fake_run_tui)
+    monkeypatch.setattr(
+        discovery,
+        "default_index_path",
+        lambda: tmp_path / "default-index",
+    )
+    code = cli.main(["tui", "--no-auto-index"])
+    assert code == 0
+    assert seen["index_path"] == str(tmp_path / "default-index")
+    assert seen["auto_index"] is False
 
 
 # login / logout / whoami ----------------------------------------------------

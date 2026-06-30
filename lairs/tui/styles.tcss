@@ -202,9 +202,53 @@ DataTable > .datatable--hover {
     text-align: center;
 }
 
+/* ---- Discover --------------------------------------------------------- */
+
+#discover-pane {
+    height: 1fr;
+    padding: 1 1 0 1;
+    layout: horizontal;
+}
+
+#discover-left {
+    width: 34;
+    min-width: 26;
+    height: 1fr;
+    margin-right: 1;
+}
+
+#discover-right {
+    width: 1fr;
+    height: 1fr;
+}
+
+#sources {
+    width: 1fr;
+    height: 1fr;
+    border: round $secondary;
+    border-title-color: $secondary;
+    border-title-style: bold;
+    background: $surface;
+}
+
+#discovered {
+    width: 1fr;
+    height: 1fr;
+    border: round $accent;
+    border-title-color: $accent;
+    border-title-style: bold;
+}
+
+#discover-status {
+    height: 1;
+    color: $text-muted;
+    content-align: left middle;
+}
+
 /* ---- Help modal ------------------------------------------------------- */
 
-HelpScreen {
+HelpScreen,
+SettingsScreen {
     align: center middle;
 }
 
@@ -216,4 +260,35 @@ HelpScreen {
     padding: 1 2;
     border: thick $accent;
     background: $surface;
+}
+
+/* ---- Settings modal --------------------------------------------------- */
+
+#settings-box {
+    width: 90;
+    max-width: 95%;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    border: thick $accent;
+    background: $surface;
+}
+
+.settings-head {
+    text-style: bold;
+    color: $accent;
+    margin: 1 0 0 0;
+}
+
+#settings-sources,
+#settings-muted {
+    height: auto;
+    max-height: 14;
+    border: round $secondary;
+}
+
+#settings-status {
+    height: 1;
+    color: $text-muted;
+    margin-top: 1;
 }

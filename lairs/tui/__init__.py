@@ -65,14 +65,16 @@ def run_tui(
     index_path: str | None = None,
     data_path: str | None = None,
     repo_path: str | None = None,
+    auto_index: bool = False,
 ) -> None:
     """Launch the Layers explorer TUI.
 
     Parameters
     ----------
     index_path : str or None, optional
-        Filesystem path to a discovery index directory to open on the Explore
-        screen. When omitted the Explore screen starts empty.
+        Filesystem path to a discovery index directory to open on the Explore and
+        Discover screens. The index is created when the directory does not exist.
+        When omitted the Explore screen starts empty.
     data_path : str or None, optional
         Filesystem path to a directory of materialized Parquet views to open on
         the Query screen. When omitted, a repository given by ``repo_path`` is
@@ -81,6 +83,9 @@ def run_tui(
         Filesystem path to a local Repository to open on the Browse screen. When
         given without ``data_path``, the repository is also flattened to back the
         Query screen.
+    auto_index : bool, optional
+        When ``True`` and an index is loaded, crawl the enabled sources on launch
+        and index every newly discovered dataset that is not muted.
     """
     resolved_data = data_path
     if resolved_data is None and repo_path is not None:
@@ -90,4 +95,5 @@ def run_tui(
         index_path=index_path,
         data_path=resolved_data,
         repo_path=repo_path,
+        auto_index=auto_index,
     ).run()

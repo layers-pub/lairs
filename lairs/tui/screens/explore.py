@@ -85,6 +85,19 @@ class ExplorePane(Horizontal):
         self._load_index()
         self._refilter()
 
+    def reload(self) -> None:
+        """Re-open the index from disk and re-run the current filter.
+
+        Discovery writes (auto-index, the Discover tab, or unmuting) commit
+        through the app's index handle; re-opening picks up those commits so the
+        results reflect freshly indexed datasets without restarting the app.
+        """
+        self._index = None
+        self._cards = []
+        self._error = None
+        self._load_index()
+        self._refilter()
+
     def _load_index(self) -> None:
         """Open the configured index and cache its cards, recording any error."""
         if self._index_path is None:

@@ -2,10 +2,11 @@
 
 The interactive terminal user interface for discovering, browsing, and
 querying Layers data. The `lairs.tui` package is a Textual application
-with three surfaces: an Explore screen over the discovery index, a
-type-aware Browse screen over a local repository, and a Query workbench
-over materialized Parquet views. The pure-Python query engine is usable
-on its own, without the terminal stack. For usage see
+with four surfaces: an Explore screen over the discovery index, a Discover
+screen that crawls configured sources to index datasets, a type-aware
+Browse screen over a local repository, and a Query workbench over
+materialized Parquet views. The pure-Python query engine is usable on its
+own, without the terminal stack. For usage see
 [Guides > The explorer TUI](../guide/explorer.md).
 
 ## Application
@@ -44,8 +45,10 @@ tree.
 
 ## Screen panes
 
-The three composable panes that make up the application: an `ExplorePane`
-over the discovery index, a `BrowsePane` over a local repository, and a
-`QueryPane` over the materialized views.
+The composable panes and modal screens that make up the application: an
+`ExplorePane` over the discovery index, a `DiscoverPane` that crawls the
+configured sources to index datasets, a `BrowsePane` over a local
+repository, a `QueryPane` over the materialized views, and a
+`SettingsScreen` for reviewing sources and unmuting datasets.
 
 ::: lairs.tui.screens
