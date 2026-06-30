@@ -51,7 +51,7 @@ __all__ = [
     "table_of_contents",
 ]
 
-_FALLBACK_VERSION = "0.4.1"
+_FALLBACK_VERSION = "0.5.0"
 """The version reported when no installed distribution metadata is available.
 
 This literal is the single source of truth for source and editable trees where

@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-29
+
+### Added
+
+- **Configured dataset sources.** A `Source` model and a `sources.toml` config
+  (under the XDG config directory, overridable with `LAIRS_SOURCES_FILE`) name
+  the PDS and relay endpoints lairs crawls for datasets, so a PDS that is
+  deliberately off the firehose stays discoverable. lairs ships a built-in
+  default for the public Layers PDS (`repo.layers.pub`); a user can add sources
+  or override a built-in, including disabling it. `lairs index build` accepts
+  `--source <name>` as an alternative to `--endpoint`, and `lairs sources list`
+  shows the configured sources.
+- **Discover tab in the TUI.** A new Discover tab (`4`) browses the configured
+  sources and crawls a chosen source in the background, listing each dataset with
+  its state (`indexed`, `new`, or `muted`). Pressing `enter` or `space` on a row
+  indexes a new dataset (so it appears on Explore) or permanently mutes an
+  indexed one. The crawl reuses the same `listRepos` path as `lairs index build`
+  through a new streaming `discover` function in `lairs.discovery`.
+- **Auto-index on launch.** With no `--index`, the TUI uses a default index
+  location (under the XDG state directory, overridable with `LAIRS_INDEX_DIR`)
+  and, on launch, crawls the enabled sources and indexes every newly discovered
+  dataset that is not muted, so Explore fills in on its own. `lairs tui
+  --no-auto-index` skips the launch crawl.
+- **Permanent muting with review.** A muted dataset is recorded as a
+  `MutedDataset` in the index and excluded from auto-indexing until unmuted. A
+  settings modal (`ctrl+s`) lists the configured sources and every muted dataset,
+  with an unmute action so a later crawl can pick it up again.
+
 ## [0.4.1] - 2026-06-29
 
 ### Fixed
@@ -130,7 +158,8 @@ didactic model.
   repositories, discovering datasets, building and searching the index, managing
   sessions, and launching the explorer.
 
-[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/layers-pub/lairs/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/layers-pub/lairs/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/layers-pub/lairs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/layers-pub/lairs/compare/v0.2.0...v0.3.0
