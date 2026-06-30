@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -10,10 +11,15 @@ import httpx
 import pytest
 
 from lairs.atproto.firehose import FirehoseEvent
-from lairs.atproto.pds import PdsClient, RecordEnvelope, RepoDescription
+from lairs.atproto.pds import (
+    DEFAULT_PAGE_SIZE,
+    PdsClient,
+    RecordEnvelope,
+    RepoDescription,
+)
 from lairs.discovery import ingest
 from lairs.discovery.index import DiscoveryIndex
-from lairs.discovery.ingest import build_index, update_index
+from lairs.discovery.ingest import build_index, discover, update_index
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -102,6 +108,117 @@ def test_build_index_logs_max_repos_bound(tmp_path: Path) -> None:
     )
     assert report.repos_seen == 1
     assert any("bound reached" in reason for reason in report.skipped)
+
+
+# ---- discover (streaming, index-free) -------------------------------------
+
+
+class _BrokenDescriber:
+    """A describer whose describe_repo always fails, to exercise skips."""
+
+    def describe_repo(self, repo: str) -> RepoDescription:
+        _ = repo
+        msg = "boom"
+        raise httpx.HTTPError(msg)
+
+    def list_records(self, repo: str, collection: str) -> Iterator[RecordEnvelope]:
+        _ = (repo, collection)
+        yield from ()
+
+
+def test_discover_yields_cards() -> None:
+    envelope = RecordEnvelope(uri=_URI_A, cid="bafy", value=_CORPUS_VALUE)
+    fake = _FakeRepo((_CORPUS_NSID,), [envelope])
+    cards = list(
+        discover(
+            ["did:plc:x"],
+            describe=fake,
+            list_corpora=fake,
+            endpoint="https://pds.example",
+        ),
+    )
+    assert len(cards) == 1
+    assert cards[0].summary.uri == _URI_A
+    assert cards[0].summary.name == "indexed corpus"
+    assert cards[0].provenance.discovered_via == "crawl"
+    assert cards[0].provenance.source_endpoint == "https://pds.example"
+
+
+def test_discover_skips_repo_without_corpus() -> None:
+    fake = _FakeRepo(("app.bsky.feed.post",), [])
+    cards = list(
+        discover(
+            ["did:plc:x"],
+            describe=fake,
+            list_corpora=fake,
+            endpoint="https://pds.example",
+        ),
+    )
+    assert cards == []
+
+
+def test_discover_skips_describe_errors() -> None:
+    broken = _BrokenDescriber()
+    cards = list(
+        discover(
+            ["did:plc:x"],
+            describe=broken,
+            list_corpora=broken,
+            endpoint="https://pds.example",
+        ),
+    )
+    assert cards == []
+
+
+def test_discover_skips_undecodable_corpus() -> None:
+    # a malformed corpus record (missing required fields) is skipped, not raised,
+    # so one bad record on a repo does not abort the crawl of the rest.
+    bad = RecordEnvelope(
+        uri="at://did:plc:x/pub.layers.corpus.corpus/bad",
+        cid="bafybad",
+        value={"$type": _CORPUS_NSID, "unexpected": "data"},
+    )
+    good = RecordEnvelope(
+        uri="at://did:plc:x/pub.layers.corpus.corpus/good",
+        cid="bafygood",
+        value=_CORPUS_VALUE,
+    )
+    fake = _FakeRepo((_CORPUS_NSID,), [bad, good])
+    cards = list(
+        discover(
+            ["did:plc:x"],
+            describe=fake,
+            list_corpora=fake,
+            endpoint="https://pds.example",
+        ),
+    )
+    assert [card.summary.uri for card in cards] == [
+        "at://did:plc:x/pub.layers.corpus.corpus/good",
+    ]
+
+
+@pytest.mark.integration
+def test_build_index_skips_muted(tmp_path: Path) -> None:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    envelope = RecordEnvelope(uri=_URI_A, cid="bafy", value=_CORPUS_VALUE)
+    fake = _FakeRepo((_CORPUS_NSID,), [envelope])
+    [card] = discover(
+        ["did:plc:x"],
+        describe=fake,
+        list_corpora=fake,
+        endpoint="https://pds.example",
+    )
+    index.mute(card)
+    report = build_index(
+        index,
+        ["did:plc:x"],
+        describe=fake,
+        list_corpora=fake,
+        endpoint="https://pds.example",
+    )
+    assert index.get_card(_URI_A) is None
+    assert report.cards_built == 0
+    assert any("muted" in reason for reason in report.skipped)
 
 
 @pytest.mark.integration
@@ -239,12 +356,34 @@ def test_update_index_create_then_delete_in_one_pass(
     assert index.get_card(_URI_A) is None
 
 
-def _seed_corpus(server: PdsServer, name: str) -> None:
+def _fresh_account(server: PdsServer) -> tuple[str, str]:
+    """Create a new empty account on the PDS, returning (did, access_jwt).
+
+    A fresh account isolates a crawl from corpora other live tests seed on the
+    shared session account, so a count assertion is deterministic.
+    """
+    token = secrets.token_hex(6)
+    response = httpx.post(
+        f"{server.endpoint}/xrpc/com.atproto.server.createAccount",
+        json={
+            "handle": f"ci{token}.test",
+            "email": f"ci{token}@example.test",
+            "password": secrets.token_hex(12),
+        },
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    body = response.json()
+    return str(body["did"]), str(body["accessJwt"])
+
+
+def _seed_corpus_on(server: PdsServer, did: str, jwt: str, name: str) -> str:
+    """Create a corpus on a specific account and return its AT-URI."""
     response = httpx.post(
         f"{server.endpoint}/xrpc/com.atproto.repo.createRecord",
-        headers={"Authorization": f"Bearer {server.access_jwt}"},
+        headers={"Authorization": f"Bearer {jwt}"},
         json={
-            "repo": server.did,
+            "repo": did,
             "collection": _CORPUS_NSID,
             "record": {
                 "$type": _CORPUS_NSID,
@@ -255,6 +394,11 @@ def _seed_corpus(server: PdsServer, name: str) -> None:
         timeout=30.0,
     )
     response.raise_for_status()
+    return str(response.json()["uri"])
+
+
+def _seed_corpus(server: PdsServer, name: str) -> str:
+    return _seed_corpus_on(server, server.did, server.access_jwt, name)
 
 
 @pytest.mark.integration
@@ -271,6 +415,129 @@ def test_build_index_live(pds_server: PdsServer, tmp_path: Path) -> None:
         )
     assert report.repos_with_corpora == 1
     assert any(card.summary.name == "crawled corpus" for card in index.cards())
+
+
+@pytest.mark.integration
+def test_discover_live(pds_server: PdsServer) -> None:
+    # the real streaming crawl over a real PDS: two corpora on a fresh account
+    # come back as cards with the right names, uris, and provenance.
+    did, jwt = _fresh_account(pds_server)
+    uri_a = _seed_corpus_on(pds_server, did, jwt, "live discover alpha")
+    uri_b = _seed_corpus_on(pds_server, did, jwt, "live discover beta")
+    with PdsClient(pds_server.endpoint) as client:
+        cards = list(
+            discover(
+                [did],
+                describe=client,
+                list_corpora=client,
+                endpoint=pds_server.endpoint,
+            ),
+        )
+    by_uri = {card.summary.uri: card for card in cards}
+    assert uri_a in by_uri
+    assert uri_b in by_uri
+    assert by_uri[uri_a].summary.name == "live discover alpha"
+    assert by_uri[uri_a].provenance.source_did == did
+    assert by_uri[uri_a].provenance.source_endpoint == pds_server.endpoint
+    assert by_uri[uri_a].provenance.discovered_via == "crawl"
+
+
+@pytest.mark.integration
+def test_build_index_skips_muted_live(pds_server: PdsServer, tmp_path: Path) -> None:
+    # muting a real corpus keeps a re-crawl of the real PDS from re-indexing it.
+    did, jwt = _fresh_account(pds_server)
+    uri = _seed_corpus_on(pds_server, did, jwt, "live mute target")
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    with PdsClient(pds_server.endpoint) as client:
+        discovered = [
+            card
+            for card in discover(
+                [did],
+                describe=client,
+                list_corpora=client,
+                endpoint=pds_server.endpoint,
+            )
+            if card.summary.uri == uri
+        ]
+        assert len(discovered) == 1
+        index.mute(discovered[0])
+        report = build_index(
+            index,
+            [did],
+            describe=client,
+            list_corpora=client,
+            endpoint=pds_server.endpoint,
+        )
+    assert index.get_card(uri) is None
+    assert index.is_muted(uri) is True
+    assert any("muted" in reason for reason in report.skipped)
+
+
+def _seed_corpora_bulk(server: PdsServer, did: str, jwt: str, count: int) -> None:
+    """Create ``count`` corpora on ``did`` via batched applyWrites.
+
+    Batching keeps seeding past the default page size fast (one request per
+    chunk), so a pagination test does not pay for hundreds of round trips.
+    """
+    chunk = 50
+    headers = {"Authorization": f"Bearer {jwt}"}
+    with httpx.Client(headers=headers) as authed:
+        created = 0
+        while created < count:
+            batch = min(chunk, count - created)
+            writes = [
+                {
+                    "$type": "com.atproto.repo.applyWrites#create",
+                    "collection": _CORPUS_NSID,
+                    "value": {
+                        "$type": _CORPUS_NSID,
+                        "name": f"bulk corpus {created + offset}",
+                        "createdAt": "2026-06-18T00:00:00Z",
+                    },
+                }
+                for offset in range(batch)
+            ]
+            response = authed.post(
+                f"{server.endpoint}/xrpc/com.atproto.repo.applyWrites",
+                json={"repo": did, "writes": writes},
+                timeout=60.0,
+            )
+            response.raise_for_status()
+            created += batch
+
+
+@pytest.mark.integration
+def test_discover_drains_paginated_corpora_live(
+    pds_server: PdsServer,
+    tmp_path: Path,
+) -> None:
+    # an account with more corpora than one listRecords page must come back
+    # whole: the crawl follows the real PDS cursor across every page at the
+    # default page size, dropping and duplicating nothing at the boundaries.
+    did, jwt = _fresh_account(pds_server)
+    count = DEFAULT_PAGE_SIZE * 2 + 5
+    _seed_corpora_bulk(pds_server, did, jwt, count)
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    with PdsClient(pds_server.endpoint) as client:
+        cards = list(
+            discover(
+                [did],
+                describe=client,
+                list_corpora=client,
+                endpoint=pds_server.endpoint,
+            ),
+        )
+        report = build_index(
+            index,
+            [did],
+            describe=client,
+            list_corpora=client,
+            endpoint=pds_server.endpoint,
+        )
+    assert len(cards) == count
+    assert len({card.summary.uri for card in cards}) == count
+    assert report.cards_built == count
+    assert len(index.cards()) == count
 
 
 @pytest.mark.integration

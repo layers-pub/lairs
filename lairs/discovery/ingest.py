@@ -34,7 +34,13 @@ if TYPE_CHECKING:
     from lairs.discovery.cards import DatasetCard
     from lairs.discovery.index import DiscoveryIndex
 
-__all__ = ["CorpusLister", "RepoDescriber", "build_index", "update_index"]
+__all__ = [
+    "CorpusLister",
+    "RepoDescriber",
+    "build_index",
+    "discover",
+    "update_index",
+]
 
 _DEFAULT_COMMIT_EVERY = 50
 """How many firehose events to process between cursor checkpoints."""
@@ -248,6 +254,9 @@ def build_index(  # noqa: PLR0913  (crawl inputs plus a logged bound)
                 skipped.append(f"{envelope.uri}: undecodable corpus")
                 continue
             found += 1
+            if index.is_muted(envelope.uri):
+                skipped.append(f"{envelope.uri}: muted")
+                continue
             existing = index.get_card(envelope.uri)
             provenance = CardProvenance(
                 source_did=did,
@@ -287,6 +296,65 @@ def build_index(  # noqa: PLR0913  (crawl inputs plus a logged bound)
         skipped=tuple(skipped),
         revision=revision,
     )
+
+
+def discover(
+    dids: Iterable[str],
+    *,
+    describe: RepoDescriber,
+    list_corpora: CorpusLister,
+    endpoint: str,
+) -> Iterator[DatasetCard]:
+    """Yield a dataset card per discovered corpus, without indexing anything.
+
+    This is the streaming half of a crawl: it walks the given repositories on one
+    endpoint and yields a fresh :class:`~lairs.discovery.cards.DatasetCard` per
+    corpus as it is found, committing nothing, so a caller (for example the TUI)
+    can decide what to index or mute. A repo that fails to describe, lacks the
+    corpus collection, or yields an undecodable corpus is skipped silently.
+
+    Parameters
+    ----------
+    dids : collections.abc.Iterable of str
+        The repository DIDs to crawl.
+    describe : RepoDescriber
+        A repository-description source bound to ``endpoint``.
+    list_corpora : CorpusLister
+        A record-listing source bound to ``endpoint``.
+    endpoint : str
+        The PDS or relay endpoint the repos are read from.
+
+    Yields
+    ------
+    DatasetCard
+        One card per discovered corpus, with fresh provenance and freshness.
+    """
+    now = datetime.now(UTC)
+    for did in dids:
+        try:
+            description = describe.describe_repo(did)
+        except httpx.HTTPError:
+            continue
+        if _CORPUS_NSID not in description.collections:
+            continue
+        handle = description.handle or None
+        for envelope in list_corpora.list_records(did, _CORPUS_NSID):
+            corpus = corpus_from_value(envelope.value)
+            if corpus is None:
+                continue
+            provenance = CardProvenance(
+                source_did=did,
+                source_endpoint=endpoint,
+                discovered_via="crawl",
+                source_handle=handle,
+            )
+            freshness = CardFreshness(first_seen_at=now, last_updated_at=now)
+            yield card_from_corpus(
+                envelope.uri,
+                corpus,
+                provenance=provenance,
+                freshness=freshness,
+            )
 
 
 def update_index(

@@ -7,24 +7,30 @@ so the suite needs no async-pytest plugin.
 from __future__ import annotations
 
 import asyncio
+import secrets
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
+import httpx
 import pytest
 from textual.widgets import (
     DataTable,
     Input,
     RadioButton,
     RadioSet,
+    Static,
     TabbedContent,
     TextArea,
     Tree,
 )
 
+from lairs.atproto.pds import RecordEnvelope, RepoDescription
+from lairs.discovery import DiscoveryIndex, Source
 from lairs.discovery.cards import CardFreshness, CardProvenance, DatasetCard
 from lairs.discovery.models import DatasetSummary
 from lairs.tui.app import HelpScreen, LairsApp
 from lairs.tui.query import QueryError
+from lairs.tui.screens.discover import DiscoverPane
 from lairs.tui.screens.explore import (
     ExplorePane,
     _card_markdown,
@@ -33,9 +39,22 @@ from lairs.tui.screens.explore import (
     _none_if_blank,
 )
 from lairs.tui.screens.query import QueryPane
+from lairs.tui.screens.settings import SettingsScreen
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
+    from typing import Protocol
+
+    from lairs._types import JsonValue
+
+    class _PdsLike(Protocol):
+        """The live-PDS connection attributes the integration tests read."""
+
+        endpoint: str
+        did: str
+        access_jwt: str
+
 
 _NOW = datetime(2026, 6, 18, tzinfo=UTC)
 
@@ -418,5 +437,503 @@ def test_query_pane_closes_engine_on_unmount(corpus_dir: Path) -> None:
             assert pane._engine is None
             with pytest.raises(QueryError):
                 engine.run_sql("SELECT 1")
+
+    asyncio.run(scenario())
+
+
+# ---- discover tab ---------------------------------------------------------
+
+_DISCOVER_NSID = "pub.layers.corpus.corpus"
+
+
+def _discover_value(name: str, domain: str) -> JsonValue:
+    """Build a minimal corpus record value for the fake PDS."""
+    return {
+        "$type": _DISCOVER_NSID,
+        "name": name,
+        "createdAt": "2026-06-18T00:00:00Z",
+        "domain": domain,
+    }
+
+
+_DISCOVER_ENVELOPES = (
+    RecordEnvelope(
+        uri="at://did:plc:disc/pub.layers.corpus.corpus/a",
+        cid="bafa",
+        value=_discover_value("Discovered Alpha", "legal"),
+    ),
+    RecordEnvelope(
+        uri="at://did:plc:disc/pub.layers.corpus.corpus/b",
+        cid="bafb",
+        value=_discover_value("Discovered Beta", "biomedical"),
+    ),
+)
+
+
+class _FakeDiscoverClient:
+    """A context-managed PdsClient stand-in that serves two corpora."""
+
+    def __init__(self, endpoint: str | None) -> None:
+        self.endpoint = endpoint
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def list_repos(self) -> list[str]:
+        return ["did:plc:disc"]
+
+    def describe_repo(self, repo: str) -> RepoDescription:
+        return RepoDescription(
+            did=repo,
+            handle="disc.test",
+            collections=(_DISCOVER_NSID,),
+        )
+
+    def list_records(self, repo: str, collection: str) -> Iterator[RecordEnvelope]:
+        _ = (repo, collection)
+        yield from _DISCOVER_ENVELOPES
+
+
+class _FailingDiscoverClient:
+    """A PdsClient stand-in whose crawl fails, to exercise error handling."""
+
+    def __init__(self, endpoint: str | None) -> None:
+        self.endpoint = endpoint
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def list_repos(self) -> list[str]:
+        msg = "connection refused"
+        raise httpx.ConnectError(msg)
+
+
+def _fake_source() -> Source:
+    """Build a single enabled source for the faked-client auto-index tests."""
+    return Source(
+        name="fake",
+        endpoint="https://pds.example",
+        kind="pds",
+        enabled=True,
+        builtin=False,
+    )
+
+
+def test_discover_does_not_crawl_at_boot(index_path: str) -> None:
+    """The Discover pane mounts without a network read until it is opened."""
+
+    async def scenario() -> None:
+        app = LairsApp(index_path=index_path)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            pane = app.query_one(DiscoverPane)
+            assert pane._crawled is False
+            assert len(pane._sources) >= 1
+
+    asyncio.run(scenario())
+
+
+def test_discover_tab_lists_new_datasets(
+    index_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("lairs.tui.screens.discover.PdsClient", _FakeDiscoverClient)
+
+    async def scenario() -> None:
+        app = LairsApp(index_path=index_path)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            await pilot.press("4")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert app.query_one("#discovered", DataTable).row_count == 2
+            pane = app.query_one(DiscoverPane)
+            assert pane._crawled is True
+            assert all(pane._state_of(card) == "new" for card in pane._cards)
+
+    asyncio.run(scenario())
+
+
+def test_discover_toggle_indexes_into_explore(
+    index_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("lairs.tui.screens.discover.PdsClient", _FakeDiscoverClient)
+
+    async def scenario() -> None:
+        app = LairsApp(index_path=index_path)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            await pilot.press("4")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = app.query_one(DiscoverPane)
+            pane._toggle(0)
+            await pilot.pause()
+            card = pane._cards[0]
+            assert pane._state_of(card) == "indexed"
+            assert app._index is not None
+            assert app._index.get_card(card.summary.uri) is not None
+            # the newly indexed dataset appears in Explore once its tab reloads.
+            await pilot.press("1")
+            await pilot.pause()
+            assert app.query_one("#results", DataTable).row_count == 4
+
+    asyncio.run(scenario())
+
+
+def test_discover_toggle_mutes_indexed(
+    index_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("lairs.tui.screens.discover.PdsClient", _FakeDiscoverClient)
+
+    async def scenario() -> None:
+        app = LairsApp(index_path=index_path)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            await pilot.press("4")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = app.query_one(DiscoverPane)
+            card = pane._cards[0]
+            pane._toggle(0)  # new -> indexed
+            assert pane._state_of(card) == "indexed"
+            pane._toggle(0)  # indexed -> muted
+            assert pane._state_of(card) == "muted"
+            assert app._index is not None
+            assert app._index.is_muted(card.summary.uri) is True
+
+    asyncio.run(scenario())
+
+
+def test_settings_modal_unmutes(
+    index_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("lairs.tui.screens.discover.PdsClient", _FakeDiscoverClient)
+
+    async def scenario() -> None:
+        app = LairsApp(index_path=index_path)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            await pilot.press("4")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = app.query_one(DiscoverPane)
+            card = pane._cards[0]
+            pane._toggle(0)  # index
+            pane._toggle(0)  # mute
+            muted_uri = card.summary.uri
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, SettingsScreen)
+            muted_table = screen.query_one("#settings-muted", DataTable)
+            assert muted_table.row_count == 1
+            screen.action_unmute()
+            await pilot.pause()
+            assert muted_table.row_count == 0
+            assert app._index is not None
+            assert app._index.is_muted(muted_uri) is False
+
+    asyncio.run(scenario())
+
+
+def test_auto_index_populates_explore(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("lairs.tui.app.PdsClient", _FakeDiscoverClient)
+
+    async def scenario() -> None:
+        app = LairsApp(index_path=str(tmp_path / "auto"), auto_index=True)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert app._index is not None
+            assert len(app._index.cards()) == 2
+            # explore is the initial tab and reloads after the auto-index commit.
+            assert app.query_one("#results", DataTable).row_count == 2
+
+    asyncio.run(scenario())
+
+
+def test_auto_index_respects_a_mute(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # a permanently muted dataset must not be re-indexed by the launch auto-index;
+    # the other discovered dataset still is. this is the core mute guarantee.
+    monkeypatch.setattr("lairs.tui.app.PdsClient", _FakeDiscoverClient)
+    monkeypatch.setattr("lairs.tui.app.load_sources", lambda: [_fake_source()])
+    muted_uri = _DISCOVER_ENVELOPES[0].uri
+    other_uri = _DISCOVER_ENVELOPES[1].uri
+    idx_dir = tmp_path / "idx"
+    seed = DiscoveryIndex.init(idx_dir)
+    seed.mute(
+        DatasetCard(
+            summary=DatasetSummary(uri=muted_uri, did="did:plc:disc", name="muted"),
+            provenance=CardProvenance(
+                source_did="did:plc:disc",
+                source_endpoint="https://pds.example",
+                discovered_via="crawl",
+            ),
+            freshness=CardFreshness(first_seen_at=_NOW, last_updated_at=_NOW),
+        ),
+    )
+    seed.commit("pre-mute")
+
+    async def scenario() -> None:
+        app = LairsApp(index_path=str(idx_dir), auto_index=True)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert app._index is not None
+            assert app._index.is_muted(muted_uri) is True
+            assert app._index.get_card(muted_uri) is None
+            assert app._index.get_card(other_uri) is not None
+
+    asyncio.run(scenario())
+
+
+def test_auto_index_survives_unreachable_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # a source that cannot be reached is skipped, not fatal: the app boots, the
+    # index stays empty, and Explore shows nothing.
+    monkeypatch.setattr("lairs.tui.app.PdsClient", _FailingDiscoverClient)
+    monkeypatch.setattr("lairs.tui.app.load_sources", lambda: [_fake_source()])
+
+    async def scenario() -> None:
+        app = LairsApp(index_path=str(tmp_path / "idx"), auto_index=True)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert app._index is not None
+            assert app._index.cards() == []
+            assert app.query_one("#results", DataTable).row_count == 0
+
+    asyncio.run(scenario())
+
+
+def test_discover_crawl_failure_shows_status(
+    index_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # a failed crawl reports a status and leaves the table empty, never crashing.
+    monkeypatch.setattr(
+        "lairs.tui.screens.discover.PdsClient",
+        _FailingDiscoverClient,
+    )
+
+    async def scenario() -> None:
+        app = LairsApp(index_path=index_path)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            await pilot.press("4")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            status = str(app.query_one("#discover-status", Static).render())
+            assert "crawl failed" in status
+            assert app.query_one("#discovered", DataTable).row_count == 0
+
+    asyncio.run(scenario())
+
+
+def test_discover_toggle_unmutes_back_to_indexed(
+    index_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # toggling cycles new -> indexed -> muted -> indexed, so a mute made by hand
+    # can be undone from the same tab.
+    monkeypatch.setattr("lairs.tui.screens.discover.PdsClient", _FakeDiscoverClient)
+
+    async def scenario() -> None:
+        app = LairsApp(index_path=index_path)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            await pilot.press("4")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = app.query_one(DiscoverPane)
+            card = pane._cards[0]
+            pane._toggle(0)  # new -> indexed
+            pane._toggle(0)  # indexed -> muted
+            assert pane._state_of(card) == "muted"
+            pane._toggle(0)  # muted -> indexed
+            assert pane._state_of(card) == "indexed"
+            assert app._index is not None
+            assert app._index.is_muted(card.summary.uri) is False
+            assert app._index.get_card(card.summary.uri) is not None
+
+    asyncio.run(scenario())
+
+
+def test_discover_keybindings_toggle_and_refresh(
+    index_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # the space and r bindings drive the pane: space indexes the highlighted
+    # dataset, r re-crawls the highlighted source.
+    monkeypatch.setattr("lairs.tui.screens.discover.PdsClient", _FakeDiscoverClient)
+
+    async def scenario() -> None:
+        app = LairsApp(index_path=index_path)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            await pilot.press("4")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = app.query_one(DiscoverPane)
+            app.query_one("#discovered", DataTable).focus()
+            await pilot.pause()
+            await pilot.press("space")
+            await pilot.pause()
+            assert pane._state_of(pane._cards[0]) == "indexed"
+            await pilot.press("r")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert app.query_one("#discovered", DataTable).row_count == 2
+
+    asyncio.run(scenario())
+
+
+# ---- discover / auto-index against a live PDS -----------------------------
+
+
+def _fresh_account(server: _PdsLike) -> tuple[str, str]:
+    """Create a new empty account on the PDS, returning (did, access_jwt)."""
+    token = secrets.token_hex(6)
+    response = httpx.post(
+        f"{server.endpoint}/xrpc/com.atproto.server.createAccount",
+        json={
+            "handle": f"tu{token}.test",
+            "email": f"tu{token}@example.test",
+            "password": secrets.token_hex(12),
+        },
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    body = response.json()
+    return str(body["did"]), str(body["accessJwt"])
+
+
+def _seed_corpus_on(server: _PdsLike, did: str, jwt: str, name: str) -> str:
+    """Create a corpus on a specific account and return its AT-URI."""
+    response = httpx.post(
+        f"{server.endpoint}/xrpc/com.atproto.repo.createRecord",
+        headers={"Authorization": f"Bearer {jwt}"},
+        json={
+            "repo": did,
+            "collection": _DISCOVER_NSID,
+            "record": {
+                "$type": _DISCOVER_NSID,
+                "name": name,
+                "createdAt": "2026-06-18T00:00:00Z",
+            },
+        },
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    return str(response.json()["uri"])
+
+
+def _pds_source(server: _PdsLike) -> Source:
+    """Build a configured source pointing at the live test PDS."""
+    return Source(
+        name="test-pds",
+        endpoint=server.endpoint,
+        kind="pds",
+        enabled=True,
+        builtin=False,
+    )
+
+
+@pytest.mark.integration
+def test_auto_index_live_pulls_from_pds(
+    pds_server: _PdsLike,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # the real launch path: list the PDS's repos, crawl them, and index the
+    # corpora found, all over a live PDS through a real PdsClient.
+    did, jwt = _fresh_account(pds_server)
+    token = secrets.token_hex(4)
+    uri_a = _seed_corpus_on(pds_server, did, jwt, f"live-{token}-alpha")
+    uri_b = _seed_corpus_on(pds_server, did, jwt, f"live-{token}-beta")
+    monkeypatch.setattr("lairs.tui.app.load_sources", lambda: [_pds_source(pds_server)])
+
+    async def scenario() -> None:
+        app = LairsApp(index_path=str(tmp_path / "idx"), auto_index=True)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert app._index is not None
+            assert app._index.get_card(uri_a) is not None
+            assert app._index.get_card(uri_b) is not None
+            # explore surfaces them; filter on the unique token to isolate from
+            # any other repos on the shared session PDS.
+            app.query_one("#f_text", Input).value = token
+            await pilot.pause()
+            assert app.query_one("#results", DataTable).row_count == 2
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.integration
+def test_discover_tab_live_indexes_from_pds(
+    pds_server: _PdsLike,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # the real Discover path: open the tab, crawl the live PDS, and toggle a
+    # discovered corpus into the index.
+    did, jwt = _fresh_account(pds_server)
+    token = secrets.token_hex(4)
+    uri = _seed_corpus_on(pds_server, did, jwt, f"disc-{token}")
+    monkeypatch.setattr(
+        "lairs.tui.screens.discover.load_sources",
+        lambda: [_pds_source(pds_server)],
+    )
+
+    async def scenario() -> None:
+        app = LairsApp(index_path=str(tmp_path / "idx"), auto_index=False)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            await pilot.press("4")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = app.query_one(DiscoverPane)
+            row = next(
+                (i for i, card in enumerate(pane._cards) if card.summary.uri == uri),
+                None,
+            )
+            assert row is not None
+            assert pane._state_of(pane._cards[row]) == "new"
+            pane._toggle(row)
+            assert pane._state_of(pane._cards[row]) == "indexed"
+            assert app._index is not None
+            assert app._index.get_card(uri) is not None
 
     asyncio.run(scenario())

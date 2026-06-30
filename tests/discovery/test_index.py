@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
@@ -14,11 +14,8 @@ from lairs.discovery.cards import (
     RepoCrawlState,
     SyncCursor,
 )
-from lairs.discovery.index import DiscoveryIndex
+from lairs.discovery.index import DiscoveryIndex, default_index_path
 from lairs.discovery.models import DatasetSummary
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _NOW = datetime(2026, 6, 18, tzinfo=UTC)
 
@@ -135,3 +132,81 @@ def test_commit_and_diff_cards(tmp_path: Path) -> None:
     assert _URI_B in diff.added
     assert _URI_A in diff.changed
     assert diff.removed == ()
+
+
+# ---- mute / unmute --------------------------------------------------------
+
+
+def test_mute_removes_card_and_records_mute(tmp_path: Path) -> None:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    card = _card(_URI_A, "Alpha")
+    index.put_card(card)
+    index.mute(card)
+    assert index.get_card(_URI_A) is None
+    assert index.is_muted(_URI_A) is True
+    records = index.muted()
+    assert len(records) == 1
+    assert records[0].uri == _URI_A
+    assert records[0].name == "Alpha"
+    assert records[0].source_endpoint == "https://pds.example"
+
+
+def test_unmute_clears_mute(tmp_path: Path) -> None:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    index.mute(_card(_URI_A, "Alpha"))
+    assert index.unmute(_URI_A) is True
+    assert index.is_muted(_URI_A) is False
+    assert index.muted() == []
+
+
+def test_unmute_unknown_is_noop(tmp_path: Path) -> None:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    assert index.unmute(_URI_A) is False
+
+
+def test_is_muted_false_when_absent(tmp_path: Path) -> None:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    assert index.is_muted(_URI_A) is False
+
+
+@pytest.mark.integration
+def test_mute_survives_commit_round_trip(tmp_path: Path) -> None:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    index.mute(_card(_URI_A, "Alpha"))
+    index.commit("mute")
+    reopened = DiscoveryIndex.open(tmp_path / "idx")
+    assert reopened.is_muted(_URI_A) is True
+    assert [record.uri for record in reopened.muted()] == [_URI_A]
+
+
+# ---- default_index_path ---------------------------------------------------
+
+
+def test_default_index_path_honors_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("LAIRS_INDEX_DIR", str(tmp_path / "custom"))
+    assert default_index_path() == tmp_path / "custom"
+
+
+def test_default_index_path_uses_xdg_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("LAIRS_INDEX_DIR", raising=False)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    assert default_index_path() == tmp_path / "state" / "lairs" / "index"
+
+
+def test_default_index_path_falls_back_to_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("LAIRS_INDEX_DIR", raising=False)
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    assert (
+        default_index_path()
+        == tmp_path / "home" / ".local" / "state" / "lairs" / "index"
+    )

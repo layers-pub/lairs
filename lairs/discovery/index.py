@@ -11,6 +11,9 @@ free, and ``repo.diff`` answers "what datasets changed between two snapshots".
 from __future__ import annotations
 
 import hashlib
+import os
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 import didactic.api as dx
@@ -21,7 +24,9 @@ from lairs.discovery.cards import (
     CRAWL_STATE_NSID,
     CURSOR_NSID,
     INDEX_DID,
+    MUTED_NSID,
     DatasetCard,
+    MutedDataset,
     RepoCrawlState,
     SyncCursor,
     card_uri,
@@ -30,14 +35,40 @@ from lairs.store.pool import ModelPool
 from lairs.store.repository import Repository, Workspace
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from lairs._types import JsonValue
 
-__all__ = ["CardDiff", "DiscoveryIndex"]
+__all__ = ["CardDiff", "DiscoveryIndex", "default_index_path"]
 
 _RKEY_LENGTH = 24
 """The hex digest length used for synthetic index record keys."""
+
+_INDEX_DIR_ENV = "LAIRS_INDEX_DIR"
+"""The environment variable that overrides the default index location."""
+
+_XDG_STATE_ENV = "XDG_STATE_HOME"
+"""The environment variable for the XDG state base directory."""
+
+_INDEX_DIRNAME = "index"
+"""The default index directory name under the lairs state directory."""
+
+
+def default_index_path() -> Path:
+    """Return the default discovery-index directory.
+
+    Returns
+    -------
+    pathlib.Path
+        The path from ``LAIRS_INDEX_DIR`` when set, otherwise
+        ``$XDG_STATE_HOME/lairs/index`` (or ``~/.local/state`` when the XDG
+        variable is unset). The index is rebuildable state, so it lives under the
+        state directory.
+    """
+    override = os.environ.get(_INDEX_DIR_ENV)
+    if override:
+        return Path(override)
+    state_home = os.environ.get(_XDG_STATE_ENV)
+    base = Path(state_home) if state_home else Path.home() / ".local" / "state"
+    return base / "lairs" / _INDEX_DIRNAME
 
 
 class CardDiff(dx.Model):
@@ -261,6 +292,79 @@ class DiscoveryIndex:
             The crawl state to store.
         """
         self._repo.save(_digest_uri(CRAWL_STATE_NSID, state.did), state)
+
+    def mute(self, card: DatasetCard) -> None:
+        """Permanently mute a dataset: remove its card and record the mute.
+
+        Muting removes any indexed card for the corpus and stores a
+        self-describing :class:`~lairs.discovery.cards.MutedDataset` record, so a
+        later crawl does not re-index it and the user can review and unmute it.
+
+        Parameters
+        ----------
+        card : lairs.discovery.cards.DatasetCard
+            The card to mute.
+        """
+        corpus_uri = card.summary.uri
+        self.remove_card(corpus_uri)
+        record = MutedDataset(
+            uri=corpus_uri,
+            name=card.summary.name,
+            source_endpoint=card.provenance.source_endpoint,
+            muted_at=datetime.now(UTC),
+        )
+        self._repo.save(_digest_uri(MUTED_NSID, corpus_uri), record)
+
+    def unmute(self, corpus_uri: str) -> bool:
+        """Unmute a dataset, returning whether it was muted.
+
+        Parameters
+        ----------
+        corpus_uri : str
+            The corpus AT-URI to unmute.
+
+        Returns
+        -------
+        bool
+            ``True`` if a mute was cleared, ``False`` if it was not muted.
+        """
+        try:
+            self._repo.forget(_digest_uri(MUTED_NSID, corpus_uri))
+        except KeyError:
+            return False
+        return True
+
+    def is_muted(self, corpus_uri: str) -> bool:
+        """Return whether a corpus is muted.
+
+        Parameters
+        ----------
+        corpus_uri : str
+            The corpus AT-URI.
+
+        Returns
+        -------
+        bool
+            ``True`` when the corpus has a mute record.
+        """
+        loaded = self._repo.load(_digest_uri(MUTED_NSID, corpus_uri), MutedDataset)
+        return isinstance(loaded, MutedDataset)
+
+    def muted(self) -> list[MutedDataset]:
+        """Load every muted-dataset record in the index.
+
+        Returns
+        -------
+        list of lairs.discovery.cards.MutedDataset
+            All mute records, in index key order.
+        """
+        workspace = Workspace(self._repo)
+        records: list[MutedDataset] = []
+        for uri in workspace.uris_of(MUTED_NSID):
+            loaded = self._repo.load(uri, MutedDataset)
+            if isinstance(loaded, MutedDataset):
+                records.append(loaded)
+        return records
 
     def commit(self, message: str) -> str:
         """Commit the staged index records.

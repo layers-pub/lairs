@@ -1,30 +1,38 @@
 # The explorer TUI
 
 `lairs tui` opens a terminal user interface (TUI) for discovering, browsing, and
-querying Layers data. It has three tabs: **Explore**, a browser over the
-discovery index of corpora; **Browse**, a type-aware record explorer over a
-local repository that handles every kind of Layers data; and **Query**, a
-workbench that runs powerful queries over any materialized Layers data.
+querying Layers data. It has four tabs: **Explore**, a browser over the discovery
+index of corpora; **Discover**, a source browser for finding and indexing
+datasets; **Browse**, a type-aware record explorer over a local repository that
+handles every kind of Layers data; and **Query**, a workbench that runs powerful
+queries over any materialized Layers data.
 
 ```bash
 lairs tui --index path/to/index --repo path/to/repo --data path/to/materialized
 ```
 
-All three paths are optional. `--index` opens a discovery index (built with
-`lairs index build`) on the Explore tab; `--repo` opens a local repository (built
-with `lairs pull`) on the Browse tab; `--data` opens a directory of materialized
+All paths are optional. `--index` opens a discovery index (built with `lairs
+index build`) on the Explore tab; `--repo` opens a local repository (built with
+`lairs pull`) on the Browse tab; `--data` opens a directory of materialized
 Parquet views on the Query tab. A tab with no source shows guidance on how to
 produce one. The TUI opens on whichever tab fits the source you gave: a
 repository opens on Browse, a bare materialized directory on Query, and otherwise
 the Explore index.
+
+With no `--index`, the TUI uses a default index location (under the XDG state
+directory, overridable with `LAIRS_INDEX_DIR`) and, on launch, crawls the
+configured sources and indexes every newly discovered dataset that you have not
+muted, so the Explore tab fills in on its own. Pass `--no-auto-index` to skip
+the launch crawl and index datasets by hand from the Discover tab instead.
 
 `--repo` also feeds the Query tab: the repository is flattened into Parquet views
 in a scratch directory, so `lairs tui --repo path/to/repo` gives you both a
 type-aware Browse and a full Query workbench from one source. Pass `--data`
 explicitly to query a different directory.
 
-Press `1`, `2`, and `3` to switch to Explore, Browse, and Query, `ctrl+r` to run
-a query, `ctrl+t` to cycle the color theme, `f1` for help, and `ctrl+q` to quit.
+Press `1`, `2`, `3`, and `4` to switch to Explore, Browse, Query, and Discover,
+`ctrl+r` to run a query, `ctrl+s` to open settings, `ctrl+t` to cycle the color
+theme, `f1` for help, and `ctrl+q` to quit.
 
 ## Explore
 
@@ -38,6 +46,55 @@ detail panel on the right.
 
 The filtering and ranking are exactly those of `lairs index search`: the facet
 boxes build a `SearchQuery`, and the same scorer orders the results.
+
+## Discover
+
+Where Explore reads the index you already have, **Discover finds datasets to add
+to it**. It lists the configured sources on the left; pick one to crawl it (press
+`enter`, or `r` to re-crawl). The crawl runs in the background and fills the table
+on the right with the datasets it finds, one per row, each tagged with its state:
+
+- `indexed`: the dataset is in your local index and shows on the Explore tab;
+- `new`: discovered but not yet indexed;
+- `muted`: permanently excluded from auto-indexing.
+
+Press `enter` or `space` on a row to toggle it: a `new` (or `muted`) dataset
+becomes `indexed` and appears on the Explore tab; an `indexed` dataset becomes
+`muted` and is dropped from the index. Muting is permanent. A later crawl or the
+launch auto-index will not re-index a muted dataset until you unmute it.
+
+### Sources
+
+A **source** is a PDS or relay endpoint lairs crawls for datasets. lairs ships a
+built-in default for the public Layers PDS (`repo.layers.pub`), which is
+deliberately kept off the firehose and so would otherwise be undiscoverable.
+Sources are configured in a `sources.toml` file under the XDG config directory
+(`~/.config/lairs/sources.toml`, overridable with `LAIRS_SOURCES_FILE`):
+
+```toml
+[[source]]
+name = "my-pds"
+endpoint = "https://pds.example"
+kind = "pds"
+
+[[source]]
+name = "layers-pub"
+enabled = false
+```
+
+Each `[[source]]` adds a source by `name` and `endpoint`; a `kind` of `pds` or
+`relay` defaults to `pds`. An entry whose `name` matches a built-in overrides
+that built-in's fields. The second entry above disables the built-in
+`repo.layers.pub` without redefining it. `lairs sources list` prints the resolved
+sources (add `--json` for machine-readable output), and `lairs index build
+--source <name>` crawls a named source instead of a bare `--endpoint`.
+
+### Settings
+
+Press `ctrl+s` to open the settings modal. It lists the configured sources and
+every dataset you have muted, with when and where each was muted. Highlight a
+muted dataset and press `u` (or `space`) to unmute it, so a later crawl or the
+launch auto-index can pick it up again. Press `esc` to close.
 
 ## Browse
 

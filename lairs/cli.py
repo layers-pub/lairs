@@ -112,6 +112,50 @@ def main(argv: Sequence[str] | None = None) -> int:
     return handler(args)
 
 
+def _add_sources(subparsers: _Subparsers) -> None:
+    """Register the ``sources`` subcommand group."""
+    sources = subparsers.add_parser(
+        "sources",
+        help="list the configured dataset sources",
+        description=(
+            "List the PDS and relay sources lairs crawls for datasets, merging "
+            "the built-in defaults with the user's sources.toml."
+        ),
+    )
+    sources_sub = sources.add_subparsers(
+        dest="sources_command",
+        metavar="sources_command",
+    )
+    list_cmd = sources_sub.add_parser("list", help="list configured sources")
+    list_cmd.add_argument("--json", action="store_true", help="emit JSON")
+    list_cmd.set_defaults(handler=_run_sources_list)
+
+
+def _run_sources_list(args: argparse.Namespace) -> int:
+    """Handle ``lairs sources list``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments.
+
+    Returns
+    -------
+    int
+        ``0`` always.
+    """
+    sources = discovery.load_sources()
+    if args.json:
+        payload = [json.loads(source.model_dump_json()) for source in sources]
+        print(json.dumps(payload, indent=2))
+        return 0
+    for source in sources:
+        origin = "default" if source.builtin else "user"
+        state = "" if source.enabled else " (disabled)"
+        print(f"{source.name}\t{source.endpoint}\t[{source.kind}, {origin}]{state}")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build the top-level argument parser with every subcommand.
 
@@ -135,6 +179,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_toc(subparsers)
     _add_search(subparsers)
     _add_index(subparsers)
+    _add_sources(subparsers)
     _add_tui(subparsers)
     _add_login(subparsers)
     _add_logout(subparsers)
@@ -938,10 +983,14 @@ def _add_index(subparsers: _Subparsers) -> None:
 
     build = index_sub.add_parser("build", help="crawl repositories into the index")
     build.add_argument("--into", required=True, type=Path, help="index directory")
-    build.add_argument(
+    build_target = build.add_mutually_exclusive_group(required=True)
+    build_target.add_argument(
         "--endpoint",
-        required=True,
         help="the relay or PDS to crawl",
+    )
+    build_target.add_argument(
+        "--source",
+        help="a configured source name to crawl (see `lairs sources list`)",
     )
     build.add_argument(
         "--seed-did",
@@ -1034,8 +1083,15 @@ def _run_index_build(args: argparse.Namespace) -> int:
     int
         ``0`` on success, ``1`` on a transport failure.
     """
+    endpoint = args.endpoint
+    if args.source is not None:
+        try:
+            endpoint = discovery.resolve_source(args.source).endpoint
+        except discovery.UnknownSourceError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
     index = discovery.DiscoveryIndex.init(args.into)
-    with PdsClient(args.endpoint) as client:
+    with PdsClient(endpoint) as client:
         dids = args.seed_did or client.list_repos()
         try:
             report = discovery.build_index(
@@ -1043,7 +1099,7 @@ def _run_index_build(args: argparse.Namespace) -> int:
                 dids,
                 describe=client,
                 list_corpora=client,
-                endpoint=args.endpoint,
+                endpoint=endpoint,
                 max_repos=args.max_repos,
                 message=args.message,
             )
@@ -1411,6 +1467,16 @@ def _add_tui(subparsers: _Subparsers) -> None:
         default=None,
         help="materialized Parquet directory to open on the Query tab",
     )
+    sub.add_argument(
+        "--no-auto-index",
+        dest="auto_index",
+        action="store_false",
+        default=True,
+        help=(
+            "do not crawl the enabled sources and index new datasets on launch "
+            "(auto-indexing is on by default)"
+        ),
+    )
     sub.set_defaults(handler=_run_tui)
 
 
@@ -1421,12 +1487,18 @@ def _run_tui(args: argparse.Namespace) -> int:
     ----------
     args : argparse.Namespace
         The parsed arguments, carrying optional ``index``, ``repo``, and ``data``
-        paths.
+        paths and the ``auto_index`` toggle.
 
     Returns
     -------
     int
         ``0`` after the UI exits.
     """
-    run_tui(index_path=args.index, data_path=args.data, repo_path=args.repo)
+    index_path = args.index or str(discovery.default_index_path())
+    run_tui(
+        index_path=index_path,
+        data_path=args.data,
+        repo_path=args.repo,
+        auto_index=args.auto_index,
+    )
     return 0

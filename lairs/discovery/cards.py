@@ -29,10 +29,12 @@ __all__ = [
     "CRAWL_STATE_NSID",
     "CURSOR_NSID",
     "INDEX_DID",
+    "MUTED_NSID",
     "CardFreshness",
     "CardProvenance",
     "CrawlReport",
     "DatasetCard",
+    "MutedDataset",
     "RepoCrawlState",
     "SyncCursor",
     "card_from_corpus",
@@ -50,6 +52,9 @@ CURSOR_NSID = "lairs.index.syncCursor"
 
 CRAWL_STATE_NSID = "lairs.index.repoCrawlState"
 """The collection NSID for per-repo crawl state in the local index."""
+
+MUTED_NSID = "lairs.index.mutedDataset"
+"""The collection NSID for permanently muted datasets in the local index."""
 
 _RKEY_LENGTH = 24
 """The hex digest length used for synthetic, deterministic index record keys."""
@@ -211,6 +216,33 @@ class RepoCrawlState(dx.Model):
         default=None,
         description="listRepos pagination checkpoint, when crawling a relay",
     )
+
+
+class MutedDataset(dx.Model):
+    """A permanently muted dataset the index must not auto-index.
+
+    A mute is self-describing so it can be listed and unmuted offline without a
+    re-crawl: it keeps the corpus AT-URI, a display name, and the source it came
+    from, plus when it was muted.
+
+    Attributes
+    ----------
+    uri : str
+        The muted corpus AT-URI.
+    name : str
+        The dataset's display name at mute time.
+    source_endpoint : str
+        The endpoint the dataset was discovered from.
+    muted_at : datetime
+        When the dataset was muted.
+    """
+
+    uri: str = dx.field(description="the muted corpus AT-URI")
+    name: str = dx.field(description="the dataset's display name at mute time")
+    source_endpoint: str = dx.field(
+        description="the endpoint the dataset was discovered from",
+    )
+    muted_at: datetime = dx.field(description="when the dataset was muted")
 
 
 class CrawlReport(dx.Model):
