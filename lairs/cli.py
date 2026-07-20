@@ -1110,22 +1110,24 @@ def _run_index_build(args: argparse.Namespace) -> int:
         endpoint = source.endpoint
     index = discovery.DiscoveryIndex.init(args.into)
     with PdsClient(endpoint) as client:
-        # enumerating the service ourselves also yields each repo's revision,
-        # which lets a re-crawl skip the repos that have not moved. an explicit
-        # --seed-did list carries no revisions, so those are always described.
-        dids: Iterable[str]
-        revs: dict[str, str] | None = None
-        if args.seed_did:
-            dids = args.seed_did
-        else:
-            listings = list(client.list_repo_listings())
-            dids = [listing.did for listing in listings]
-            revs = {
-                listing.did: listing.rev
-                for listing in listings
-                if listing.rev is not None
-            }
         try:
+            # enumerating the service ourselves also yields each repo's
+            # revision, which lets a re-crawl skip the repos that have not
+            # moved. an explicit --seed-did list carries no revisions, so those
+            # are always described. this enumeration is a network call, so it
+            # belongs inside the handler below.
+            dids: Iterable[str]
+            revs: dict[str, str] | None = None
+            if args.seed_did:
+                dids = args.seed_did
+            else:
+                listings = list(client.list_repo_listings())
+                dids = [listing.did for listing in listings]
+                revs = {
+                    listing.did: listing.rev
+                    for listing in listings
+                    if listing.rev is not None
+                }
             report = discovery.build_index(
                 index,
                 dids,

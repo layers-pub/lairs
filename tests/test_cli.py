@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 import json
 import shutil
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 import httpx
 import pytest
@@ -843,6 +843,35 @@ def test_sources_list_json(
     assert code == 0
     assert payload[0]["name"] == "layers-pub"
     assert payload[0]["builtin"] is True
+
+
+def test_index_build_reports_enumeration_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # the listRepos enumeration is a network call too, so a transport failure
+    # there must print a clean error rather than escape as a traceback.
+    class _FailingEnumerationClient(_FakeBuildClient):
+        @override
+        def list_repo_listings(self) -> list[RepoListing]:
+            msg = "timed out"
+            raise httpx.ConnectTimeout(msg)
+
+    monkeypatch.setattr(cli.discovery, "DiscoveryIndex", _FakeIndex)
+    monkeypatch.setattr(cli, "PdsClient", _FailingEnumerationClient)
+    code = cli.main(
+        [
+            "index",
+            "build",
+            "--into",
+            str(tmp_path / "idx"),
+            "--endpoint",
+            "https://pds.example",
+        ],
+    )
+    assert code == 1
+    assert "error: timed out" in capsys.readouterr().err
 
 
 def test_index_build_reports_http_error(
