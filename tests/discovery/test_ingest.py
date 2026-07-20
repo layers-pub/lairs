@@ -5,7 +5,7 @@ from __future__ import annotations
 import secrets
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 import httpx
 import pytest
@@ -77,6 +77,102 @@ def test_build_index_indexes_corpora(tmp_path: Path) -> None:
     assert report.repos_with_corpora == 1
     assert report.cards_built == 1
     assert index.get_card(_URI_A) is not None
+
+
+class _CountingRepo(_FakeRepo):
+    """A fake repo that counts how often it is described."""
+
+    def __init__(
+        self,
+        collections: tuple[str, ...],
+        envelopes: list[RecordEnvelope],
+    ) -> None:
+        super().__init__(collections, envelopes)
+        self.describe_calls = 0
+
+    @override
+    def describe_repo(self, repo: str) -> RepoDescription:
+        self.describe_calls += 1
+        return super().describe_repo(repo)
+
+
+@pytest.mark.integration
+def test_build_index_skips_repos_whose_rev_has_not_moved(tmp_path: Path) -> None:
+    # the first crawl records the revision; a second crawl at the same revision
+    # must not describe the repo again.
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    envelope = RecordEnvelope(uri=_URI_A, cid="bafy", value=_CORPUS_VALUE)
+    fake = _CountingRepo((_CORPUS_NSID,), [envelope])
+    revs = {"did:plc:x": "rev-1"}
+    first = build_index(
+        index,
+        ["did:plc:x"],
+        describe=fake,
+        list_corpora=fake,
+        endpoint="https://pds.example",
+        revs=revs,
+    )
+    assert first.repos_with_corpora == 1
+    assert first.repos_unchanged == 0
+    assert fake.describe_calls == 1
+
+    second = build_index(
+        index,
+        ["did:plc:x"],
+        describe=fake,
+        list_corpora=fake,
+        endpoint="https://pds.example",
+        revs=revs,
+    )
+    assert second.repos_unchanged == 1
+    assert second.repos_with_corpora == 0
+    assert fake.describe_calls == 1
+    # nothing was staged, so the pass makes no commit.
+    assert second.revision is None
+
+
+@pytest.mark.integration
+def test_build_index_redescribes_when_rev_moves(tmp_path: Path) -> None:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    envelope = RecordEnvelope(uri=_URI_A, cid="bafy", value=_CORPUS_VALUE)
+    fake = _CountingRepo((_CORPUS_NSID,), [envelope])
+    build_index(
+        index,
+        ["did:plc:x"],
+        describe=fake,
+        list_corpora=fake,
+        endpoint="https://pds.example",
+        revs={"did:plc:x": "rev-1"},
+    )
+    moved = build_index(
+        index,
+        ["did:plc:x"],
+        describe=fake,
+        list_corpora=fake,
+        endpoint="https://pds.example",
+        revs={"did:plc:x": "rev-2"},
+    )
+    assert moved.repos_unchanged == 0
+    assert fake.describe_calls == 2
+
+
+@pytest.mark.integration
+def test_build_index_without_revs_always_describes(tmp_path: Path) -> None:
+    # no revisions supplied (for example an explicit --seed-did list) means no
+    # skipping is possible, so every repo is described on every pass.
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    envelope = RecordEnvelope(uri=_URI_A, cid="bafy", value=_CORPUS_VALUE)
+    fake = _CountingRepo((_CORPUS_NSID,), [envelope])
+    for _ in range(2):
+        report = build_index(
+            index,
+            ["did:plc:x"],
+            describe=fake,
+            list_corpora=fake,
+            endpoint="https://pds.example",
+        )
+        assert report.repos_unchanged == 0
+    assert fake.describe_calls == 2
 
 
 @pytest.mark.integration

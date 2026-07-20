@@ -190,6 +190,13 @@ specific DIDs (the default crawls every repo), `--max-repos` bounds the
 repositories visited, and `--message` sets the crawl commit message (default
 `backfill crawl`).
 
+A re-run is incremental. When `index build` enumerates the service itself it
+reads each repository's current commit revision from the same `listRepos` pass
+and compares it against the revision recorded at the last crawl, describing only
+the repositories whose revision moved. The rest are counted as `repos unchanged
+since last crawl` in the summary. A crawl restricted with `--seed-did` carries no
+revisions, so those repositories are described every time.
+
 `index update` tails the firehose into an existing index. `--index` and
 `--relay` are required; `--limit` stops after that many events.
 

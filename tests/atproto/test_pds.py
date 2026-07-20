@@ -57,6 +57,7 @@ def test_exports() -> None:
         "RecordEnvelope",
         "RecordNotFoundError",
         "RepoDescription",
+        "RepoListing",
         "decode",
         "decode_all",
         "decode_repo_car",
@@ -387,6 +388,38 @@ def test_list_repos_paginates_dids() -> None:
     with _client(handler) as client:
         dids = list(client.list_repos())
     assert dids == ["did:plc:a", "did:plc:b", "did:plc:c"]
+
+
+def test_list_repo_listings_carries_head_and_rev() -> None:
+    pages = {
+        None: {
+            "repos": [
+                {"did": "did:plc:a", "head": "bafy-a", "rev": "rev-a", "active": True},
+                {"did": "did:plc:b", "rev": "rev-b"},
+            ],
+            "cursor": "p2",
+        },
+        "p2": {"repos": [{"did": "did:plc:c"}]},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        cursor = request.url.params.get("cursor")
+        return httpx.Response(200, json=pages[cursor])
+
+    with _client(handler) as client:
+        listings = list(client.list_repo_listings())
+    assert [listing.did for listing in listings] == [
+        "did:plc:a",
+        "did:plc:b",
+        "did:plc:c",
+    ]
+    assert listings[0].head == "bafy-a"
+    assert listings[0].rev == "rev-a"
+    assert listings[0].active is True
+    # fields the service omits stay None rather than being invented.
+    assert listings[1].head is None
+    assert listings[1].active is None
+    assert listings[2].rev is None
 
 
 def test_walk_mst_reconstructs_keys_in_order() -> None:

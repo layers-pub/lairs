@@ -15,6 +15,7 @@ from lairs._codegen.manifest import load_manifest
 from lairs.atproto import auth
 from lairs.atproto.auth import Session
 from lairs.atproto.identity import IdentityError
+from lairs.atproto.pds import RepoListing
 from lairs.author.publish import PublishPlan
 from lairs.data.corpus import Corpus
 from lairs.discovery import CardDiff, CrawlReport, SearchHit, SearchQuery
@@ -691,6 +692,9 @@ class _FakeBuildClient:
 
     def list_repos(self) -> list[str]:
         return ["did:plc:auto"]
+
+    def list_repo_listings(self) -> list[RepoListing]:
+        return [RepoListing(did="did:plc:auto", rev="rev-1")]
 
 
 def test_index_build_reports_crawl(

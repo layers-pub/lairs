@@ -27,7 +27,7 @@ from lairs.discovery.cards import (
 from lairs.discovery.summary import _CORPUS_NSID, corpus_from_value
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterable, Iterator, Mapping
 
     from lairs.atproto.firehose import FirehoseEvent
     from lairs.atproto.pds import RecordEnvelope, RepoDescription
@@ -187,6 +187,28 @@ def _apply_firehose_event(
     return _EventOutcome(kind="unchanged")
 
 
+def _is_unchanged(index: DiscoveryIndex, did: str, current_rev: str) -> bool:
+    """Return whether a repo's revision matches the one recorded at last crawl.
+
+    Parameters
+    ----------
+    index : lairs.discovery.index.DiscoveryIndex
+        The index holding per-repo crawl state.
+    did : str
+        The repository DID.
+    current_rev : str
+        The revision the service currently reports for the repository.
+
+    Returns
+    -------
+    bool
+        ``True`` when a previous crawl recorded this same revision, so the repo
+        cannot have changed since.
+    """
+    state = index.get_crawl_state(did)
+    return state is not None and state.last_seen_rev == current_rev
+
+
 def build_index(  # noqa: PLR0913  (crawl inputs plus a logged bound)
     index: DiscoveryIndex,
     dids: Iterable[str],
@@ -196,6 +218,7 @@ def build_index(  # noqa: PLR0913  (crawl inputs plus a logged bound)
     endpoint: str,
     max_repos: int | None = None,
     message: str = "backfill crawl",
+    revs: Mapping[str, str] | None = None,
 ) -> CrawlReport:
     """Crawl repositories on one endpoint and index their corpora.
 
@@ -203,6 +226,12 @@ def build_index(  # noqa: PLR0913  (crawl inputs plus a logged bound)
     collection; if so, its corpora are listed and turned into cards. Per-repo
     crawl state is recorded so a re-run resumes, and a ``max_repos`` bound is
     logged rather than silently applied.
+
+    Passing ``revs`` turns a re-crawl incremental: a repository whose current
+    commit revision equals the one recorded at the last crawl cannot have
+    changed, so it is skipped without a ``describe_repo`` round trip. The
+    revisions come from one paginated ``listRepos`` pass, so the cost of
+    finding what moved is a single call rather than one per repository.
 
     Parameters
     ----------
@@ -220,6 +249,9 @@ def build_index(  # noqa: PLR0913  (crawl inputs plus a logged bound)
         A bound on repositories visited; hitting it is logged.
     message : str, optional
         The commit message for the crawl snapshot.
+    revs : collections.abc.Mapping or None, optional
+        Current commit revisions by DID, from ``PdsClient.list_repo_listings``.
+        A repo whose revision matches its recorded one is skipped as unchanged.
 
     Returns
     -------
@@ -227,13 +259,17 @@ def build_index(  # noqa: PLR0913  (crawl inputs plus a logged bound)
         Counts and skip reasons for the crawl.
     """
     now = datetime.now(UTC)
-    seen = with_corpora = built = unchanged = 0
+    seen = with_corpora = built = unchanged = repos_unchanged = 0
     skipped: list[str] = []
     for did in dids:
         if max_repos is not None and seen >= max_repos:
             skipped.append(f"bound reached at {max_repos} repos (--max-repos)")
             break
         seen += 1
+        current_rev = revs.get(did) if revs is not None else None
+        if current_rev is not None and _is_unchanged(index, did, current_rev):
+            repos_unchanged += 1
+            continue
         try:
             description = describe.describe_repo(did)
         except httpx.HTTPError as exc:
@@ -241,7 +277,12 @@ def build_index(  # noqa: PLR0913  (crawl inputs plus a logged bound)
             continue
         if _CORPUS_NSID not in description.collections:
             index.put_crawl_state(
-                RepoCrawlState(did=did, endpoint=endpoint, last_crawled_at=now),
+                RepoCrawlState(
+                    did=did,
+                    endpoint=endpoint,
+                    last_crawled_at=now,
+                    last_seen_rev=current_rev,
+                ),
             )
             skipped.append(f"{did}: no {_CORPUS_NSID}")
             continue
@@ -285,14 +326,18 @@ def build_index(  # noqa: PLR0913  (crawl inputs plus a logged bound)
                 has_layers_corpus=True,
                 corpora_found=found,
                 last_crawled_at=now,
+                last_seen_rev=current_rev,
             ),
         )
-    revision = index.commit(message) if seen else None
+    # a pass in which every repo was skipped as unchanged stages nothing, so
+    # there is no commit to make.
+    revision = index.commit(message) if seen > repos_unchanged else None
     return CrawlReport(
         repos_seen=seen,
         repos_with_corpora=with_corpora,
         cards_built=built,
         cards_unchanged=unchanged,
+        repos_unchanged=repos_unchanged,
         skipped=tuple(skipped),
         revision=revision,
     )

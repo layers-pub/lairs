@@ -21,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing. The new `lairs.discovery.default_source` exposes the same resolution
   to library callers.
 
+- **Incremental re-crawls.** `com.atproto.sync.listRepos` reports each
+  repository's current commit revision, and the new
+  `PdsClient.list_repo_listings` surfaces it as a `RepoListing` alongside the
+  head CID (`list_repos` remains as a DID-only view). `build_index` accepts a
+  `revs` mapping and skips any repository whose revision matches the one
+  recorded at the last crawl, reported as `repos_unchanged` on the
+  `CrawlReport` and stored as `RepoCrawlState.last_seen_rev`. `lairs index
+  build` supplies the mapping whenever it enumerates the service itself, so a
+  re-crawl costs one `listRepos` pass plus a `describeRepo` for only the
+  repositories that actually moved. An explicit `--seed-did` list carries no
+  revisions, so those repositories are always described.
+
 ### Changed
 
 - **`--source` renamed to `--source-type` on `datasets`, `toc`, and `search`.**

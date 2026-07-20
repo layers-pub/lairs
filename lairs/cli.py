@@ -69,7 +69,7 @@ from lairs.store.repository import Repository
 from lairs.tui import run_tui
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from lairs.author.publish import PublishPlan
     from lairs.discovery import CardDiff, CrawlReport, SearchHit, SearchQuery
@@ -937,6 +937,8 @@ def _print_report(report: CrawlReport) -> None:
         f"repos seen: {report.repos_seen}, with corpora: {report.repos_with_corpora}",
     )
     print(f"cards built: {report.cards_built}, unchanged: {report.cards_unchanged}")
+    if report.repos_unchanged:
+        print(f"repos unchanged since last crawl: {report.repos_unchanged}")
     for reason in report.skipped:
         print(f"  skipped {reason}")
     if report.revision is not None:
@@ -1108,7 +1110,21 @@ def _run_index_build(args: argparse.Namespace) -> int:
         endpoint = source.endpoint
     index = discovery.DiscoveryIndex.init(args.into)
     with PdsClient(endpoint) as client:
-        dids = args.seed_did or client.list_repos()
+        # enumerating the service ourselves also yields each repo's revision,
+        # which lets a re-crawl skip the repos that have not moved. an explicit
+        # --seed-did list carries no revisions, so those are always described.
+        dids: Iterable[str]
+        revs: dict[str, str] | None = None
+        if args.seed_did:
+            dids = args.seed_did
+        else:
+            listings = list(client.list_repo_listings())
+            dids = [listing.did for listing in listings]
+            revs = {
+                listing.did: listing.rev
+                for listing in listings
+                if listing.rev is not None
+            }
         try:
             report = discovery.build_index(
                 index,
@@ -1118,6 +1134,7 @@ def _run_index_build(args: argparse.Namespace) -> int:
                 endpoint=endpoint,
                 max_repos=args.max_repos,
                 message=args.message,
+                revs=revs,
             )
         except httpx.HTTPError as exc:
             print(f"error: {exc}", file=sys.stderr)

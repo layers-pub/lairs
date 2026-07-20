@@ -194,6 +194,10 @@ class RepoCrawlState(dx.Model):
         The number of corpora indexed from the repo.
     last_crawled_at : datetime
         When the repo was last crawled.
+    last_seen_rev : str or None
+        The repository commit revision observed at the last crawl. A later pass
+        compares it against the revision ``listRepos`` reports and re-describes
+        the repo only when the two differ.
     repos_cursor : str or None
         A ``listRepos`` pagination checkpoint, when crawling a relay.
     """
@@ -211,6 +215,10 @@ class RepoCrawlState(dx.Model):
     last_crawled_at: datetime | None = dx.field(
         default=None,
         description="when the repo was last crawled",
+    )
+    last_seen_rev: str | None = dx.field(
+        default=None,
+        description="repository commit revision observed at the last crawl",
     )
     repos_cursor: str | None = dx.field(
         default=None,
@@ -258,6 +266,9 @@ class CrawlReport(dx.Model):
         The number of cards built or refreshed.
     cards_unchanged : int
         The number of cards that were already current (dedup hits).
+    repos_unchanged : int
+        The number of repositories skipped because their commit revision had
+        not moved since the last crawl.
     cards_removed : int
         The number of cards removed in response to a corpus-deletion commit.
     skipped : tuple of str
@@ -275,6 +286,10 @@ class CrawlReport(dx.Model):
     cards_unchanged: int = dx.field(
         default=0,
         description="cards already current (dedup hits)",
+    )
+    repos_unchanged: int = dx.field(
+        default=0,
+        description="repositories skipped because their revision had not moved",
     )
     cards_removed: int = dx.field(
         default=0,
