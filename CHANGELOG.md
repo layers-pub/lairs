@@ -35,7 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **didactic floor raised to 0.9.1**, picking up upstream fixes.
+- **Dependency floors raised** to `didactic>=0.9.1` and `panproto>=0.58.0`,
+  picking up upstream fixes.
 - **The adapter registries are concretely parameterized.** `Registry[Codec]`,
   `Registry[Exporter]`, and `Registry[KnowledgeBase]` used the protocols bare,
   so all eight type arguments were implicitly unknown. Every codec is
