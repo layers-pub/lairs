@@ -874,10 +874,11 @@ def _add_datasets(subparsers: _Subparsers) -> None:
     )
     sub.add_argument("actor", help="the handle or DID to list datasets for")
     sub.add_argument(
-        "--source",
+        "--source-type",
+        dest="source_type",
         choices=("auto", "pds", "appview"),
         default="auto",
-        help="discovery source (default: auto)",
+        help="discovery mechanism (default: auto)",
     )
     sub.add_argument("--appview", default=None, help="appview base URL")
     sub.add_argument("--endpoint", default=None, help="PDS base URL override")
@@ -913,7 +914,7 @@ def _run_datasets(args: argparse.Namespace) -> int:
     try:
         rows = discovery.list_datasets(
             args.actor,
-            source=args.source,
+            source=args.source_type,
             appview=args.appview,
             filters=_dataset_filter(args),
             pds_client=pds_client,
@@ -983,14 +984,17 @@ def _add_index(subparsers: _Subparsers) -> None:
 
     build = index_sub.add_parser("build", help="crawl repositories into the index")
     build.add_argument("--into", required=True, type=Path, help="index directory")
-    build_target = build.add_mutually_exclusive_group(required=True)
+    build_target = build.add_mutually_exclusive_group()
     build_target.add_argument(
         "--endpoint",
         help="the relay or PDS to crawl",
     )
     build_target.add_argument(
         "--source",
-        help="a configured source name to crawl (see `lairs sources list`)",
+        help=(
+            "a configured source name to crawl (see `lairs sources list`); "
+            "defaults to the first enabled source"
+        ),
     )
     build.add_argument(
         "--seed-did",
@@ -1090,6 +1094,18 @@ def _run_index_build(args: argparse.Namespace) -> int:
         except discovery.UnknownSourceError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
+    elif endpoint is None:
+        # neither flag given: fall back to the default source, which is the
+        # built-in Layers PDS unless the user re-points or disables it.
+        source = discovery.default_source()
+        if source is None:
+            print(
+                "error: no enabled source to crawl; pass --endpoint or --source, "
+                "or enable a source in sources.toml",
+                file=sys.stderr,
+            )
+            return 1
+        endpoint = source.endpoint
     index = discovery.DiscoveryIndex.init(args.into)
     with PdsClient(endpoint) as client:
         dids = args.seed_did or client.list_repos()
@@ -1197,10 +1213,11 @@ def _add_toc(subparsers: _Subparsers) -> None:
     )
     sub.add_argument("actor", help="the handle or DID to inventory")
     sub.add_argument(
-        "--source",
+        "--source-type",
+        dest="source_type",
         choices=("auto", "pds", "appview"),
         default="auto",
-        help="discovery source (default: auto)",
+        help="discovery mechanism (default: auto)",
     )
     sub.add_argument("--endpoint", default=None, help="PDS base URL override")
     sub.add_argument(
@@ -1233,7 +1250,7 @@ def _run_toc(args: argparse.Namespace) -> int:
     try:
         toc = discovery.table_of_contents(
             args.actor,
-            source=args.source,
+            source=args.source_type,
             counts=args.counts,
             pds_client=pds_client,
         )
@@ -1259,10 +1276,11 @@ def _add_search(subparsers: _Subparsers) -> None:
     )
     sub.add_argument("actors", nargs="+", help="handles or DIDs to search across")
     sub.add_argument(
-        "--source",
+        "--source-type",
+        dest="source_type",
         choices=("auto", "pds", "appview"),
         default="auto",
-        help="discovery source (default: auto)",
+        help="discovery mechanism (default: auto)",
     )
     sub.add_argument("--appview", default=None, help="appview base URL")
     _add_filter_args(sub)
@@ -1296,7 +1314,7 @@ def _run_search(args: argparse.Namespace) -> int:
     try:
         rows = discovery.discover_datasets(
             args.actors,
-            source=args.source,
+            source=args.source_type,
             appview=args.appview,
             filters=_dataset_filter(args),
         )

@@ -449,7 +449,14 @@ def test_cli_toc_against_live_pds(
         timeout=30.0,
     ).raise_for_status()
     code = cli.main(
-        ["toc", pds_server.did, "--endpoint", pds_server.endpoint, "--source", "pds"],
+        [
+            "toc",
+            pds_server.did,
+            "--endpoint",
+            pds_server.endpoint,
+            "--source-type",
+            "pds",
+        ],
     )
     captured = capsys.readouterr()
     assert code == 0
@@ -752,6 +759,49 @@ def test_index_build_resolves_source(
     _ = capsys.readouterr()
 
 
+def test_index_build_defaults_to_the_layers_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # with neither --endpoint nor --source, the crawl targets the built-in.
+    monkeypatch.setenv("LAIRS_SOURCES_FILE", str(tmp_path / "absent.toml"))
+    captured: dict[str, object] = {}
+
+    def fake_build_index(
+        _index: object,
+        _dids: object,
+        **kwargs: object,
+    ) -> CrawlReport:
+        captured.update(kwargs)
+        return CrawlReport(repos_seen=1, repos_with_corpora=1, cards_built=1)
+
+    monkeypatch.setattr(cli.discovery, "DiscoveryIndex", _FakeIndex)
+    monkeypatch.setattr(cli.discovery, "build_index", fake_build_index)
+    monkeypatch.setattr(cli, "PdsClient", _FakeBuildClient)
+    code = cli.main(["index", "build", "--into", str(tmp_path / "idx")])
+    assert code == 0
+    assert captured["endpoint"] == "https://repo.layers.pub"
+    _ = capsys.readouterr()
+
+
+def test_index_build_errors_when_no_source_is_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # every source disabled leaves nothing to default to.
+    cfg = tmp_path / "sources.toml"
+    cfg.write_text(
+        '[[source]]\nname = "layers-pub"\nenabled = false\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LAIRS_SOURCES_FILE", str(cfg))
+    code = cli.main(["index", "build", "--into", str(tmp_path / "idx")])
+    assert code == 1
+    assert "no enabled source to crawl" in capsys.readouterr().err
+
+
 def test_index_build_unknown_source_errors(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -997,7 +1047,7 @@ def test_toc_prints_table(
         )
 
     monkeypatch.setattr(cli.discovery, "table_of_contents", fake_toc)
-    code = cli.main(["toc", "alice.test", "--source", "pds", "--counts"])
+    code = cli.main(["toc", "alice.test", "--source-type", "pds", "--counts"])
     out = capsys.readouterr().out
     assert code == 0
     assert seen == {

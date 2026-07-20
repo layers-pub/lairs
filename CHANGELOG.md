@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-20
+
+### Added
+
+- **`lairs index build` defaults to the Layers PDS.** `--endpoint` and
+  `--source` are no longer a required choice: with neither flag, the crawl
+  targets the first enabled configured source, which on a default install is
+  the built-in Layers PDS (`repo.layers.pub`). `lairs index build --into ./index`
+  is now enough to index the public corpus. A user who re-points or disables the
+  built-in in `sources.toml` moves the default with it; when every source is
+  disabled, the command reports that and exits non-zero rather than crawling
+  nothing. The new `lairs.discovery.default_source` exposes the same resolution
+  to library callers.
+
+### Changed
+
+- **`--source` renamed to `--source-type` on `datasets`, `toc`, and `search`.**
+  On those commands the flag selects the discovery *mechanism* (`auto`, `pds`,
+  or `appview`), which collided with `--source` on `lairs index build`, where it
+  names a configured source. The two meanings now have two names. Because
+  argparse accepts unambiguous prefixes, existing `--source pds` invocations
+  keep working on the renamed commands, but scripts should move to
+  `--source-type`.
+
 ## [0.5.0] - 2026-06-29
 
 ### Added
@@ -158,7 +182,8 @@ didactic model.
   repositories, discovering datasets, building and searching the index, managing
   sessions, and launching the explorer.
 
-[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/layers-pub/lairs/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/layers-pub/lairs/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/layers-pub/lairs/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/layers-pub/lairs/compare/v0.3.0...v0.4.0

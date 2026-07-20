@@ -25,6 +25,7 @@ from lairs.discovery.query import SearchHit, SearchQuery, search
 from lairs.discovery.sources import (
     Source,
     UnknownSourceError,
+    default_source,
     default_sources_path,
     load_sources,
     resolve_source,
@@ -48,6 +49,7 @@ __all__ = [
     "datasets_for_eprint",
     "datasets_using_ontology",
     "default_index_path",
+    "default_source",
     "default_sources_path",
     "discover",
     "discover_datasets",

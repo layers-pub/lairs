@@ -24,6 +24,7 @@ def test_exports() -> None:
         "datasets_for_eprint",
         "datasets_using_ontology",
         "default_index_path",
+        "default_source",
         "default_sources_path",
         "discover",
         "discover_datasets",
