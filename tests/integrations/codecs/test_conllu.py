@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 import didactic.api as dx
 import pytest
@@ -238,10 +238,12 @@ def test_iso_law_property() -> None:
 class _RoundTripIso(dx.Iso[_ConlluSentence, _ConlluSentence]):
     """Compose the conllu Iso with its inverse for ``verify_iso``."""
 
+    @override
     def forward(self, a: _ConlluSentence, /) -> _ConlluSentence:
         iso = ConlluIso()
         return iso.backward(iso.forward(a))
 
+    @override
     def backward(self, b: _ConlluSentence, /) -> _ConlluSentence:
         return b
 

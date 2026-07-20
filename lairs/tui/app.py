@@ -9,7 +9,7 @@ theme cycle, and the help modal; the tabs own their own behavior.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, override
 
 import httpx
 from textual import work
@@ -119,6 +119,7 @@ class HelpScreen(ModalScreen[None]):
         Binding("q", "dismiss", "Close"),
     ]
 
+    @override
     def compose(self) -> ComposeResult:
         """Compose the scrollable help box."""
         box = VerticalScroll(Markdown(_HELP), id="help-box")
@@ -189,6 +190,7 @@ class LairsApp(App[None]):
             return "query"
         return "explore"
 
+    @override
     def compose(self) -> ComposeResult:
         """Compose the header, the Explore/Browse/Query tabs, and the footer."""
         yield Header(show_clock=True)

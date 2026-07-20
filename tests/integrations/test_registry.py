@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from lairs.integrations import registry
 from lairs.integrations.registry import Registry, UnknownAdapterError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 class Widget:
@@ -116,8 +121,17 @@ def test_available_families() -> None:
 
 
 def test_register_default_codec() -> None:
+    # the adapter must satisfy Codec, so it carries both protocol methods; the
+    # fragment and record types are str here to keep the fake trivial.
     class MyCodec:
         name = "my"
+
+        def decode(self, src: str | bytes, *, into: str | None = None) -> str:
+            text = src if isinstance(src, str) else src.decode("utf-8")
+            return text if into is None else into + text
+
+        def encode(self, records: Iterable[str]) -> bytes | str:
+            return "".join(records)
 
     registry.register_codec("my-test-codec", MyCodec)
     assert registry.get_codec("my-test-codec") is MyCodec

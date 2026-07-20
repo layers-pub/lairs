@@ -193,15 +193,49 @@ convention = "numpy"
 python-version = "3.14"
 
 [tool.ty.rules]
-# strictest posture: every ty rule is an error. didactic and panproto resolve
-# from PyPI, so unresolved imports of the core deps are genuine failures.
-# heavy optional-extra libraries are only referenced under TYPE_CHECKING, so
-# those import sites are not type-checked unless the extra is installed.
+# strictest posture: every ty rule that does not default to "error" is promoted
+# to one here, with two deliberate exceptions left at their default.
+# missing-type-argument would require parameterizing the heterogeneous adapter
+# registry, whose whole point is to hold any codec/exporter/kb regardless of its
+# type arguments; the only spellings are `object` (banned by the type gate) or
+# an existential type Python does not have.
+# possibly-missing-attribute fires on optional-extra modules such as mlflow,
+# whose attributes cannot be proven present when the extra is absent.
+# didactic and panproto resolve from PyPI, so unresolved imports of the core
+# deps are genuine failures. heavy optional-extra libraries are only referenced
+# under TYPE_CHECKING, so those import sites are not type-checked unless the
+# extra is installed.
+ambiguous-protocol-member = "error"
+blanket-ignore-comment = "error"
+deprecated = "error"
 division-by-zero = "error"
+experimental-syntax = "error"
+ignore-comment-unknown-rule = "error"
+ineffective-final = "error"
+invalid-enum-member-annotation = "error"
+invalid-ignore-comment = "error"
+invalid-legacy-positional-parameter = "error"
+invalid-named-tuple-override = "error"
+mismatched-type-name = "error"
+missing-override-decorator = "error"
+possibly-missing-implicit-call = "error"
+possibly-missing-import = "error"
+possibly-missing-submodule = "error"
 possibly-unresolved-reference = "error"
+pydantic-discarded-extra-argument = "error"
+redundant-cast = "error"
+redundant-final-classvar = "error"
+subclass-of-dataclass-with-order = "error"
+undefined-reveal = "error"
+unresolved-global = "error"
 unresolved-import = "error"
 unresolved-reference = "error"
+unsupported-base = "error"
+unsupported-dynamic-base = "error"
+unused-awaitable = "error"
 unused-ignore-comment = "error"
+unused-type-ignore-comment = "error"
+useless-overload-body = "error"
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"

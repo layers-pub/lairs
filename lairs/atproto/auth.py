@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 import didactic.api as dx
 import httpx
@@ -205,6 +205,7 @@ class SessionAuth(httpx.Auth):
         self.session = session
         self._on_update = on_update
 
+    @override
     def auth_flow(
         self,
         request: httpx.Request,

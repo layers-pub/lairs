@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Self, override
 
 import httpx
 
@@ -110,9 +110,11 @@ class _CountingResolver(IdentityResolver):
         self.resolved: list[str] = []
         self.closed = False
 
+    @override
     def __enter__(self) -> Self:
         return self
 
+    @override
     def __exit__(
         self,
         _exc_type: type[BaseException] | None,
@@ -121,6 +123,7 @@ class _CountingResolver(IdentityResolver):
     ) -> None:
         self.closed = True
 
+    @override
     def resolve(self, actor: str) -> IdentityResolution:
         self.resolved.append(actor)
         did = "did:plc:" + actor.split(".", 1)[0]

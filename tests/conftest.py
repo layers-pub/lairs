@@ -19,7 +19,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 from urllib.parse import parse_qs, urlsplit
 
 import didactic.api as dx
@@ -360,7 +360,8 @@ def _handler_class(routes: RouteHandler) -> type[BaseHTTPRequestHandler]:
             body = self.rfile.read(length).decode() if length else ""
             self._dispatch({"__body": body})
 
-        def log_message(self, format: str, *args: str) -> None:  # noqa: A002
+        @override
+        def log_message(self, format: str, *args: str) -> None:
             """Discard per-request logging to keep test output quiet."""
             _ = (format, args)
 
