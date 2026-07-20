@@ -176,7 +176,7 @@ class QueryPane(Horizontal):
         if event.button.id == "run":
             self.action_run()
 
-    def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+    def on_tree_node_selected(self, event: Tree.NodeSelected[str | None]) -> None:
         """Insert a selected table or column name at the editor cursor.
 
         A separating space is added when the cursor does not already sit at a

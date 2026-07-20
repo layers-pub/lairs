@@ -32,7 +32,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "didactic>=0.9.0",
+    "didactic>=0.9.1",
     "panproto>=0.56.0",
     "httpx",
     "pyarrow",
@@ -194,11 +194,7 @@ python-version = "3.14"
 
 [tool.ty.rules]
 # strictest posture: every ty rule that does not default to "error" is promoted
-# to one here, with two deliberate exceptions left at their default.
-# missing-type-argument would require parameterizing the heterogeneous adapter
-# registry, whose whole point is to hold any codec/exporter/kb regardless of its
-# type arguments; the only spellings are `object` (banned by the type gate) or
-# an existential type Python does not have.
+# to one here, with one deliberate exception left at its default.
 # possibly-missing-attribute fires on optional-extra modules such as mlflow,
 # whose attributes cannot be proven present when the extra is absent.
 # didactic and panproto resolve from PyPI, so unresolved imports of the core
@@ -218,6 +214,7 @@ invalid-legacy-positional-parameter = "error"
 invalid-named-tuple-override = "error"
 mismatched-type-name = "error"
 missing-override-decorator = "error"
+missing-type-argument = "error"
 possibly-missing-implicit-call = "error"
 possibly-missing-import = "error"
 possibly-missing-submodule = "error"

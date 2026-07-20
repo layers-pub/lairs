@@ -788,15 +788,15 @@ wheels = [
 
 [[package]]
 name = "didactic"
-version = "0.9.0"
+version = "0.9.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-types" },
     { name = "panproto" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d1/99/81e7f58dab442356340037ee7b32d61208f45f25f46faf7b8e83aeba758a/didactic-0.9.0.tar.gz", hash = "sha256:6cc669e88c65bf4b3f30ac37d07c4463dc055e04e16bd784f3ef2bc13b43bb8f", size = 121784, upload-time = "2026-06-17T17:31:48.592Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/96/34/d09f9797388080c1f0918c9a61fecb61293affa874b05d6817d7d90e0dff/didactic-0.9.1.tar.gz", hash = "sha256:24d9c63cbaabf0e454d846d98e9de7fde25ccddc00c044db12508160a67cdc72", size = 122060, upload-time = "2026-07-18T14:22:34.008Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/03/85/22b3e40af79f04e23a592bfb76ac42bb7dbae314f055f4fc7f2b30c8c86a/didactic-0.9.0-py3-none-any.whl", hash = "sha256:4de3c57e149211c34fb621691b3e61663449cafbcb1af5f4bb932ae34df9d7eb", size = 149494, upload-time = "2026-06-17T17:31:47.168Z" },
+    { url = "https://files.pythonhosted.org/packages/17/2f/780b64c3978193f2aab3839d1d2016a0edfe247e0e6bb4fdd1454837f973/didactic-0.9.1-py3-none-any.whl", hash = "sha256:3833f49bb1895042142550244ef1290ae7f769f969c73d711385fec5363d3ae4", size = 149789, upload-time = "2026-07-18T14:22:32.77Z" },
 ]
 
 [[package]]
@@ -1691,7 +1691,7 @@ requires-dist = [
     { name = "conllu", marker = "extra == 'conllu'" },
     { name = "datasets", marker = "extra == 'hf'" },
     { name = "decord", marker = "python_full_version < '3.14' and extra == 'video'" },
-    { name = "didactic", specifier = ">=0.9.0" },
+    { name = "didactic", specifier = ">=0.9.1" },
     { name = "duckdb" },
     { name = "fsspec", marker = "extra == 'fsspec'" },
     { name = "geopandas", marker = "extra == 'geo'" },

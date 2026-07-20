@@ -38,9 +38,9 @@ if TYPE_CHECKING:
 # ---- helpers ---------------------------------------------------------------
 
 
-def _browse_leaves(app: LairsApp) -> list[TreeNode[str]]:
+def _browse_leaves(app: LairsApp) -> list[TreeNode[str | None]]:
     """Return the Browse type-tree leaf nodes."""
-    tree: Tree[str] = app.query_one("#types", Tree)
+    tree: Tree[str | None] = app.query_one("#types", Tree)
     return [leaf for ns in tree.root.children for leaf in ns.children]
 
 
@@ -55,9 +55,9 @@ def _set_mode(app: LairsApp, index: int) -> None:
     app.query_one("#mode", RadioSet).query(RadioButton)[index].value = True
 
 
-def _first_column_node(app: LairsApp) -> TreeNode[str]:
+def _first_column_node(app: LairsApp) -> TreeNode[str | None]:
     """Return the first column node under the first table in the schema tree."""
-    tree: Tree[str] = app.query_one("#schema", Tree)
+    tree: Tree[str | None] = app.query_one("#schema", Tree)
     return tree.root.children[0].children[0]
 
 

@@ -35,6 +35,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **didactic floor raised to 0.9.1**, picking up upstream fixes.
+- **The adapter registries are concretely parameterized.** `Registry[Codec]`,
+  `Registry[Exporter]`, and `Registry[KnowledgeBase]` used the protocols bare,
+  so all eight type arguments were implicitly unknown. Every codec is
+  `Codec[CorpusFragment, FragmentRecord]` and every knowledge base is
+  `KnowledgeBase[Entity, Candidate, Edge]`, so those are now exact; an
+  exporter's view is always `pyarrow.Table` while its spec and result differ per
+  adapter, so those are closed unions over the shipped adapters. A third-party
+  exporter introducing a new spec or result type widens the aliases. With the
+  registries typed, ty's `missing-type-argument` rule is promoted to an error,
+  leaving `possibly-missing-attribute` as the one rule at its default.
 - **`--source` renamed to `--source-type` on `datasets`, `toc`, and `search`.**
   On those commands the flag selects the discovery *mechanism* (`auto`, `pds`,
   or `appview`), which collided with `--source` on `lairs index build`, where it
@@ -42,6 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   argparse accepts unambiguous prefixes, existing `--source pds` invocations
   keep working on the renamed commands, but scripts should move to
   `--source-type`.
+
+### Fixed
+
+- **The `tfdata` exporter validates before it requires tensorflow.** `export`
+  imported tensorflow before reading the Arrow view, so a bad column raised
+  `ModuleNotFoundError` instead of the intended lairs error whenever the
+  optional extra was absent, contradicting the method's own documented
+  contract. The Arrow read and its null-column check now run first.
 
 ## [0.5.0] - 2026-06-29
 

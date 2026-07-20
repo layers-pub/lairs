@@ -106,7 +106,7 @@ class BrowsePane(Horizontal):
             for nsid, count in types:
                 ns_node.add_leaf(f"{label_of(nsid)} ({count})", data=nsid)
 
-    def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+    def on_tree_node_selected(self, event: Tree.NodeSelected[str | None]) -> None:
         """Load the records of the selected type into the records table."""
         data = event.node.data
         if isinstance(data, str):

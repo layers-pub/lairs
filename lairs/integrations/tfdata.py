@@ -24,7 +24,9 @@ import pyarrow.types as pat
 if TYPE_CHECKING:
     from types import ModuleType
 
-    import tensorflow as tf
+    # tensorflow is markered out of its extra on the 3.14 floor (no cp314
+    # wheel yet), so it is absent by design rather than misconfigured.
+    import tensorflow as tf  # ty: ignore[unresolved-import]
 
 type _FeedScalar = str | bytes | int | float | bool | None
 """A scalar Arrow value on its way into a tensorflow tensor.
@@ -234,7 +236,7 @@ def _require_tensorflow() -> ModuleType:
         When tensorflow is not installed.
     """
     try:
-        import tensorflow as tf  # noqa: PLC0415
+        import tensorflow as tf  # noqa: PLC0415  # ty: ignore[unresolved-import]
     except ImportError as error:  # pragma: no cover - exercised only without tf
         message = (
             "the tfdata exporter requires tensorflow; install the optional "
@@ -393,13 +395,16 @@ class TfDataExporter:
             When tensorflow is not installed.
         """
         resolved = spec if spec is not None else TfDataSpec()
-        tf = _require_tensorflow()
+        # read and validate the Arrow side first: a bad column must raise a
+        # clear lairs error whether or not the tensorflow extra is installed.
         specs = feature_specs_of(view.schema, columns=resolved.columns)
+        columns = {feature.name: _column_values(view, feature) for feature in specs}
+        tf = _require_tensorflow()
         tensors: dict[str, tf.Tensor] = {}
         for feature in specs:
             dtype = _dtype_for(feature.dtype, tf)
             tensors[feature.name] = tf.ragged.constant(
-                _column_values(view, feature),
+                columns[feature.name],
                 dtype=dtype,
             )
         dataset = tf.data.Dataset.from_tensor_slices(tensors)
