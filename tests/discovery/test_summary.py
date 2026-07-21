@@ -83,6 +83,32 @@ def test_summary_from_corpus_falls_back_to_first_license_spdx() -> None:
     assert summary.license == "CC-BY-4.0"
 
 
+def test_license_facet_normalizes_a_non_spdx_spelling() -> None:
+    # the live corpus records "CC BY-SA 4.0" in a field meant to hold an SPDX
+    # identifier, which would otherwise facet apart from "CC-BY-SA-4.0".
+    corpus = Corpus(
+        name="spaced",
+        createdAt=_CREATED,
+        licensing=Licensing(licenses=(LicenseRef(spdx="CC BY-SA 4.0"),)),
+    )
+    summary = summary_from_corpus(corpus, uri=_URI, did="did:plc:x")
+    assert summary.license == "CC-BY-SA-4.0"
+
+
+def test_license_facet_leaves_a_multi_license_expression_verbatim() -> None:
+    # whitespace is significant in an SPDX expression: it separates operators.
+    corpus = Corpus(
+        name="dual",
+        createdAt=_CREATED,
+        licensing=Licensing(
+            expression="CC-BY-4.0 AND LicenseRef-LDC-User-Agreement",
+            licenses=(LicenseRef(spdx="CC-BY-4.0"),),
+        ),
+    )
+    summary = summary_from_corpus(corpus, uri=_URI, did="did:plc:x")
+    assert summary.license == "CC-BY-4.0 AND LicenseRef-LDC-User-Agreement"
+
+
 def test_summary_from_corpus_detects_adjudication() -> None:
     corpus = Corpus(
         name="demo",

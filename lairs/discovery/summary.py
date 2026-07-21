@@ -66,12 +66,45 @@ def _has_adjudication(corpus: corpus_records.Corpus) -> bool:
     return design is not None and design.adjudication is not None
 
 
+def _normalize_spdx(slug: str | None) -> str | None:
+    """Normalize a license slug that should be an SPDX identifier but may not be.
+
+    An SPDX identifier carries no whitespace, so a spelling like
+    ``CC BY-SA 4.0`` denotes the same license as ``CC-BY-SA-4.0`` while
+    faceting as a different value. Published data mixes the two spellings
+    heavily, so runs of whitespace collapse to a single hyphen here and the
+    result is stripped. Case is left alone, since SPDX identifiers have
+    canonical casing and rewriting it would corrupt valid values.
+
+    Parameters
+    ----------
+    slug : str or None
+        The recorded license slug.
+
+    Returns
+    -------
+    str or None
+        The slug with whitespace runs replaced by hyphens, or ``None``.
+    """
+    if slug is None:
+        return None
+    collapsed = "-".join(slug.split())
+    return collapsed or None
+
+
 def _license_facet(licensing: defs_records.Licensing | None) -> str | None:
     """Project structured licensing into a flat discovery facet.
 
     Returns the SPDX expression when set (the canonical representation for
     dual or multi licensing), otherwise the first license's SPDX slug, or
     ``None`` when no licensing is recorded.
+
+    A single license's slug is normalized (see :func:`_normalize_spdx`) because
+    published data frequently records a space-separated spelling in a field that
+    is meant to hold an SPDX identifier, which would otherwise split one license
+    across several facet values. A multi-license ``expression`` is returned
+    verbatim, since whitespace is significant there: it separates the operators
+    ``AND``, ``OR``, and ``WITH``.
 
     Parameters
     ----------
@@ -88,7 +121,7 @@ def _license_facet(licensing: defs_records.Licensing | None) -> str | None:
     if licensing.expression:
         return licensing.expression
     if licensing.licenses:
-        return licensing.licenses[0].spdx
+        return _normalize_spdx(licensing.licenses[0].spdx)
     return None
 
 
