@@ -33,7 +33,7 @@ classifiers = [
 ]
 dependencies = [
     "didactic>=0.9.1",
-    "panproto>=0.58.0",
+    "panproto>=0.66.0",
     "httpx",
     "pyarrow",
     "libipld",
@@ -47,7 +47,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-hf = ["datasets", "huggingface_hub"]
+# the datasets floor is what keeps the resolver on the 5.x line. nothing else in
+# the graph constrains it, and left unbounded it settles on 2.14.4, which drags
+# huggingface-hub back to 0.36 and multiprocess to 0.70.15.
+hf = ["datasets>=5", "huggingface_hub"]
 torch = ["torch"]
 # tensorflow ships no cp314 wheel yet; the marker keeps resolution clean on
 # the development floor while leaving the extra declared.
@@ -124,7 +127,10 @@ dev = [
     "hypothesis",
     # numpy 2.3 is the first release with cp314 wheels; pin the floor so the
     # combined optional set resolves to a wheel instead of a failing source build.
-    "numpy>=2.3",
+    # the ceiling tracks numba, which the audio extra pulls in through librosa and
+    # which declares numpy<2.5. without it the resolver keeps numpy at its newest
+    # and walks numba back to 0.53.1, whose llvmlite supports no Python past 3.9.
+    "numpy>=2.3,<2.5",
     "lairs[hf]",
     "lairs[torch]",
     "lairs[tf]",
