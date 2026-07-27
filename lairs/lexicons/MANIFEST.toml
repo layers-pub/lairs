@@ -8,11 +8,11 @@
 # file is its serialised, reviewable form.
 
 [provenance]
-layers_git_sha = "b8ed021e6d13648db1210fe4d0cfc276b1ef9030"
-layers_version = "0.8.0"
+layers_git_sha = "dff5352d50bbb9d3d7a6659e3eb068d8a41deef6"
+layers_version = "0.9.0"
 vendored_at = "2026-06-22"
-lexicon_tree_hash = "cedfb9f34cc55fb5be1abb81dda63fd6a6671af2efd6a5e5923fca0c77ba0fd1"
+lexicon_tree_hash = "1407dd60301c40d7da0f2996197f4cdc49f2ea76d811ea3ec46ecae8f8a8eec6"
 
 [counts]
-lexicon_files = 99
-record_types = 26
+lexicon_files = 114
+record_types = 30
