@@ -75,7 +75,11 @@ def test_exports() -> None:
         "expressions_table",
         "flatten_anchor",
         "materialize",
+        "participants_table",
         "records_to_table",
+        "sessions_table",
+        "signal_channels_table",
+        "signal_sensors_table",
     }
 
 
@@ -304,3 +308,96 @@ def test_materialize_derives_views_from_repo(tmp_path: Path) -> None:
     assert reloaded.num_rows == 1
     assert reloaded.column("anchor_kind").to_pylist() == ["span"]
     assert reloaded.column("uri").to_pylist() == [_EXPR_URI]
+
+
+class _Session(dx.Model):
+    """A throwaway acquisition-session-like record with a nested stream array."""
+
+    sessionId: str  # noqa: N815
+    task: str | None = None
+    streams: tuple[str, ...] = dx.field(default_factory=tuple)
+
+
+class _Participant(dx.Model):
+    """A throwaway participant-like record."""
+
+    participantId: str  # noqa: N815
+    ageMonths: int | None = None  # noqa: N815
+
+
+class _Chan(dx.Model):
+    """A throwaway signal channel."""
+
+    name: str
+    unit: str | None = None
+
+
+class _Sensor(dx.Model):
+    """A throwaway signal sensor."""
+
+    name: str
+    xNanometres: int | None = None  # noqa: N815
+
+
+class _Signal(dx.Model):
+    """A throwaway signal info block holding channels and sensors."""
+
+    channels: tuple[_Chan, ...] = dx.field(default_factory=tuple)
+    sensors: tuple[_Sensor, ...] = dx.field(default_factory=tuple)
+
+
+class _SignalMedia(dx.Model):
+    """A throwaway signal medium carrying a signal block."""
+
+    kind: str
+    signal: _Signal | None = None
+
+
+_MEDIA_URI = "at://did:plc:x/pub.layers.media.media/m"
+
+
+def test_sessions_table_keeps_scalars_drops_nested() -> None:
+    table = arrow.sessions_table(
+        [_Session(sessionId="ses-01", task="reading", streams=("a", "b"))],
+    )
+    assert table.num_rows == 1
+    assert "sessionId" in table.column_names
+    assert "task" in table.column_names
+    # the nested streams array is dropped at the flatten boundary.
+    assert "streams" not in table.column_names
+
+
+def test_participants_table_flattens_scalars() -> None:
+    table = arrow.participants_table(
+        [_Participant(participantId="sub-01", ageMonths=240)],
+    )
+    assert table.num_rows == 1
+    assert table.column("participantId").to_pylist() == ["sub-01"]
+    assert table.column("ageMonths").to_pylist() == [240]
+
+
+def test_signal_channels_table_explodes_and_tags_media_uri() -> None:
+    media = _SignalMedia(
+        kind="signal",
+        signal=_Signal(channels=(_Chan(name="Cz", unit="microvolt"), _Chan(name="Pz"))),
+    )
+    table = arrow.signal_channels_table([(_MEDIA_URI, media)])
+    assert table.num_rows == 2
+    assert table.column("media_uri").to_pylist() == [_MEDIA_URI, _MEDIA_URI]
+    assert table.column("channel_index").to_pylist() == [0, 1]
+    assert table.column("name").to_pylist() == ["Cz", "Pz"]
+
+
+def test_signal_sensors_table_explodes_sensors() -> None:
+    media = _SignalMedia(
+        kind="signal",
+        signal=_Signal(sensors=(_Sensor(name="Cz", xNanometres=100),)),
+    )
+    table = arrow.signal_sensors_table([(_MEDIA_URI, media)])
+    assert table.num_rows == 1
+    assert table.column("name").to_pylist() == ["Cz"]
+
+
+def test_signal_channels_table_skips_media_without_signal() -> None:
+    table = arrow.signal_channels_table([(_MEDIA_URI, _SignalMedia(kind="audio"))])
+    assert table.num_rows == 0

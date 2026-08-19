@@ -50,7 +50,11 @@ __all__ = [
     "expressions_table",
     "flatten_anchor",
     "materialize",
+    "participants_table",
     "records_to_table",
+    "sessions_table",
+    "signal_channels_table",
+    "signal_sensors_table",
 ]
 
 # the fixed set of typed anchor columns every flattened anchor expands into.
@@ -126,11 +130,23 @@ _ANCHOR_VARIANT_FIELDS = (
     "tokenRef",
     "tokenRefSequence",
     "temporalSpan",
+    "signalSpan",
     "spatioTemporalAnchor",
     "pageAnchor",
+    "boundingBox",
+    "spatialRegion",
     "externalTarget",
 )
-"""The optional variant fields of the ``anchor`` object, in dispatch order."""
+"""The optional variant fields of the ``anchor`` object, in dispatch order.
+
+Lists every variant the generated ``anchor`` wrapper dumps, so the
+"all keys are variant fields" test in :func:`_anchor_body` recognises the wrapper
+and extracts its single populated variant. A field missing here would make a real
+anchor's all-``None`` sibling keys look like a bare variant object and misclassify
+it. The sample-indexed ``signalSpan`` and the ``spatialRegion`` and standalone
+``boundingBox`` variants have no typed-column filler yet, so a record anchored
+solely on one of them flattens to an anchorless row rather than a wrong one.
+"""
 
 
 def _anchor_body(anchor: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
@@ -484,6 +500,140 @@ def annotations_table(
                 row.update(_empty_anchor())
             rows.append(row)
     return _rows_to_table(rows)
+
+
+def sessions_table(records: Iterable[RecordLike]) -> pa.Table:
+    """Build the sessions view: one row per acquisition-session record.
+
+    The session's scalar fields become columns; nested arrays and objects (its
+    ``streams``, ``runs``, ``devices``) are dropped at the flatten boundary, so a
+    row is a session's flat metadata. Explode ``signal.channels`` with
+    :func:`signal_channels_table` for the per-channel view.
+
+    Parameters
+    ----------
+    records : collections.abc.Iterable of RecordLike
+        The session records.
+
+    Returns
+    -------
+    pyarrow.Table
+        One row per session, scalar fields only.
+    """
+    return records_to_table(records)
+
+
+def participants_table(records: Iterable[RecordLike]) -> pa.Table:
+    """Build the participants view: one row per participant record.
+
+    The participant's scalar fields become columns. The record is de-identified by
+    construction upstream (no name, e-mail, DID, or date of birth), so the flat
+    view carries only the study variables the record already made public.
+
+    Parameters
+    ----------
+    records : collections.abc.Iterable of RecordLike
+        The participant records.
+
+    Returns
+    -------
+    pyarrow.Table
+        One row per participant, scalar fields only.
+    """
+    return records_to_table(records)
+
+
+def _explode_signal_array(
+    media: Iterable[tuple[str, RecordLike]],
+    field: str,
+    index_column: str,
+) -> pa.Table:
+    """Explode a per-medium ``signal.<field>`` array into one row per element.
+
+    Each row carries the medium's AT-URI, the element's index within the array,
+    and the element's scalar fields. A medium with no ``signal`` block or no such
+    array contributes no rows.
+
+    Parameters
+    ----------
+    media : collections.abc.Iterable of (str, RecordLike)
+        Pairs of media AT-URI and the media record.
+    field : str
+        The ``signal`` sub-array to explode (``"channels"`` or ``"sensors"``).
+    index_column : str
+        The name of the per-element index column.
+
+    Returns
+    -------
+    pyarrow.Table
+        One row per exploded array element, scalar fields only.
+    """
+    rows: list[dict[str, JsonValue]] = []
+    for media_uri, record in media:
+        dumped = _dumped(record)
+        signal = dumped.get("signal")
+        if not isinstance(signal, dict):
+            continue
+        elements = signal.get(field)
+        if not isinstance(elements, list):
+            continue
+        for index, element in enumerate(elements):
+            row: dict[str, JsonValue] = {
+                "media_uri": media_uri,
+                index_column: index,
+            }
+            if isinstance(element, dict):
+                row.update(_scalar_columns(element))
+            rows.append(row)
+    return _rows_to_table(rows)
+
+
+def signal_channels_table(media: Iterable[tuple[str, RecordLike]]) -> pa.Table:
+    """Build the signal-channels view by exploding each medium's ``signal.channels``.
+
+    Produces one row per ``(media_uri, channel_index)`` over the media of kind
+    signal, motion, or volume, mirroring how :func:`annotations_table` explodes a
+    layer's annotations. Each channel's scalar fields (``name``, ``type``,
+    ``unit``, the cutoff frequencies, ``status``) become columns; the channel's
+    ``uuid`` and its sensor and reference objectRefs are dropped at the flatten
+    boundary.
+
+    Parameters
+    ----------
+    media : collections.abc.Iterable of (str, RecordLike)
+        Pairs of media AT-URI and the media record. A medium without a signal
+        block or channel table contributes no rows.
+
+    Returns
+    -------
+    pyarrow.Table
+        One row per exploded channel.
+    """
+    return _explode_signal_array(media, "channels", "channel_index")
+
+
+def signal_sensors_table(media: Iterable[tuple[str, RecordLike]]) -> pa.Table:
+    """Build the signal-sensors view by exploding each medium's ``signal.sensors``.
+
+    Produces one row per ``(media_uri, sensor_index)`` over the media of kind
+    signal, motion, or volume. Each sensor's scalar fields (``name``, ``type``,
+    the ``xNanometres`` / ``yNanometres`` / ``zNanometres`` coordinates,
+    ``material``, ``hemisphere``, ``impedanceMilliOhm``) become columns; the
+    sensor's ``uuid`` and its anatomy and group objectRefs are dropped at the
+    flatten boundary.
+
+    Parameters
+    ----------
+    media : collections.abc.Iterable of (str, RecordLike)
+        Pairs of media AT-URI and the media record. A medium without a signal
+        block or sensor table contributes no rows.
+
+    Returns
+    -------
+    pyarrow.Table
+        One row per exploded sensor.
+    """
+    return _explode_signal_array(media, "sensors", "sensor_index")
 
 
 def _rows_to_table(rows: Sequence[Mapping[str, JsonValue]]) -> pa.Table:

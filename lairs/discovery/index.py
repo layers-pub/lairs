@@ -21,15 +21,18 @@ import didactic.api as dx
 from lairs._aturi import nsid_of
 from lairs.discovery.cards import (
     CARD_NSID,
+    CATALOG_CARD_NSID,
     CRAWL_STATE_NSID,
     CURSOR_NSID,
     INDEX_DID,
     MUTED_NSID,
+    CollectionCard,
     DatasetCard,
     MutedDataset,
     RepoCrawlState,
     SyncCursor,
     card_uri,
+    collection_card_uri,
 )
 from lairs.store.pool import ModelPool
 from lairs.store.repository import Repository, Workspace
@@ -225,6 +228,78 @@ class DiscoveryIndex:
         for uri in workspace.uris_of(CARD_NSID):
             loaded = self._repo.load(uri, DatasetCard)
             if isinstance(loaded, DatasetCard):
+                cards.append(loaded)
+        return cards
+
+    def put_collection_card(self, card: CollectionCard) -> str:
+        """Stage a collection card, keyed by its deterministic index URI.
+
+        Parameters
+        ----------
+        card : lairs.discovery.cards.CollectionCard
+            The card to store.
+
+        Returns
+        -------
+        str
+            The card's index AT-URI.
+        """
+        uri = collection_card_uri(card.summary.uri)
+        self._repo.save(uri, card)
+        return uri
+
+    def get_collection_card(self, collection_uri: str) -> CollectionCard | None:
+        """Load the card for a collection, or ``None`` when it is not indexed.
+
+        Parameters
+        ----------
+        collection_uri : str
+            The collection AT-URI.
+
+        Returns
+        -------
+        CollectionCard or None
+            The stored card, or ``None``.
+        """
+        loaded = self._repo.load(
+            collection_card_uri(collection_uri),
+            CollectionCard,
+        )
+        return loaded if isinstance(loaded, CollectionCard) else None
+
+    def remove_collection_card(self, collection_uri: str) -> bool:
+        """Remove a collection's card from the index, returning whether one existed.
+
+        Parameters
+        ----------
+        collection_uri : str
+            The collection AT-URI whose card to remove.
+
+        Returns
+        -------
+        bool
+            ``True`` if a card was removed, ``False`` if none was indexed.
+        """
+        uri = collection_card_uri(collection_uri)
+        try:
+            self._repo.forget(uri)
+        except KeyError:
+            return False
+        return True
+
+    def collection_cards(self) -> list[CollectionCard]:
+        """Load every collection card in the index.
+
+        Returns
+        -------
+        list of CollectionCard
+            All stored collection cards, in index key order.
+        """
+        workspace = Workspace(self._repo)
+        cards: list[CollectionCard] = []
+        for uri in workspace.uris_of(CATALOG_CARD_NSID):
+            loaded = self._repo.load(uri, CollectionCard)
+            if isinstance(loaded, CollectionCard):
                 cards.append(loaded)
         return cards
 

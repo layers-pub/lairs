@@ -16,6 +16,8 @@ _URI = "at://did:plc:x/pub.layers.corpus.corpus/a"
 def test_exports() -> None:
     assert set(models.__all__) == {
         "CollectionCount",
+        "CollectionFilter",
+        "CollectionSummary",
         "DatasetFilter",
         "DatasetSummary",
         "RepoTableOfContents",

@@ -27,6 +27,14 @@ inspect
     Print a per-record-type summary of a corpus loaded from a PDS.
 datasets
     Resolve a handle or DID and list its datasets, one row per corpus.
+collections
+    Resolve a handle or DID and list its catalogue collections, one row each.
+collection
+    Load a catalogue collection from a PDS and print its children and produces.
+rollup
+    Query the appview for the totals and facets over a collection's subtree.
+sessions
+    Load acquisition sessions from a PDS and print their participant/media counts.
 toc
     Resolve a handle or DID and print its repository collection inventory.
 search
@@ -72,8 +80,12 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
     from lairs.author.publish import PublishPlan
-    from lairs.discovery import CardDiff, CrawlReport, SearchHit, SearchQuery
+    from lairs.data.acquisition import Acquisition
+    from lairs.data.collection import Collection
+    from lairs.discovery import CardDiff, CrawlReport, Rollup, SearchHit, SearchQuery
     from lairs.discovery.models import (
+        CollectionFilter,
+        CollectionSummary,
         DatasetFilter,
         DatasetSummary,
         RepoTableOfContents,
@@ -176,6 +188,10 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_publish(subparsers)
     _add_inspect(subparsers)
     _add_datasets(subparsers)
+    _add_collections(subparsers)
+    _add_collection(subparsers)
+    _add_rollup(subparsers)
+    _add_sessions(subparsers)
     _add_toc(subparsers)
     _add_search(subparsers)
     _add_index(subparsers)
@@ -928,6 +944,426 @@ def _run_datasets(args: argparse.Namespace) -> int:
     if args.limit is not None:
         rows = rows[: args.limit]
     _print_datasets(rows, as_json=args.json)
+    return 0
+
+
+def _collection_filter(args: argparse.Namespace) -> CollectionFilter:
+    """Build a ``CollectionFilter`` from the parsed collection facet flags."""
+    return discovery.CollectionFilter(
+        kind=tuple(args.kind) if args.kind else (),
+        languages=tuple(args.language) if args.language else (),
+        parent_ref=args.parent_ref,
+        root_ref=args.root_ref,
+        depth=args.depth,
+        citable_only=args.citable_only,
+        text=args.text,
+    )
+
+
+def _print_collections(
+    rows: Sequence[CollectionSummary],
+    *,
+    as_json: bool,
+) -> None:
+    """Print collection summaries as a readable table or JSON array."""
+    if as_json:
+        payload = [json.loads(row.model_dump_json()) for row in rows]
+        print(json.dumps(payload, indent=2))
+        return
+    if not rows:
+        print("no collections found")
+        return
+    for row in rows:
+        who = row.handle or row.did
+        language = ",".join(row.languages) if row.languages else "-"
+        license_id = row.license or "-"
+        cite = " *cite" if row.citable else ""
+        print(f"{row.name}  [{row.kind}/{language}]  {license_id}{cite}")
+        print(f"  {who}  {row.uri}")
+
+
+def _add_collections(subparsers: _Subparsers) -> None:
+    """Register the ``collections`` subcommand."""
+    sub = subparsers.add_parser(
+        "collections",
+        help="list an actor's catalogue collections",
+        description=(
+            "Resolve a handle or DID and list its catalogue collections, one row "
+            "per collection: the citable, browsable artifact for a dataset."
+        ),
+    )
+    sub.add_argument("actor", help="the handle or DID to list collections for")
+    sub.add_argument(
+        "--source-type",
+        dest="source_type",
+        choices=("auto", "pds", "appview"),
+        default="auto",
+        help="discovery mechanism (default: auto)",
+    )
+    sub.add_argument("--appview", default=None, help="appview base URL")
+    sub.add_argument("--endpoint", default=None, help="PDS base URL override")
+    sub.add_argument(
+        "--kind",
+        action="append",
+        default=None,
+        help="filter by collection-kind slug (repeatable)",
+    )
+    sub.add_argument(
+        "--language",
+        action="append",
+        default=None,
+        help="filter by canonical BCP-47 tag (repeatable)",
+    )
+    sub.add_argument(
+        "--parent-ref",
+        dest="parent_ref",
+        default=None,
+        help="keep only direct children of this collection",
+    )
+    sub.add_argument(
+        "--root-ref",
+        dest="root_ref",
+        default=None,
+        help="keep the whole subtree rooted at this collection",
+    )
+    sub.add_argument(
+        "--depth",
+        type=int,
+        default=None,
+        help="keep collections at exactly this depth from their root",
+    )
+    sub.add_argument(
+        "--citable-only",
+        dest="citable_only",
+        action="store_true",
+        help="keep only collections that declare themselves citable",
+    )
+    sub.add_argument(
+        "--text",
+        default=None,
+        help="case-insensitive substring over name and description",
+    )
+    sub.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="maximum number of rows to print",
+    )
+    sub.add_argument(
+        "--json",
+        action="store_true",
+        help="print JSON instead of a table",
+    )
+    sub.set_defaults(handler=_run_collections)
+
+
+def _run_collections(args: argparse.Namespace) -> int:
+    """Handle ``lairs collections``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments.
+
+    Returns
+    -------
+    int
+        ``0`` on success, ``1`` on a resolution or transport failure.
+    """
+    pds_client = PdsClient(args.endpoint) if args.endpoint else None
+    try:
+        rows = discovery.list_collections(
+            args.actor,
+            source=args.source_type,
+            appview=args.appview,
+            filters=_collection_filter(args),
+            pds_client=pds_client,
+        )
+    except (httpx.HTTPError, IdentityError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if pds_client is not None:
+            pds_client.close()
+    if args.limit is not None:
+        rows = rows[: args.limit]
+    _print_collections(rows, as_json=args.json)
+    return 0
+
+
+def _print_collection(collection: Collection, uri: str, *, as_json: bool) -> None:
+    """Print a loaded collection's identity, children, produces, and contents."""
+    record = collection.collection_record
+    if as_json:
+        payload = {
+            "uri": uri,
+            "record": json.loads(record.model_dump_json()) if record else None,
+            "children": [child.name for child in collection.children()],
+            "produces": [edge.member.memberType for edge in collection.produces()],
+        }
+        print(json.dumps(payload, indent=2))
+        return
+    if record is None:
+        print(f"collection {uri}: not found (no collection record loaded)")
+        return
+    version = f" {record.version}" if record.version else ""
+    print(f"{record.name}{version}  [{record.kind}]  {uri}")
+    if record.depth is not None:
+        print(f"  depth: {record.depth}")
+    children = list(collection.children())
+    if children:
+        print(f"  children ({len(children)}):")
+        for child in children:
+            print(f"    {child.name}  [{child.kind}]")
+    produces = list(collection.produces())
+    if produces:
+        print(f"  produces ({len(produces)}):")
+        for edge in produces:
+            print(f"    {edge.member.memberType}  {edge.member.ref.recordRef}")
+    for bucket in collection.contents():
+        count = bucket.count if bucket.count is not None else "?"
+        unit = f" {bucket.unit}" if bucket.unit else ""
+        print(
+            f"  content: {bucket.produceCollection}  {count}{unit} "
+            f"({bucket.countSource})",
+        )
+
+
+def _add_collection(subparsers: _Subparsers) -> None:
+    """Register the ``collection`` subcommand."""
+    sub = subparsers.add_parser(
+        "collection",
+        help="summarize a catalogue collection loaded from a PDS",
+        description=(
+            "Load a catalogue collection from a PDS and print its identity, "
+            "children, produce edges, and declared content summary."
+        ),
+    )
+    sub.add_argument("uri", help="the collection AT-URI to summarize")
+    sub.add_argument(
+        "--endpoint",
+        required=True,
+        help="the base URL of the PDS to load from",
+    )
+    sub.add_argument(
+        "--follow-refs",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "follow AT-URI references across accounts (default: enabled; "
+            "--no-follow-refs reads only the collection's own account)"
+        ),
+    )
+    sub.add_argument(
+        "--json",
+        action="store_true",
+        help="print JSON instead of a table",
+    )
+    sub.set_defaults(handler=_run_collection)
+
+
+def _run_collection(args: argparse.Namespace) -> int:
+    """Handle ``lairs collection``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments.
+
+    Returns
+    -------
+    int
+        ``0`` on success, ``1`` on a resolution, transport, or validation failure.
+    """
+    try:
+        with PdsClient(args.endpoint) as client:
+            collection = data.load_collection(
+                args.uri,
+                source="pds",
+                pds_client=client,
+                follow_refs=args.follow_refs,
+            )
+    except (httpx.HTTPError, IdentityError, ValueError, NotImplementedError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    _print_collection(collection, args.uri, as_json=args.json)
+    return 0
+
+
+def _print_rollup(rollup: Rollup, *, as_json: bool) -> None:
+    """Print a collection rollup's totals, facets, and warnings."""
+    if as_json:
+        print(json.dumps(json.loads(rollup.model_dump_json()), indent=2))
+        return
+    print(f"rollup {rollup.collection}  (computed {rollup.computed_at})")
+    if rollup.descendant_collection_count is not None:
+        print(f"  descendant collections: {rollup.descendant_collection_count}")
+    for total in rollup.totals:
+        count = total.count if total.count is not None else "?"
+        print(
+            f"  {total.produceCollection}: {count} ({total.countSource})",
+        )
+    for facet in rollup.facets:
+        buckets = ", ".join(f"{v.value}={v.count}" for v in facet.values)
+        print(f"  facet {facet.dimension}: {buckets}")
+    for warning in rollup.warnings:
+        print(f"  warning {warning.code}: {warning.detail or ''}")
+
+
+def _add_rollup(subparsers: _Subparsers) -> None:
+    """Register the ``rollup`` subcommand."""
+    sub = subparsers.add_parser(
+        "rollup",
+        help="roll up totals and facets over a collection's subtree",
+        description=(
+            "Query the appview for the computed totals and facets over a "
+            "collection's containment subtree. Sums walk the spine; facets union "
+            "the relation graph."
+        ),
+    )
+    sub.add_argument("uri", help="the collection AT-URI to roll up")
+    sub.add_argument(
+        "--appview",
+        required=True,
+        help="the appview base URL to query",
+    )
+    sub.add_argument(
+        "--max-depth",
+        type=int,
+        default=None,
+        dest="max_depth",
+        help="limit the subtree walk to this many levels below the collection",
+    )
+    sub.add_argument(
+        "--no-facets",
+        action="store_true",
+        dest="no_facets",
+        help="omit the facet buckets (sums alone are cheaper)",
+    )
+    sub.add_argument(
+        "--json",
+        action="store_true",
+        help="print JSON instead of a table",
+    )
+    sub.set_defaults(handler=_run_rollup)
+
+
+def _run_rollup(args: argparse.Namespace) -> int:
+    """Handle ``lairs rollup``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments.
+
+    Returns
+    -------
+    int
+        ``0`` on success, ``1`` on a transport failure.
+    """
+    try:
+        rollup = discovery.rollup_of_collection(
+            args.uri,
+            appview=args.appview,
+            max_depth=args.max_depth,
+            include_facets=not args.no_facets,
+        )
+    except (httpx.HTTPError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    _print_rollup(rollup, as_json=args.json)
+    return 0
+
+
+def _print_acquisition(acquisition: Acquisition, uri: str, *, as_json: bool) -> None:
+    """Print an acquisition's sessions with participant and media counts."""
+    with_participants = {
+        row.uri: row for row in acquisition.sessions_with_participants()
+    }
+    with_media = {row.uri: row for row in acquisition.sessions_with_media()}
+    sessions = list(acquisition.sessions())
+    if as_json:
+        payload = {
+            "uri": uri,
+            "sessions": len(sessions),
+            "participants": len(acquisition.participants()),
+            "media": len(acquisition.media()),
+        }
+        print(json.dumps(payload, indent=2))
+        return
+    print(
+        f"acquisition {uri}: {len(sessions)} session(s), "
+        f"{len(acquisition.participants())} participant(s), "
+        f"{len(acquisition.media())} media",
+    )
+    for row_uri, row in with_participants.items():
+        media = with_media.get(row_uri)
+        media_count = len(media.media) if media is not None else 0
+        print(
+            f"  {row.session.sessionId}: {len(row.participants)} participant(s), "
+            f"{media_count} media  {row_uri}",
+        )
+
+
+def _add_sessions(subparsers: _Subparsers) -> None:
+    """Register the ``sessions`` subcommand."""
+    sub = subparsers.add_parser(
+        "sessions",
+        help="summarize an acquisition's sessions loaded from a PDS",
+        description=(
+            "Load acquisition sessions from a PDS and print each session with its "
+            "participant and media counts. Pass a session AT-URI or the "
+            "acquisition account's AT-URI."
+        ),
+    )
+    sub.add_argument("uri", help="the session or acquisition-account AT-URI")
+    sub.add_argument(
+        "--endpoint",
+        required=True,
+        help="the base URL of the PDS to load from",
+    )
+    sub.add_argument(
+        "--follow-refs",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "follow AT-URI references across accounts (default: enabled; "
+            "--no-follow-refs reads only the session's own account)"
+        ),
+    )
+    sub.add_argument(
+        "--json",
+        action="store_true",
+        help="print JSON instead of a table",
+    )
+    sub.set_defaults(handler=_run_sessions)
+
+
+def _run_sessions(args: argparse.Namespace) -> int:
+    """Handle ``lairs sessions``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments.
+
+    Returns
+    -------
+    int
+        ``0`` on success, ``1`` on a resolution, transport, or validation failure.
+    """
+    try:
+        with PdsClient(args.endpoint) as client:
+            acquisition = data.load_acquisition(
+                args.uri,
+                source="pds",
+                pds_client=client,
+                follow_refs=args.follow_refs,
+            )
+    except (httpx.HTTPError, IdentityError, ValueError, NotImplementedError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    _print_acquisition(acquisition, args.uri, as_json=args.json)
     return 0
 
 

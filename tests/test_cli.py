@@ -17,17 +17,24 @@ from lairs.atproto.auth import Session
 from lairs.atproto.identity import IdentityError
 from lairs.atproto.pds import RepoListing
 from lairs.author.publish import PublishPlan
+from lairs.data.acquisition import Acquisition
+from lairs.data.collection import Collection
 from lairs.data.corpus import Corpus
 from lairs.discovery import CardDiff, CrawlReport, SearchHit, SearchQuery
 from lairs.discovery.cards import CardFreshness, CardProvenance, DatasetCard
+from lairs.discovery.links import Rollup
 from lairs.discovery.models import (
     CollectionCount,
+    CollectionSummary,
     DatasetSummary,
     RepoTableOfContents,
 )
+from lairs.records._generated import acquisition as acquisition_records
+from lairs.records._generated import catalog as catalog_records
 from lairs.records._generated import expression as expression_records
 from lairs.records._generated import media as media_records
 from lairs.records._generated import persona as persona_records
+from lairs.records._generated.defs import Uuid
 from lairs.store.repository import Repository
 
 if TYPE_CHECKING:
@@ -1426,3 +1433,166 @@ def test_login_and_publish_live(
     )
     assert fetched.status_code == 200
     assert fetched.json()["value"]["text"] == "published via cli"
+
+
+# ---- catalogue collection / acquisition subcommands ------------------------
+
+
+def test_collections_prints_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_list(actor: str, **kwargs: object) -> tuple[CollectionSummary, ...]:
+        _ = (actor, kwargs)
+        return (
+            CollectionSummary(
+                uri="at://did:plc:x/pub.layers.catalog.collection/a",
+                did="did:plc:x",
+                name="UD English-EWT",
+                kind="treebank",
+                citable=True,
+            ),
+        )
+
+    monkeypatch.setattr(discovery, "list_collections", fake_list)
+    code = cli.main(["collections", "did:plc:x"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "UD English-EWT" in out
+    assert "treebank" in out
+
+
+def test_collections_reports_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(discovery, "list_collections", _raise_value_error)
+    code = cli.main(["collections", "did:plc:x"])
+    assert code == 1
+    assert "error: bad source" in capsys.readouterr().err
+
+
+def test_print_collections_table(capsys: pytest.CaptureFixture[str]) -> None:
+    rows = (
+        CollectionSummary(
+            uri="at://did:plc:x/pub.layers.catalog.collection/a",
+            did="did:plc:x",
+            name="demo collection",
+            kind="project",
+            citable=True,
+        ),
+    )
+    cli._print_collections(rows, as_json=False)
+    out = capsys.readouterr().out
+    assert "demo collection" in out
+    assert "project" in out
+    assert "*cite" in out
+
+
+def test_collection_prints_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    uri = "at://did:plc:x/pub.layers.catalog.collection/a"
+
+    def fake_load(u: str, **kwargs: object) -> Collection:
+        _ = kwargs
+        surface = Collection.new(uri=u)
+        surface.add_record(
+            u,
+            catalog_records.Collection(
+                name="UD English-EWT",
+                kind="treebank",
+                createdAt=_NOW,
+            ),
+        )
+        return surface
+
+    monkeypatch.setattr("lairs.data.load_collection", fake_load)
+    code = cli.main(["collection", uri, "--endpoint", "https://pds.example"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "UD English-EWT" in out
+    assert "treebank" in out
+
+
+def test_rollup_prints_totals(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_rollup(collection: str, **kwargs: object) -> Rollup:
+        _ = kwargs
+        return Rollup(
+            collection=collection,
+            computed_at="2026-06-18T00:00:00Z",
+            descendant_collection_count=3,
+            totals=(
+                catalog_records.ContentSummary(
+                    produceCollection="pub.layers.expression.expression",
+                    count=100,
+                    countSource="computed",
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(discovery, "rollup_of_collection", fake_rollup)
+    code = cli.main(
+        [
+            "rollup",
+            "at://did:plc:x/pub.layers.catalog.collection/a",
+            "--appview",
+            "https://appview.example",
+        ],
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "100" in out
+    assert "pub.layers.expression.expression" in out
+
+
+def test_sessions_prints_counts(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    uri = "at://did:plc:acq/pub.layers.acquisition.session/s1"
+
+    def fake_load(u: str, **kwargs: object) -> Acquisition:
+        _ = kwargs
+        acq = Acquisition.new(uri=u)
+        acq.add_record(
+            u,
+            acquisition_records.Session(
+                sessionId="ses-01",
+                createdAt=_NOW,
+                streams=(
+                    acquisition_records.Stream(
+                        uuid=Uuid(value="11111111-1111-1111-1111-111111111111"),
+                    ),
+                ),
+            ),
+        )
+        return acq
+
+    monkeypatch.setattr("lairs.data.load_acquisition", fake_load)
+    code = cli.main(["sessions", uri, "--endpoint", "https://pds.example"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "ses-01" in out
+    assert "1 session" in out
+
+
+def test_print_toc_stars_catalog_collection(capsys: pytest.CaptureFixture[str]) -> None:
+    toc = RepoTableOfContents(
+        did="did:plc:x",
+        collections=(
+            CollectionCount(
+                nsid="pub.layers.catalog.collection",
+                is_dataset_like=True,
+            ),
+        ),
+        dataset_collections=("pub.layers.catalog.collection",),
+    )
+    cli._print_toc(toc, as_json=False)
+    out = capsys.readouterr().out
+    assert "pub.layers.catalog.collection" in out
+    assert "[*]" in out

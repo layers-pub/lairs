@@ -10,6 +10,13 @@ never requires the optional pandas dependency.
 
 from __future__ import annotations
 
+from lairs.data.acquisition import (
+    Acquisition,
+    SessionWithMedia,
+    SessionWithParticipants,
+    load_acquisition,
+)
+from lairs.data.collection import Collection, load_collection
 from lairs.data.corpus import (
     Corpus,
     ExpressionWithAnnotations,
@@ -19,8 +26,11 @@ from lairs.data.corpus import (
 )
 from lairs.data.dataset import Dataset
 from lairs.data.features import Features, FeatureSpec, dtype_of, features_of
+from lairs.data.media import media_by_kind, signal_media
 
 __all__ = [
+    "Acquisition",
+    "Collection",
     "Corpus",
     "Dataset",
     "ExpressionWithAnnotations",
@@ -28,7 +38,13 @@ __all__ = [
     "ExpressionWithSegmentation",
     "FeatureSpec",
     "Features",
+    "SessionWithMedia",
+    "SessionWithParticipants",
     "dtype_of",
     "features_of",
+    "load_acquisition",
+    "load_collection",
     "load_corpus",
+    "media_by_kind",
+    "signal_media",
 ]

@@ -10,13 +10,33 @@ index from the firehose and a backfill crawl (Tier 3).
 from __future__ import annotations
 
 from lairs.discovery.actor import list_datasets, table_of_contents
-from lairs.discovery.cards import CrawlReport, DatasetCard, MutedDataset
+from lairs.discovery.cards import (
+    CollectionCard,
+    CrawlReport,
+    DatasetCard,
+    MutedDataset,
+)
+from lairs.discovery.collections import list_collections
 from lairs.discovery.federated import datasets_using_ontology, discover_datasets
 from lairs.discovery.index import CardDiff, DiscoveryIndex, default_index_path
-from lairs.discovery.ingest import build_index, discover, update_index
-from lairs.discovery.links import datasets_for_eprint, members_of_corpus
+from lairs.discovery.ingest import (
+    build_index,
+    discover,
+    discover_collections,
+    update_index,
+)
+from lairs.discovery.links import (
+    Rollup,
+    containers_of,
+    datasets_for_eprint,
+    members_of_collection,
+    members_of_corpus,
+    rollup_of_collection,
+)
 from lairs.discovery.models import (
     CollectionCount,
+    CollectionFilter,
+    CollectionSummary,
     DatasetFilter,
     DatasetSummary,
     RepoTableOfContents,
@@ -33,7 +53,10 @@ from lairs.discovery.sources import (
 
 __all__ = [
     "CardDiff",
+    "CollectionCard",
     "CollectionCount",
+    "CollectionFilter",
+    "CollectionSummary",
     "CrawlReport",
     "DatasetCard",
     "DatasetFilter",
@@ -41,22 +64,28 @@ __all__ = [
     "DiscoveryIndex",
     "MutedDataset",
     "RepoTableOfContents",
+    "Rollup",
     "SearchHit",
     "SearchQuery",
     "Source",
     "UnknownSourceError",
     "build_index",
+    "containers_of",
     "datasets_for_eprint",
     "datasets_using_ontology",
     "default_index_path",
     "default_source",
     "default_sources_path",
     "discover",
+    "discover_collections",
     "discover_datasets",
+    "list_collections",
     "list_datasets",
     "load_sources",
+    "members_of_collection",
     "members_of_corpus",
     "resolve_source",
+    "rollup_of_collection",
     "search",
     "table_of_contents",
     "update_index",

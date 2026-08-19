@@ -22,7 +22,12 @@ from lairs.discovery.cards import (
     CrawlReport,
     RepoCrawlState,
     SyncCursor,
+    card_from_collection,
     card_from_corpus,
+)
+from lairs.discovery.collection_summary import (
+    _CATALOG_COLLECTION_NSID,
+    collection_from_value,
 )
 from lairs.discovery.summary import _CORPUS_NSID, corpus_from_value
 
@@ -31,7 +36,7 @@ if TYPE_CHECKING:
 
     from lairs.atproto.firehose import FirehoseEvent
     from lairs.atproto.pds import RecordEnvelope, RepoDescription
-    from lairs.discovery.cards import DatasetCard
+    from lairs.discovery.cards import CollectionCard, DatasetCard
     from lairs.discovery.index import DiscoveryIndex
 
 __all__ = [
@@ -39,6 +44,7 @@ __all__ = [
     "RepoDescriber",
     "build_index",
     "discover",
+    "discover_collections",
     "update_index",
 ]
 
@@ -98,8 +104,46 @@ def _refresh_card(
     return True
 
 
+def _same_collection_content(
+    existing: CollectionCard,
+    candidate: CollectionCard,
+) -> bool:
+    """Return whether two collection cards carry the same derived content."""
+    return (
+        existing.summary == candidate.summary
+        and existing.is_container == candidate.is_container
+    )
+
+
+def _refresh_collection_card(
+    index: DiscoveryIndex,
+    card: CollectionCard,
+    existing: CollectionCard | None,
+) -> bool:
+    """Store a collection card unless its content already matches the indexed one.
+
+    Returns
+    -------
+    bool
+        ``True`` if the card was written (new or changed), ``False`` if the
+        indexed card already had the same content.
+    """
+    if existing is not None and _same_collection_content(existing, card):
+        return False
+    index.put_collection_card(card)
+    return True
+
+
 def _first_seen(existing: DatasetCard | None, now: datetime) -> datetime:
     """Return the corpus's existing first-seen time, or ``now`` when new."""
+    return existing.freshness.first_seen_at if existing is not None else now
+
+
+def _collection_first_seen(
+    existing: CollectionCard | None,
+    now: datetime,
+) -> datetime:
+    """Return the collection's existing first-seen time, or ``now`` when new."""
     return existing.freshness.first_seen_at if existing is not None else now
 
 
@@ -187,6 +231,88 @@ def _apply_firehose_event(
     return _EventOutcome(kind="unchanged")
 
 
+def _collection_card_for_firehose(
+    event: FirehoseEvent,
+    collection_uri: str,
+    existing: CollectionCard | None,
+    *,
+    endpoint: str,
+    now: datetime,
+) -> CollectionCard | None:
+    """Build the card for a collection create/update event, or ``None`` if bad."""
+    collection = collection_from_value(event.record)
+    if collection is None:
+        return None
+    provenance = CardProvenance(
+        source_did=event.repo,
+        source_endpoint=endpoint,
+        discovered_via="firehose",
+    )
+    freshness = CardFreshness(
+        first_seen_at=_collection_first_seen(existing, now),
+        last_updated_at=now,
+        last_seen_seq=event.seq,
+    )
+    return card_from_collection(
+        collection_uri,
+        collection,
+        provenance=provenance,
+        freshness=freshness,
+    )
+
+
+def _apply_collection_event(
+    index: DiscoveryIndex,
+    event: FirehoseEvent,
+    *,
+    endpoint: str,
+    now: datetime,
+) -> _EventOutcome:
+    """Apply one catalogue-collection firehose event and classify its outcome."""
+    collection_uri = f"at://{event.repo}/{event.collection}/{event.rkey}"
+    if event.action == "delete":
+        if index.remove_collection_card(collection_uri):
+            return _EventOutcome(kind="removed")
+        return _EventOutcome(
+            kind="skipped",
+            reason=f"seq {event.seq}: delete of unindexed collection",
+        )
+    if event.action not in {"create", "update"}:
+        return _EventOutcome(
+            kind="skipped",
+            reason=f"seq {event.seq}: {event.action} not indexed",
+        )
+    existing = index.get_collection_card(collection_uri)
+    card = _collection_card_for_firehose(
+        event,
+        collection_uri,
+        existing,
+        endpoint=endpoint,
+        now=now,
+    )
+    if card is None:
+        return _EventOutcome(
+            kind="skipped",
+            reason=f"seq {event.seq}: undecodable collection",
+        )
+    if _refresh_collection_card(index, card, existing):
+        return _EventOutcome(kind="built")
+    return _EventOutcome(kind="unchanged")
+
+
+def _apply_event(
+    index: DiscoveryIndex,
+    event: FirehoseEvent,
+    *,
+    endpoint: str,
+    now: datetime,
+) -> _EventOutcome:
+    """Route a firehose event to the corpus or collection applier by its NSID."""
+    if event.collection == _CATALOG_COLLECTION_NSID:
+        return _apply_collection_event(index, event, endpoint=endpoint, now=now)
+    return _apply_firehose_event(index, event, endpoint=endpoint, now=now)
+
+
 def _is_unchanged(index: DiscoveryIndex, did: str, current_rev: str) -> bool:
     """Return whether a repo's revision matches the one recorded at last crawl.
 
@@ -207,6 +333,95 @@ def _is_unchanged(index: DiscoveryIndex, did: str, current_rev: str) -> bool:
     """
     state = index.get_crawl_state(did)
     return state is not None and state.last_seen_rev == current_rev
+
+
+def _crawl_dataset_cards(  # noqa: PLR0913  (a crawl step needs the index, repo, and endpoint context)
+    index: DiscoveryIndex,
+    did: str,
+    *,
+    handle: str | None,
+    endpoint: str,
+    now: datetime,
+    list_corpora: CorpusLister,
+    skipped: list[str],
+) -> tuple[int, int, int]:
+    """Index a repo's corpora as dataset cards; return ``(found, built, unchanged)``."""
+    found = built = unchanged = 0
+    for envelope in list_corpora.list_records(did, _CORPUS_NSID):
+        corpus = corpus_from_value(envelope.value)
+        if corpus is None:
+            skipped.append(f"{envelope.uri}: undecodable corpus")
+            continue
+        found += 1
+        if index.is_muted(envelope.uri):
+            skipped.append(f"{envelope.uri}: muted")
+            continue
+        existing = index.get_card(envelope.uri)
+        provenance = CardProvenance(
+            source_did=did,
+            source_endpoint=endpoint,
+            discovered_via="crawl",
+            source_handle=handle,
+        )
+        freshness = CardFreshness(
+            first_seen_at=_first_seen(existing, now),
+            last_updated_at=now,
+        )
+        card = card_from_corpus(
+            envelope.uri,
+            corpus,
+            provenance=provenance,
+            freshness=freshness,
+        )
+        if _refresh_card(index, card, existing):
+            built += 1
+        else:
+            unchanged += 1
+    return found, built, unchanged
+
+
+def _crawl_collection_cards(  # noqa: PLR0913  (a crawl step needs the index, repo, and endpoint context)
+    index: DiscoveryIndex,
+    did: str,
+    *,
+    handle: str | None,
+    endpoint: str,
+    now: datetime,
+    list_collections: CorpusLister,
+    skipped: list[str],
+) -> tuple[int, int]:
+    """Index a repo's catalogue collections as cards; return ``(built, unchanged)``."""
+    built = unchanged = 0
+    for envelope in list_collections.list_records(did, _CATALOG_COLLECTION_NSID):
+        collection = collection_from_value(envelope.value)
+        if collection is None:
+            skipped.append(f"{envelope.uri}: undecodable collection")
+            continue
+        if index.is_muted(envelope.uri):
+            skipped.append(f"{envelope.uri}: muted")
+            continue
+        existing = index.get_collection_card(envelope.uri)
+        provenance = CardProvenance(
+            source_did=did,
+            source_endpoint=endpoint,
+            discovered_via="crawl",
+            source_handle=handle,
+        )
+        freshness = CardFreshness(
+            first_seen_at=_collection_first_seen(existing, now),
+            last_updated_at=now,
+        )
+        card = card_from_collection(
+            envelope.uri,
+            collection,
+            provenance=provenance,
+            freshness=freshness,
+        )
+        if _refresh_collection_card(index, card, existing):
+            built += 1
+        else:
+            unchanged += 1
+    return built, unchanged
 
 
 def build_index(  # noqa: PLR0913  (crawl inputs plus a logged bound)
@@ -275,7 +490,9 @@ def build_index(  # noqa: PLR0913  (crawl inputs plus a logged bound)
         except httpx.HTTPError as exc:
             skipped.append(f"{did}: describe_repo failed ({exc})")
             continue
-        if _CORPUS_NSID not in description.collections:
+        has_corpus = _CORPUS_NSID in description.collections
+        has_collection = _CATALOG_COLLECTION_NSID in description.collections
+        if not has_corpus and not has_collection:
             index.put_crawl_state(
                 RepoCrawlState(
                     did=did,
@@ -284,46 +501,42 @@ def build_index(  # noqa: PLR0913  (crawl inputs plus a logged bound)
                     last_seen_rev=current_rev,
                 ),
             )
-            skipped.append(f"{did}: no {_CORPUS_NSID}")
+            skipped.append(
+                f"{did}: no {_CORPUS_NSID} or {_CATALOG_COLLECTION_NSID}",
+            )
             continue
-        with_corpora += 1
-        found = 0
         handle = description.handle or None
-        for envelope in list_corpora.list_records(did, _CORPUS_NSID):
-            corpus = corpus_from_value(envelope.value)
-            if corpus is None:
-                skipped.append(f"{envelope.uri}: undecodable corpus")
-                continue
-            found += 1
-            if index.is_muted(envelope.uri):
-                skipped.append(f"{envelope.uri}: muted")
-                continue
-            existing = index.get_card(envelope.uri)
-            provenance = CardProvenance(
-                source_did=did,
-                source_endpoint=endpoint,
-                discovered_via="crawl",
-                source_handle=handle,
+        found = 0
+        if has_corpus:
+            with_corpora += 1
+            found, corpus_built, corpus_unchanged = _crawl_dataset_cards(
+                index,
+                did,
+                handle=handle,
+                endpoint=endpoint,
+                now=now,
+                list_corpora=list_corpora,
+                skipped=skipped,
             )
-            freshness = CardFreshness(
-                first_seen_at=_first_seen(existing, now),
-                last_updated_at=now,
+            built += corpus_built
+            unchanged += corpus_unchanged
+        if has_collection:
+            coll_built, coll_unchanged = _crawl_collection_cards(
+                index,
+                did,
+                handle=handle,
+                endpoint=endpoint,
+                now=now,
+                list_collections=list_corpora,
+                skipped=skipped,
             )
-            card = card_from_corpus(
-                envelope.uri,
-                corpus,
-                provenance=provenance,
-                freshness=freshness,
-            )
-            if _refresh_card(index, card, existing):
-                built += 1
-            else:
-                unchanged += 1
+            built += coll_built
+            unchanged += coll_unchanged
         index.put_crawl_state(
             RepoCrawlState(
                 did=did,
                 endpoint=endpoint,
-                has_layers_corpus=True,
+                has_layers_corpus=has_corpus,
                 corpora_found=found,
                 last_crawled_at=now,
                 last_seen_rev=current_rev,
@@ -402,6 +615,66 @@ def discover(
             )
 
 
+def discover_collections(
+    dids: Iterable[str],
+    *,
+    describe: RepoDescriber,
+    list_collections: CorpusLister,
+    endpoint: str,
+) -> Iterator[CollectionCard]:
+    """Yield a collection card per discovered catalogue collection, without indexing.
+
+    The catalogue-collection counterpart to :func:`discover`: it walks the given
+    repositories on one endpoint and yields a fresh
+    :class:`~lairs.discovery.cards.CollectionCard` per collection as it is found,
+    committing nothing, so a caller can decide what to index. A repo that fails to
+    describe, lacks the collection collection, or yields an undecodable collection
+    is skipped silently.
+
+    Parameters
+    ----------
+    dids : collections.abc.Iterable of str
+        The repository DIDs to crawl.
+    describe : RepoDescriber
+        A repository-description source bound to ``endpoint``.
+    list_collections : CorpusLister
+        A record-listing source bound to ``endpoint``.
+    endpoint : str
+        The PDS or relay endpoint the repos are read from.
+
+    Yields
+    ------
+    CollectionCard
+        One card per discovered collection, with fresh provenance and freshness.
+    """
+    now = datetime.now(UTC)
+    for did in dids:
+        try:
+            description = describe.describe_repo(did)
+        except httpx.HTTPError:
+            continue
+        if _CATALOG_COLLECTION_NSID not in description.collections:
+            continue
+        handle = description.handle or None
+        for envelope in list_collections.list_records(did, _CATALOG_COLLECTION_NSID):
+            collection = collection_from_value(envelope.value)
+            if collection is None:
+                continue
+            provenance = CardProvenance(
+                source_did=did,
+                source_endpoint=endpoint,
+                discovered_via="crawl",
+                source_handle=handle,
+            )
+            freshness = CardFreshness(first_seen_at=now, last_updated_at=now)
+            yield card_from_collection(
+                envelope.uri,
+                collection,
+                provenance=provenance,
+                freshness=freshness,
+            )
+
+
 def update_index(
     index: DiscoveryIndex,
     relay: str,
@@ -410,11 +683,12 @@ def update_index(
     limit: int | None = None,
     commit_every: int = _DEFAULT_COMMIT_EVERY,
 ) -> CrawlReport:
-    """Tail a relay's firehose, refreshing cards for corpus commits.
+    """Tail a relay's firehose, refreshing cards for corpus and collection commits.
 
-    Resumes from the stored ``SyncCursor`` for the relay, indexes each corpus
-    create or update, removes the card for each corpus delete (so the local index
-    does not drift stale), and checkpoints the cursor and commits every
+    Resumes from the stored ``SyncCursor`` for the relay, indexes each corpus or
+    catalogue-collection create or update as its own card type, removes the card
+    for each delete (so the local index does not drift stale), and checkpoints the
+    cursor and commits every
     ``commit_every`` events. ``limit`` bounds the events processed, which makes
     a live tail testable. A delete of a corpus that is not indexed is logged in
     ``skipped`` rather than removed; a removed card is reported in
@@ -446,12 +720,16 @@ def update_index(
     counts = {"built": 0, "unchanged": 0, "removed": 0}
     last_seq = start if start is not None else 0
     skipped: list[str] = []
-    for event in subscribe_repos(relay, nsids=[_CORPUS_NSID], cursor=start):
+    for event in subscribe_repos(
+        relay,
+        nsids=[_CORPUS_NSID, _CATALOG_COLLECTION_NSID],
+        cursor=start,
+    ):
         if limit is not None and seen >= limit:
             break
         seen += 1
         last_seq = event.seq
-        outcome = _apply_firehose_event(index, event, endpoint=endpoint, now=now)
+        outcome = _apply_event(index, event, endpoint=endpoint, now=now)
         if outcome.kind == "skipped":
             if outcome.reason is not None:
                 skipped.append(outcome.reason)

@@ -35,18 +35,27 @@ _CORPUS_NSID = "pub.layers.corpus.corpus"
 
 _DATASET_LIKE_NSIDS = frozenset(
     {
+        "pub.layers.catalog.collection",
+        "pub.layers.catalog.membership",
         "pub.layers.corpus.corpus",
         "pub.layers.corpus.membership",
         "pub.layers.expression.expression",
         "pub.layers.annotation.annotationLayer",
         "pub.layers.segmentation.segmentation",
         "pub.layers.media.media",
+        "pub.layers.acquisition.session",
+        "pub.layers.acquisition.participant",
         "pub.layers.eprint.eprint",
         "pub.layers.eprint.dataLink",
         "pub.layers.ontology.ontology",
     },
 )
-"""Collection NSIDs that hold dataset-shaped records, for TOC highlighting."""
+"""Collection NSIDs that hold dataset-shaped records, for TOC highlighting.
+
+The catalogue collection is the browsable, citable artifact for a dataset as a
+whole, so it heads the set; acquisition sessions and participants are the
+dataset-shaped records of a behavioural or neural study.
+"""
 
 
 def _has_adjudication(corpus: corpus_records.Corpus) -> bool:
