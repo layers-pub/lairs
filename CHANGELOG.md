@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Data-access surfaces.** Typed read surfaces over a repository's `pub.layers.*`
+  records: `Corpus`, `Acquisition`, `Collection`, and signal-bearing `Media`, plus
+  the lazy `Dataset` view, all built on a shared PDS graph loader (`lairs.data`)
+  that enumerates an authority's collections and follows AT-URI references across
+  account boundaries into a model pool keyed by AT-URI.
+- **Single-actor collection discovery.** `lairs.discovery.collections` lists an
+  actor's `pub.layers.catalog.collection` records as `CollectionSummary` rows,
+  preferring a configured appview's server-side facets and falling back to a direct
+  PDS read.
+- **DNS handle resolution.** `IdentityResolver.resolve_handle` now races the
+  `_atproto` DNS TXT record against the `.well-known/atproto-did` HTTP method and
+  returns the first `did:`, so a handle served only over DNS resolves without an
+  injected client. Adds a `dnspython` dependency and a `dns_timeout` setting.
+
+### Changed
+
+- Raised the panproto floor to `0.71.0`.
+
 ## [0.6.0] - 2026-07-20
 
 ### Added
