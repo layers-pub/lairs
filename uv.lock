@@ -1657,6 +1657,7 @@ version = "0.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "didactic" },
+    { name = "dnspython" },
     { name = "duckdb" },
     { name = "httpx" },
     { name = "libipld" },
@@ -1780,6 +1781,7 @@ requires-dist = [
     { name = "datasets", marker = "extra == 'hf'", specifier = ">=5" },
     { name = "decord", marker = "python_full_version < '3.14' and extra == 'video'" },
     { name = "didactic", specifier = ">=0.9.1" },
+    { name = "dnspython", specifier = ">=2" },
     { name = "duckdb" },
     { name = "fsspec", marker = "extra == 'fsspec'" },
     { name = "geopandas", marker = "extra == 'geo'" },
