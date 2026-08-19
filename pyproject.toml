@@ -33,7 +33,7 @@ classifiers = [
 ]
 dependencies = [
     "didactic>=0.9.1",
-    "panproto>=0.66.0",
+    "panproto>=0.71.0",
     "httpx",
     # identity handle resolution races the DNS `_atproto` TXT method against the
     # HTTP well-known method, so DNS is part of the shipped resolver, not optional.
