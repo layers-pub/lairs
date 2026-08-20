@@ -1,12 +1,11 @@
 # Resolving and slicing media
 
 Layers annotations anchor into text, tokens, audio, video, and
-time-series signals. The media layer turns a media record into a byte
-handle, dispatches an annotation's anchor to the slice it points at, and
-decodes and slices each modality. The byte-arithmetic and interpolation
-paths are pure Python. The audio, video, and neural *decoders* are
-optional extras, imported lazily, so importing the media modules never
-pulls in a heavy dependency.
+time-series signals. The media layer resolves a media record to bytes,
+dispatches an annotation's anchor to the corresponding slice, and
+decodes each modality. Byte arithmetic and interpolation are pure
+Python. Audio, video, and neural decoding use optional dependencies that
+are imported only when needed.
 
 For full signatures see the [media reference](../reference/media.md). For
 how anchors unify the modalities, see [Anchors](../concepts/anchors-and-modality.md).

@@ -1,8 +1,8 @@
 # Testing
 
-The test suite lives under `tests/`, mirroring the package layout. The default
-run is fast and dependency-free; everything that needs a network, Docker, or a
-heavy optional extra is opt-in or skips cleanly.
+The test suite under `tests/` mirrors the package layout. The default run is
+fast and dependency-free. Tests that need a network, Docker, or a heavy
+optional extra are opt-in or skip cleanly.
 
 ```bash
 uv run pytest                 # the default suite
@@ -16,17 +16,17 @@ marker.
 
 ## Unit and functional tests
 
-The default run covers the library without any external service. Adapters that
-wrap an optional extra are tested when that extra is installed and skip with a
-clear reason when it is not, so a partial environment still produces a green,
-honest run. Because the `dev` group installs every extra that has a `cp314`
+The default run requires no external service. Adapters that wrap an optional
+extra are tested when that extra is installed and skip with a clear reason when
+it is not, so a partial environment can still complete successfully. Because
+the `dev` group installs every extra that has a `cp314`
 wheel, a full `uv sync` environment exercises nearly all of them.
 
-Two patterns appear throughout:
+Round-trip and lazy-import tests follow distinct patterns:
 
 - **Property-based tests** with [Hypothesis](https://hypothesis.works/) cover
   the round-trip codecs, where any valid input must survive an encode/decode
-  cycle (for example `tests/integrations/codecs/test_brat.py` and
+  cycle (for instance `tests/integrations/codecs/test_brat.py` and
   `test_conllu.py`).
 - **Lazy-import discipline** is enforced by the `assert_lazy_import` fixture in
   `tests/conftest.py`. It imports a `lairs` module in a clean subprocess and
@@ -38,10 +38,10 @@ Two patterns appear throughout:
 
 Tests that exercise a real third-party HTTP API record their traffic with
 [pytest-recording](https://github.com/kiwicom/pytest-recording) (VCR
-cassettes), so they replay offline and deterministically. The Hugging Face Hub
-tests in `tests/integrations/hf/test_hub.py` use this. To refresh a cassette,
-delete it and re-run with recording enabled and real credentials; commit the new
-cassette with the change.
+cassettes). The tests replay these cassettes offline and deterministically. The
+Hugging Face Hub tests in `tests/integrations/hf/test_hub.py` use this. To refresh a
+cassette, delete it and re-run with recording enabled and real credentials;
+commit the new cassette with the change.
 
 ## Integration tests and the local PDS
 
@@ -52,24 +52,23 @@ uv run pytest --run-integration -m integration   # only the integration tests
 uv run pytest --run-integration                   # the whole suite, integration included
 ```
 
-The flag and the marker are registered in `tests/conftest.py`. The headline
+The flag and the marker are registered in `tests/conftest.py`. The main
 integration fixture starts a real [Bluesky PDS](https://github.com/bluesky-social/pds)
 with Docker Compose (`tests/pds/docker-compose.yml`), waits for it to come up,
 provisions an account, and tears it down afterward. It picks a free port
-automatically, so it does not collide with anything already listening locally,
-and it skips cleanly when Docker is not available. This is what lets the
-read/write path be tested end-to-end against an actual server rather than a
-mock.
+automatically to avoid collisions with local services and skips cleanly when
+Docker is not available. Tests that use this fixture exercise the read/write
+path end to end against an actual server rather than a mock.
 
 CI runs the integration job separately from the fast checks; see
 `.github/workflows/ci.yml`.
 
 ## TUI tests
 
-The Textual explorer has its own fixtures in `tests/tui/conftest.py` and is
-tested by driving the app through Textual's `Pilot` interface: mounting the app,
-sending key presses, switching tabs and views, and asserting on the rendered
-widget tree. These tests catch interaction regressions (a view that fails to
+The Textual explorer has its own fixtures in `tests/tui/conftest.py`. Its tests
+drive the app through Textual's `Pilot` interface by mounting the app, sending
+key presses, switching tabs and views, and asserting on the rendered widget
+tree. They catch interaction regressions (a view that fails to
 switch, a query that inserts the wrong text) without a terminal.
 
 ## Writing tests

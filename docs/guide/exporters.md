@@ -1,18 +1,17 @@
 # Exporters: Arrow views to framework datasets
 
-This guide covers the `Exporter` port and the bundled exporters that turn a
-flattened Arrow view into a framework-native dataset: HuggingFace `datasets`, the
-Hub push/pull, PyTorch, tf.data, and WebDataset. It notes which extra each needs.
+The `Exporter` port turns a flattened Arrow view into a framework-native
+dataset. lairs includes exporters for HuggingFace `datasets`, PyTorch, tf.data,
+and WebDataset, together with HuggingFace Hub push and pull operations.
 
-An exporter consumes an Arrow view (a `pyarrow.Table`, produced by
-`Dataset.to_arrow`) and emits a target-framework object. (`Corpus.materialize`
-instead writes Parquet view files to disk and returns their paths, so it is not a
-source for `export`.) The `Exporter`
-protocol in `lairs.integrations.ports` is generic over the view, the export
-specification, and the returned object. The one method is
-`export(view, *, spec=None)`. Because the Arrow flattening already resolves the
-polymorphic Layers anchors into typed columns, the exporters stay thin: they
-project columns and hand the table over. Resolve an exporter by name:
+An exporter consumes a `pyarrow.Table` produced by `Dataset.to_arrow` and emits
+a target-framework object. `Corpus.materialize` instead writes Parquet view
+files to disk and returns their paths, so it does not provide an input to
+`export`. The `Exporter` protocol in `lairs.integrations.ports` is generic over
+the view, export specification, and returned object. Its method is
+`export(view, *, spec=None)`. Arrow flattening has already expanded polymorphic
+Layers anchors into typed columns, leaving each exporter to project columns and
+hand the table to its target framework. Resolve an exporter by name:
 
 ```python
 import lairs
@@ -24,8 +23,8 @@ WebDatasetExporter = lairs.exporter("webdataset")
 ```
 
 An unknown name raises `UnknownAdapterError`, listing the available exporters.
-Every framework dependency is imported lazily, so importing an exporter module
-never pulls its extra in. The optional import surfaces only when an export runs.
+Importing an exporter module does not import its optional framework dependency;
+each dependency loads inside the operation that needs it.
 
 ## HuggingFace `datasets`
 
@@ -47,7 +46,7 @@ row per expression with annotations as sequence-valued columns, `exploded` keeps
 one row per annotation. The Arrow builders produce one shape or the other.
 
 **Task templates.** `task_template_for(kind, subkind=, formalism=)` returns the
-most specific canonical HuggingFace task shape for a Layers triple (for example
+most specific canonical HuggingFace task shape for a Layers triple (for instance
 `token-classification` for a `token-tag` layer, `dependency-parsing` for a
 `tree`/`universal-dependencies` layer). `ExportSpec.for_template(template)`
 projects that template's columns and records its task name for downstream tooling
@@ -67,8 +66,8 @@ mapping from a lairs `Features` schema, mapping each spec to a `Value` (or a
 `Sequence` of a `Value` for sequence tokens). Struct tokens degrade to a JSON
 string column.
 
-`datasets` comes from the `lairs[hf]` extra. Every method here raises a clear
-`ImportError` when it is absent.
+`datasets` comes from the `lairs[hf]` extra. Every method here raises
+`ImportError` with an install hint when it is absent.
 
 ## HuggingFace Hub
 
@@ -96,10 +95,11 @@ and Layers version are read from the vendored manifest; the remaining fields,
 including `license`, are supplied by the caller from the corpus record. The
 `license` field is a plain license-identifier string the caller passes through (a
 slug such as `CC-BY-4.0`, or an expression such as `MIT OR Apache-2.0`).
-`dataset_card(bundle)` renders the markdown card, where only set fields appear. `push_to_hub` needs both
-`datasets` and `huggingface_hub` from `lairs[hf]`, and `load_from_hub` needs
-`datasets`. Each raises a clear `ImportError` when absent. Hub authentication is
-the caller's responsibility (the usual `huggingface_hub` login).
+`dataset_card(bundle)` renders the markdown card, where only set fields appear.
+`push_to_hub` needs both `datasets` and `huggingface_hub` from `lairs[hf]`, and
+`load_from_hub` needs `datasets`. Each raises `ImportError` with an install hint
+when absent. Hub authentication is the caller's responsibility (the usual
+`huggingface_hub` login).
 
 ## PyTorch
 
@@ -151,7 +151,7 @@ The Arrow-schema to feature-spec derivation is pure and tensorflow-free:
 dtype token and a list-valued flag. Only resolving those tokens to concrete
 dtypes and building the dataset touch tensorflow, behind a lazy import.
 tensorflow comes from the `lairs[tf]` extra (Python `< 3.14`), and `export` raises
-a clear `ImportError` when it is absent.
+`ImportError` with an install hint when it is absent.
 
 ## WebDataset
 
@@ -178,9 +178,9 @@ extension. A non-positive `shard_size` or a named column absent from the view
 raises `ValueError`. The tar-writing path uses the standard library, so sharding
 runs without any extra. The read-back loader, `load(shards)`, requires the
 optional `webdataset` library (the `lairs[webdataset]` extra) and is imported
-lazily. Calling it without the library raises a clear `ImportError`.
+lazily. Calling it without the library raises `ImportError` with an install hint.
 
-## Extras at a glance
+## Dependencies
 
 | Exporter | Extra | Works without the extra |
 |---|---|---|

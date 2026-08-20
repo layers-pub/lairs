@@ -1,12 +1,11 @@
 # Development
 
-This section is for people working on `lairs` itself: setting up an
-environment, running the checks that gate every change, and understanding how
-the codebase is organized. If you are here to use the library, start with the
-[Tutorial](../tutorial/index.md) instead.
+Contributor documentation covers environment setup, required checks, and the
+organization of the codebase. To use the library, start with the
+[Tutorial](../tutorial/index.md).
 
-The short version lives in [`CONTRIBUTING.md`](https://github.com/layers-pub/lairs/blob/main/CONTRIBUTING.md)
-at the repository root. This section expands on it.
+[`CONTRIBUTING.md`](https://github.com/layers-pub/lairs/blob/main/CONTRIBUTING.md)
+at the repository root provides the abbreviated instructions.
 
 ## Environment
 
@@ -35,8 +34,8 @@ source .venv/bin/activate
 
 ## The checks
 
-Continuous integration runs these on every push and pull request. Run them
-locally before you push.
+Continuous integration runs these checks on every push and pull request. Run
+them locally before pushing.
 
 ```bash
 uv run ruff format --check lairs tests           # formatting
@@ -45,7 +44,7 @@ uvx ty check --python .venv --error-on-warning   # static type checking
 uv run pytest                                    # the default suite
 ```
 
-To fix what the tools can fix automatically:
+To apply the available automatic fixes:
 
 ```bash
 uv run ruff format lairs tests
@@ -71,8 +70,8 @@ lairs/
 ├── media/           audio/video/time-series resolution and anchor resolution
 ├── discovery/       network crawl, the searchable index, the DuckDB accelerator
 ├── integrations/    codecs, exporters, knowledge bases, experiment tracking
-├── tui/             the Textual explorer (Explore, Browse, Query)
-├── codegen/         the lexicon-to-model generator behind `lairs gen`
+├── tui/             the Textual explorer (Explore, Discover, Browse, Query)
+├── _codegen/        the lexicon-to-model generator behind `lairs gen`
 ├── lexicons/        the vendored Layers lexicon tree and MANIFEST.toml
 └── cli.py           the `lairs` command
 ```
@@ -81,12 +80,12 @@ Tests mirror this tree under `tests/`.
 
 ## Conventions
 
-The codebase is deliberately uniform. New code matches the code around it.
+Follow these conventions when adding code:
 
 - **didactic models for all structured data.** No dataclasses, `TypedDict`, or
   `pydantic` for record-shaped values.
-- **No `Any`** in annotations (enforced in CI via ruff `ANN401`); sound `object`,
-  narrowed before use, is allowed.
+- **No `Any` or bare `object` in annotations.** Use a protocol, `TypeVar`,
+  `JsonValue`, or a concrete union.
 - **Imports at module top level.** Function- or method-level imports are a ruff
   error (`PLC0415`). The only exception is a lazy import of a heavy optional
   extra that must not load unless its extra is installed; never silence the rule
@@ -98,7 +97,7 @@ The codebase is deliberately uniform. New code matches the code around it.
 
 ## Documentation
 
-The docs are built with MkDocs and mkdocstrings (numpy docstring style).
+MkDocs and mkdocstrings build the documentation from numpy-style docstrings.
 
 ```bash
 uv run --group docs mkdocs serve            # live preview
@@ -125,5 +124,5 @@ walkthrough is [Vendoring and codegen](../guide/codegen.md).
 
 ## Releasing
 
-The end-to-end release procedure, from version bump to PyPI upload and docs
-deploy, is on the [Releasing](releasing.md) page.
+The [Releasing](releasing.md) page covers the version bump, PyPI upload, and
+documentation deployment.

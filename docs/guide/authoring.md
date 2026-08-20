@@ -1,9 +1,8 @@
 # Authoring and publishing records
 
-This guide covers building Layers records with the `lairs.author` builders,
-writing a single record, publishing a whole graph in one dependency-ordered
-batch, inspecting the dry-run plan, and pulling an account's records back for a
-git-like round trip.
+The `lairs.author` builders construct Layers records for single writes or
+dependency-ordered batches. The broader round-trip workflow supports dry runs
+and pulls an account's records into a local `Repository`.
 
 Writes target only the authenticated user's own repository. The write client
 never accepts another repository's DID at a write call, and OAuth is not handled
@@ -11,8 +10,8 @@ here: an authenticated `httpx.Client` carrying the session's bearer token and
 write scopes is injected. See [Concepts](../concepts/index.md) for why the write path is
 isolated in the authoring component.
 
-For signatures, see the [reference](../reference/index.md). This guide shows the task
-path and the load-bearing options.
+For signatures, see the [reference](../reference/index.md). The sections below
+focus on the options that determine write behavior.
 
 ## Building anchors
 
@@ -75,10 +74,10 @@ explicit one minted with `new_uuid` to set it yourself. `build` raises
 
 ## Cross-references before publication
 
-A record frequently references another record (an expression, a media record, an
-ontology) before that target has an AT-URI, because the whole graph is published
-as one batch. Use `PendingId` for an unpublished target and `reference` to
-resolve a target to a reference string whatever its publication state:
+A record may reference an expression, media record, or ontology before that
+target has an AT-URI because the graph is published as one batch. Use
+`PendingId` for an unpublished target and `reference` to obtain a reference
+string from either a pending or published target:
 
 ```python
 from lairs.author import PendingId, reference
@@ -144,9 +143,9 @@ content upserts the same record.
 
 `lairs.author.publish.publish` maps a local Repository revision to the minimal
 `applyWrites` plan by diffing the revision against what is already on the PDS, by
-AT-URI and content identity. Reach it through the module path. The package does
-not re-export `publish` as a top-level name (a same-named symbol would shadow the
-submodule).
+AT-URI and content identity. Import it from the module path. The package does not
+re-export `publish` as a top-level name because a same-named symbol would shadow
+the submodule.
 
 ```python
 from pathlib import Path
@@ -194,8 +193,8 @@ pull("did:plc:author", endpoint="https://pds.example", into=repo)
 revision = repo.commit("pull layers records")
 ```
 
-This gives the git-like cycle: pull, branch, modify, diff, and `publish` back.
-The same flow is available from the command line. See the [CLI guide](cli.md).
+The resulting git-like cycle is pull, branch, modify, diff, and `publish`. The
+same workflow is available from the command line. See the [CLI guide](cli.md).
 
 ## See also
 

@@ -1,12 +1,12 @@
 # Experiment tracking
 
-This guide covers logging a Repository revision as a tracked artifact with
-provenance, for Weights & Biases and MLflow, and the reproducibility that follows
-from the revision id.
+Experiment tracking records a Repository revision and its provenance in Weights
+& Biases or MLflow. The revision id links a run to the corresponding corpus
+snapshot.
 
 `log_revision` records the revision itself, not a copy of the data. A logged run
 pins the exact commit (or tag) and the vendored lexicon manifest hash the records
-were generated against, so the dataset behind a run can always be rebuilt. The
+were generated against, so the dataset behind a run can be rebuilt. The
 backend libraries are imported lazily, so importing `lairs.integrations.tracking`
 never pulls in `wandb` or `mlflow`.
 
@@ -48,8 +48,8 @@ The `ProvenanceBundle` carries:
 - `working_dir`: the Repository working directory the revision was read from.
 
 The two manifest fields are read from the vendored manifest packaged with lairs,
-so a logged run always records the schema version its records were generated
-against, independent of the caller.
+so a logged run records the schema version its records were generated against,
+independent of the caller.
 
 ## Reproducibility from the revision id
 

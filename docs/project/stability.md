@@ -1,7 +1,7 @@
 # Stability
 
-lairs is pre-1.0. This page records what callers may depend on and what
-may change without a major version bump.
+lairs is pre-1.0. The commitments below distinguish the supported API
+from capabilities that may change without a major version bump.
 
 ## Public surface
 
@@ -33,10 +33,9 @@ The four ports they bind to are the stable contract: `Codec`,
 
 ## Deferred capabilities
 
-Some capabilities are declared but not yet implemented, and raise
-`NotImplementedError` with a description of what is missing: appview
-corpus loading (`lairs.data.load_corpus` with `source="appview"`) and any
-corpus load without an injected `pds_client`, which both await endpoint
-discovery, and blob upload (`lairs.atproto.blobs`). These are tracked for
-later milestones and are not part of the supported surface until
-implemented.
+Some declared capabilities raise `NotImplementedError` with a description
+of what is missing. These include appview corpus loading
+(`lairs.data.load_corpus` with `source="appview"`) and corpus loading
+without an injected `pds_client`, both of which await endpoint discovery,
+as well as blob upload (`lairs.atproto.blobs`). They are tracked for later
+milestones and remain outside the supported surface until implemented.

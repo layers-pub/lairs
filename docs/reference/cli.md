@@ -1,9 +1,9 @@
 # CLI
 
-The ``lairs`` console script. The entry point is
-``lairs.cli.main(argv=None)``, which parses arguments and dispatches to
-the subcommand handlers. For the per-subcommand reference see [Guides >
-The CLI](../guide/cli.md).
+The ``lairs`` console script exposes the commands listed below. Its entry
+point is ``lairs.cli.main(argv=None)``, which parses arguments and dispatches
+to the subcommand handlers. For the per-subcommand reference, see [Guides > The
+CLI](../guide/cli.md).
 
 ## Subcommands
 

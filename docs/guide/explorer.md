@@ -1,11 +1,9 @@
 # The explorer TUI
 
-`lairs tui` opens a terminal user interface (TUI) for discovering, browsing, and
-querying Layers data. It has four tabs: **Explore**, a browser over the discovery
-index of corpora; **Discover**, a source browser for finding and indexing
-datasets; **Browse**, a type-aware record explorer over a local repository that
-handles every kind of Layers data; and **Query**, a workbench that runs powerful
-queries over any materialized Layers data.
+`lairs tui` provides four views of Layers data: **Explore** searches a local
+corpus index, **Discover** finds and indexes datasets from configured sources,
+**Browse** presents type-specific views of records in a local repository, and
+**Query** runs queries over materialized data.
 
 ```bash
 lairs tui --index path/to/index --repo path/to/repo --data path/to/materialized
@@ -22,12 +20,12 @@ the Explore index.
 With no `--index`, the TUI uses a default index location (under the XDG state
 directory, overridable with `LAIRS_INDEX_DIR`) and, on launch, crawls the
 configured sources and indexes every newly discovered dataset that you have not
-muted, so the Explore tab fills in on its own. Pass `--no-auto-index` to skip
-the launch crawl and index datasets by hand from the Discover tab instead.
+muted, which populates the Explore tab. Pass `--no-auto-index` to skip the launch
+crawl and index datasets from the Discover tab instead.
 
 `--repo` also feeds the Query tab: the repository is flattened into Parquet views
 in a scratch directory, so `lairs tui --repo path/to/repo` gives you both a
-type-aware Browse and a full Query workbench from one source. Pass `--data`
+type-aware Browse and a Query workbench from one source. Pass `--data`
 explicitly to query a different directory.
 
 Press `1`, `2`, `3`, and `4` to switch to Explore, Browse, Query, and Discover,
@@ -44,8 +42,8 @@ the list live; the highlighted corpus's card, with its description, languages,
 license, annotation design, ontologies, and linked eprints, renders in the
 detail panel on the right.
 
-The filtering and ranking are exactly those of `lairs index search`: the facet
-boxes build a `SearchQuery`, and the same scorer orders the results.
+The facet boxes build the same `SearchQuery` used by `lairs index search`, and
+the same scorer orders the results.
 
 ## Discover
 
@@ -56,12 +54,12 @@ on the right with the datasets it finds, one per row, each tagged with its state
 
 - `indexed`: the dataset is in your local index and shows on the Explore tab;
 - `new`: discovered but not yet indexed;
-- `muted`: permanently excluded from auto-indexing.
+- `muted`: excluded from auto-indexing until unmuted.
 
 Press `enter` or `space` on a row to toggle it: a `new` (or `muted`) dataset
 becomes `indexed` and appears on the Explore tab; an `indexed` dataset becomes
-`muted` and is dropped from the index. Muting is permanent. A later crawl or the
-launch auto-index will not re-index a muted dataset until you unmute it.
+`muted` and is dropped from the index. Muting persists across crawls: neither a
+later crawl nor launch auto-indexing will re-index the dataset until you unmute it.
 
 ### Sources
 
@@ -100,9 +98,9 @@ launch auto-index can pick it up again. Press `esc` to close.
 
 ## Browse
 
-Where Explore is corpus-centric, **Browse is for every kind of Layers data**. It
-reads a local repository (the output of `lairs pull`) and presents its records
-the way each type wants to be read. The pane has three panels:
+Where Explore is corpus-centric, **Browse covers every kind of Layers data**. It
+reads a local repository (the output of `lairs pull`) and selects views by record
+type. The pane has three panels:
 
 - a **type tree** on the left, grouping the record types present in the
   repository by namespace with a count each (corpora, expressions, ontologies and
@@ -117,19 +115,19 @@ the way each type wants to be read. The pane has three panels:
 
 ### Switching views
 
-A record is shown through a single focused visualization, never a cluttered
-dump of everything at once. Press `v` to flip between the views that fit the
-highlighted record; the panel title names the current view and its position (for
-example `Tree`, `3/5`), and when more than one view is available it adds a
-`v: switch view` hint. A `Detail` view is always last in the cycle, so no field
-is ever hidden, and a record only offers the views it actually has content for.
+The detail panel shows one visualization at a time. Press `v` to flip between
+the views that fit the highlighted record; the panel title names the current
+view and its position (for instance `Tree`, `3/5`), and when more than one view is
+available it adds a `v: switch view` hint. A `Detail` view appears last in the
+cycle and exposes every field. A record offers only views for which it has
+content.
 
 The views are model-driven: they dispatch on the lexicon's own type system,
 selecting a view by annotation `kind`/`subkind`, judgment `taskType`, and graph
 `edgeType`, and resolving each annotation's `anchor` (text byte span, token
 reference, temporal span, ...) inside the chosen view. Any conforming repository
-renders correctly, not just the reference corpora. The visualizations follow
-established text-mode conventions:
+uses the same dispatch, which is not tied to the reference corpora. The
+visualizations follow established text-mode conventions:
 
 - an **expression** (sentence) flips between **Text** (the readable sentence,
   assembled from its leaves for a document), a CoNLL-U **Grid** (one row per
@@ -163,21 +161,21 @@ The Query tab runs over a directory of materialized Parquet views, and is **not
 limited to corpora**. The engine registers every `*.parquet` file in the
 directory as a view named after its file stem, so any materialized Layers
 records are queryable through the same SQL: `Corpus.materialize` writes the
-`expressions` and `annotations` views, and any other produce (ontologies,
-resource collections, experiments, relation graphs, media) is queryable once its
-records are materialized to Parquet alongside them.
+`expressions` and `annotations` views; ontologies, resource collections,
+experiments, relation graphs, and media become queryable once their records are
+materialized to Parquet alongside them.
 
 The schema browser on the left lists every view and its columns; click a table
 or column to insert its name into the editor. Choose a mode, write a query, and
-press **Run** (`ctrl+r`). There are three query modes, layered from most powerful
-to most ergonomic.
+press **Run** (`ctrl+r`). The three query modes differ in their syntax and
+scope.
 
 ### SQL
 
-Full DuckDB SQL over every materialized view. This is the general power layer:
-join across record types, aggregate, use window functions, regular expressions,
-and full-text search. The tables and columns available are whatever you
-materialized; the schema browser shows them.
+DuckDB SQL runs over every materialized view. It supports joins across record
+types, aggregation, window functions, regular expressions, and full-text
+search. The schema browser shows the tables and columns available in the
+materialized data.
 
 ```sql
 SELECT label, count(*) AS n

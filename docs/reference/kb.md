@@ -1,8 +1,8 @@
 # Knowledge bases
 
-The shared entity, candidate, and edge models and the Wikidata,
-reconciliation, and glazing connectors, which bind to the
-[``KnowledgeBase``](ports.md) port. For usage see [Guides > Knowledge
+This package defines the shared entity, candidate, and edge models and
+the Wikidata, reconciliation, and glazing connectors. The connectors bind to
+the [``KnowledgeBase``](ports.md) port. For usage, see [Guides > Knowledge
 bases](../guide/knowledge-bases.md).
 
 ## Value models

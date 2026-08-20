@@ -3,18 +3,18 @@
 `lairs` is a Python client for reading and writing data in the Layers
 format. It downloads `pub.layers.*` records from ATProto Personal Data
 Servers, validates them against models generated from the Layers
-lexicons, holds them in memory or in a content-addressed store, and
-exposes them through a dataset API with tooling for the modalities
-Layers carries: audio, video, and time-series signals. On the write
-side it constructs records, uploads media blobs, and publishes records
-in bulk to the authenticated user's own repository, with the local
-store doubling as schema-aware version control.
+lexicons, and holds them in memory or in a content-addressed store. A
+dataset API provides access to the records and to the audio, video, and
+time-series signals they describe. For writes, lairs constructs records,
+uploads media blobs, and publishes records in bulk to the authenticated
+user's own repository. The local store also provides schema-aware version
+control.
 
-Every structured value in lairs is a [didactic](https://github.com/panproto/didactic)
-model. The `pub.layers.*` record models
-are generated from the vendored lexicons and committed to the
-repository. Updating to a new Layers version involves a re-vendor, a
-regeneration, and a drift check.
+Every structured value in lairs is a
+[didactic](https://github.com/panproto/didactic) model. The `pub.layers.*`
+record models are generated from the vendored lexicons and committed to
+the repository. Updating to a new Layers version requires re-vendoring
+the lexicons, regenerating the models, and running the drift check.
 
 ```python
 import lairs
@@ -37,28 +37,26 @@ not implemented yet.
 
 ## Where to start
 
-The documentation follows the [Diátaxis](https://diataxis.fr/)
-structure:
+The documentation follows the [Diátaxis](https://diataxis.fr/) structure:
 
 - The [Tutorial](tutorial/index.md) works through reading, materializing,
   and authoring a corpus on a single running example. Read it first if
   you have not used lairs before.
-- The [Guides](guide/index.md) are task-oriented. Each one answers a
-  question of the form "how do I do X" against a specific subsystem.
-- The [Concepts](concepts/index.md) explain the design: why models are
-  generated rather than authored, how anchors unify the modalities, what
-  reproducibility guarantees the store provides.
-- The [API reference](reference/index.md) is the per-symbol detail:
-  signatures, parameters, raised exceptions, and return types, rendered
-  from the source docstrings.
+- The [Guides](guide/index.md) give task-oriented instructions for each
+  subsystem.
+- The [Concepts](concepts/index.md) explain the design, including generated
+  models, anchors across modalities, and the store's reproducibility
+  guarantees.
+- The [API reference](reference/index.md) documents signatures, parameters,
+  raised exceptions, and return types from the source docstrings.
 
 ## Scope
 
-lairs reads from any PDS and writes only to the authenticated user's
-own repository, through the standard `com.atproto.repo.*` client APIs.
-It is not an appview: it does not maintain a cross-user index or consume
-the firehose on behalf of others. Records are validated against the
-generated lexicon models in both directions.
+lairs reads from any PDS and writes only to the authenticated user's own
+repository through the standard `com.atproto.repo.*` client APIs. It is
+not an appview: it neither maintains a cross-user index nor consumes the
+firehose on behalf of others. Records are validated against the generated
+lexicon models in both directions.
 
 ## Project status
 

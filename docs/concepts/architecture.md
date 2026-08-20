@@ -11,10 +11,9 @@ and the same validation are used in both directions.
 
 ## The stack
 
-The system is a pipeline of layers, each consuming the output of the one
-above it. The flow is one-directional at the bottom (lexicons produce
-models, full stop) and two-directional at the store (records flow in
-from a PDS and out to a PDS).
+The system is a pipeline in which each layer consumes the output of the
+one above it. Lexicons produce models in one direction, while records
+flow both into and out of the store.
 
 ```text
 vendored lexicons (pub.layers.*)         single source of truth
@@ -42,14 +41,15 @@ Each layer is a package with a narrow responsibility:
   hash of the tree.
 - `lairs._codegen` turns those lexicons into committed Python modules.
   It parses each lexicon, maps it to a sequence of spec models, and
-  emits one module per namespace. This is the load-bearing subsystem.
-  The [generated-models](generated-models.md) page covers it in detail.
+  emits one module per namespace. This subsystem defines the translation
+  from the schema to the runtime models. The
+  [generated-models](generated-models.md) page covers it in detail.
 - `lairs.records` re-exports the generated models, namespace by
-  namespace, alongside hand-written behavior over them: `BlobRef`, and
-  view helpers such as `anchor_kind` and `explode_layer`. The rule is
-  strict. Anything that mirrors the schema is generated. Anything that
-  is behavior over the schema is ordinary code.
-- `lairs.atproto` is the read-oriented transport: identity resolution,
+  namespace, alongside hand-written behavior over them, including
+  `BlobRef` and view helpers such as `anchor_kind` and `explode_layer`.
+  Anything that mirrors the schema is generated; behavior over the schema
+  is ordinary code.
+- `lairs.atproto` is the transport layer: identity resolution,
   direct-PDS record fetch (`getRecord`, `listRecords`), blob fetch and
   upload, and the optional appview query client. It carries an injectable
   session for auth but does not itself write records to a PDS.
@@ -72,8 +72,7 @@ Each layer is a package with a narrow responsibility:
 
 ## The two data flows
 
-There are two ways data moves through the system, and they meet at the
-store.
+The read and write flows meet at the store.
 
 The **read flow** runs from a PDS into the store. `lairs.atproto`
 fetches records (`getRecord` for one, paginated `listRecords` for many)
@@ -99,9 +98,8 @@ diffable revision rather than an untracked one-off write.
 
 ## The store as the hinge
 
-The store is where the two flows meet, and it is deliberately the
-center of gravity. Reads terminate in the store and writes originate
-from it. This matters for three reasons.
+The store connects the two flows: reads terminate there and writes
+originate there. This division has three consequences.
 
 First, the store decouples access from consumption. The dataset API and
 the media layer read from the store, not from the network. A corpus can
@@ -116,12 +114,12 @@ byte-reproducible. The Arrow and Parquet views are *derived* from the
 Repository and are never the source of truth. They can always be
 rebuilt. The [reproducibility](reproducibility.md) page develops this.
 
-Third, the store is what makes authoring a `git`-like round trip against
-a PDS. `lairs.author`'s `pull` ingests existing PDS records into a
+Third, the store supports a `git`-like authoring round trip against a
+PDS. `lairs.author`'s `pull` ingests existing PDS records into a
 Repository. An author branches, modifies, and diffs locally, and
 `publish` computes the difference against what is already on the PDS and
 emits only the writes needed to close it. The local store is the
-authoring surface and the version control layer at once.
+authoring surface and the version-control layer.
 
 ## What lairs is not
 

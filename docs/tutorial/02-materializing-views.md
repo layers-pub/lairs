@@ -1,13 +1,12 @@
 # Materializing views
 
-The records you read in the last chapter are the source of truth. For
-ML-speed scanning and filtering you want them flattened into columns. lairs
-materializes the record graph into Arrow tables and Parquet files: an
+The records from the last chapter remain canonical. For columnar scanning and
+filtering, lairs flattens the record graph into Arrow tables and Parquet files: an
 `expressions` view with one row per expression, and an `annotations` view with
-one row per annotation. These views are derived and rebuildable. They are never
-authoritative, and you can always regenerate them from the records.
+one row per annotation. The views are derived and can be regenerated from the
+records.
 
-This chapter starts from the `corpus` built in the
+The examples use the `corpus` built in the
 [previous chapter](01-reading-a-corpus.md).
 
 ## Materializing to Parquet
@@ -49,7 +48,7 @@ annotations.column("label").to_pylist()              # ['DET', 'NOUN']
 annotations.column("tokenIndex").to_pylist()         # [0, 1]
 ```
 
-## The dataset to an Arrow table
+## Materializing a dataset in memory
 
 You do not have to go through Parquet. Any [`Dataset`](../guide/dataset-api.md)
 materializes straight to an in-memory Arrow table with `to_arrow()`:
@@ -93,11 +92,10 @@ For token-level annotation rows, the authoritative token position is the
 annotation's own `tokenIndex` column shown above, which the explode emits
 directly from the annotation's scalar field.
 
-## What you have
+## Next
 
-You materialized a corpus to Parquet, read a view back with pyarrow, turned a
-dataset directly into an Arrow table, and saw the fixed anchor columns every
-flattened view carries. The next chapter goes the other direction: building
-records and computing a plan to publish them.
+The corpus is now available as Parquet files and in-memory Arrow tables with
+fixed anchor columns. The next chapter builds records and computes a plan to
+publish them.
 
 [Next: authoring and publishing](03-authoring-and-publishing.md).

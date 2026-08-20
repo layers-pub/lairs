@@ -1,11 +1,10 @@
 # Working with the store
 
-The store gives a loaded corpus three things: an in-memory index that
-makes records addressable by AT-URI and resolves their cross-references,
-an on-disk schematic version control where a snapshot is a commit and a
-named version is a tag, and derived Arrow/Parquet views for columnar
-access. A content-addressed blob cache deduplicates media bytes across
-corpora. This guide covers each in turn.
+The store provides an in-memory AT-URI index, an on-disk schematic
+version-control repository, derived Arrow/Parquet views, and a
+content-addressed blob cache. Together these support cross-reference
+resolution, committed corpus snapshots, columnar access, and media-byte
+deduplication.
 
 For full signatures see the [store reference](../reference/store.md). For
 the reproducibility guarantees a tagged revision provides, see
@@ -32,12 +31,11 @@ print(pool.uris())               # every AT-URI, insertion order
 print(pool.models())             # every model instance, insertion order
 ```
 
-Cross-reference resolution degrades gracefully. `resolve` returns the
-target model for an AT-URI, or `None` when the target is not loaded, so a
-partially loaded corpus is usable and a missing target never raises. The
-pool walks the full JSON dump of each record to find references, so
-AT-URIs nested inside embedded objects, tuples, and union members are all
-discovered:
+`resolve` returns the target model for an AT-URI, or `None` when the target is
+not loaded. A partially loaded corpus thus remains usable without raising on a
+missing target. The pool walks the full JSON dump of each record to find
+references, so AT-URIs nested inside embedded objects, tuples, and union members
+are all discovered:
 
 ```python
 target = pool.resolve(some_at_uri)   # model, or None if not loaded
@@ -127,16 +125,15 @@ print(record_diff.added, record_diff.removed, record_diff.changed)
 ```
 
 `schema_diff(old, new)` is the separate structural diff over two Model
-*classes* (for example two generated record types across a Layers
+*classes* (for instance two generated record types across a Layers
 version bump) and wraps `dx.diff`.
 
 ## Materialize Arrow views
 
-Arrow/Parquet views are derived, rebuildable outputs, never the source of
-truth: they are computed from the record store and can always be
-regenerated. `materialize` reads the repository's records, groups them by
-collection NSID, and writes one Parquet file per NSID into an output
-directory, returning the written paths:
+Arrow/Parquet views are derived from the record store rather than treated as
+canonical data. `materialize` reads the repository's records, groups them by
+collection NSID, and writes one Parquet file per NSID into an output directory,
+returning the written paths:
 
 ```python
 from lairs.store.arrow import materialize

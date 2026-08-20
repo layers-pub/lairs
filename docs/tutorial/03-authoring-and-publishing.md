@@ -1,13 +1,11 @@
 # Authoring and publishing
 
-This chapter rebuilds the running example from scratch: a part-of-speech layer
-over an expression, anchored by byte span. You stage the records into a local
-store, commit them as a snapshot, and compute the plan to publish that snapshot
-to a PDS, without sending anything.
+The final chapter rebuilds the running example as a part-of-speech layer over an
+expression, anchored by byte span. You stage the records in a local store,
+commit a snapshot, and compute a publish plan without sending anything to a PDS.
 
-Two facts govern the write path. Writes target only the authenticated user's own
-repository, so lairs never writes to another account's records. A dry-run
-publish returns the full plan for inspection before any write leaves the machine.
+Writes target only the authenticated user's repository. A dry-run publish
+returns the full plan for inspection before any write leaves the machine.
 
 ## Anchors
 
@@ -105,9 +103,10 @@ repo.staged_uris()
 values, so it is reproducible: you can read them back, tag the revision as a
 named dataset version with `repo.tag(...)`, or diff two revisions.
 
-Note that the expression record is constructed through `model_validate_json`. The
-generated models coerce formatted scalars such as the `createdAt` datetime from
-their JSON string form on that path, which the keyword constructor does not do.
+The expression record is constructed through `model_validate_json`. On that
+path, the generated models coerce formatted scalars such as the `createdAt`
+datetime from their JSON string form. The keyword constructor does not perform
+this coercion.
 
 ## Planning the publish
 
@@ -162,14 +161,12 @@ against the live PDS first, so a re-publish of unchanged records is a no-op and 
 re-publish of changed records upserts on a deterministic record key rather than
 duplicating. That path is covered in the
 [authoring and publishing guide](../guide/authoring.md). For the tutorial, the
-dry run is the safe stopping point.
+dry run completes the workflow without writing to a PDS.
 
-## What you have
+## Next steps
 
-You built anchors and an annotation layer with the authoring builders, staged the
-records into a committed store snapshot, and computed a dependency-ordered
-publish plan with a dry run that sent nothing. That closes the loop: read a
-corpus, materialize its views, author new records, and plan their publication.
+You have read a corpus, materialized its views, authored new records, and planned
+their publication without sending a write.
 
 From here, the [Guides](../guide/index.md) cover each subsystem in depth, and the
 [API reference](../reference/index.md) gives the per-symbol detail.

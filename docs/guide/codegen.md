@@ -7,11 +7,11 @@ regenerating the models, and confirming the drift gate is clean. The
 generated modules carry descriptions, optionality, refined value types,
 integer ranges, `knownValues`, and union discriminators that a lossy
 schema round-trip would drop, so editing a generated file by hand is
-both forbidden and pointless: the next regeneration overwrites it.
+prohibited and overwritten by the next regeneration.
 
-This guide drives the two CLI commands that own the pipeline:
-`lairs vendor` and `lairs gen`. For the rationale (why generation
-rather than authoring) see [Generated models](../concepts/generated-models.md).
+The workflow uses two CLI commands: `lairs vendor` and `lairs gen`. For
+the rationale behind generation rather than authoring, see
+[Generated models](../concepts/generated-models.md).
 
 ## Vendor a lexicon tree
 
@@ -55,9 +55,9 @@ intermediate representation, and emitted as module text. Permission-set
 all method-only (query, procedure, subscription) contributes no records
 and emits no module, so the vendored tree can mirror the full Layers tree
 without forcing a module for every namespace. Cross-namespace embeds (for
-example `annotation` embedding `defs#anchor`) are resolved to imports so
+instance `annotation` embedding `defs#anchor`) are resolved to imports so
 every module type-checks in isolation. Emission is
-deterministic. Classes and fields are ordered stably, and the output is
+deterministic. Classes and fields have a stable order, and the output is
 run through `ruff format`, `ruff check --fix`, and `ruff format` again so
 the committed modules converge to a lint-clean canonical form. That
 determinism is what makes the drift gate meaningful.
@@ -80,14 +80,14 @@ when they match and non-zero when they are stale:
 lairs gen --check
 ```
 
-This is the CI gate that keeps the committed models honest. It catches
-two failure modes: a vendored tree that was changed without
+This CI gate checks the committed models against the vendored lexicons. It
+catches two failure modes: a vendored tree that was changed without
 regenerating, and a generated module that was hand-edited. When it
 reports staleness, run `lairs gen` and commit the result.
 
 ## What the manifest records
 
-`lairs/lexicons/MANIFEST.toml` is the provenance of the vendored tree.
+`lairs/lexicons/MANIFEST.toml` records the provenance of the vendored tree.
 Its runtime form is the `Manifest` model, and the TOML file is its
 serialized, reviewable form, written by `lairs vendor`. It records, under
 `[provenance]`, the upstream `layers_git_sha`, the `layers_version`, the

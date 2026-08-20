@@ -2,21 +2,20 @@
 
 No `pub.layers.*` model in lairs is written by hand. Every record type,
 every nested object, and the one formal union are generated from the
-vendored Layers lexicons and committed to the repository. This page
-explains why that constraint exists, the path a lexicon takes to become
-a `dx.Model`, why a deliberately lossy shortcut is avoided, and the gate
-that keeps the committed models honest.
+vendored Layers lexicons and committed to the repository. This constraint
+keeps the path from lexicon to `dx.Model` explicit and supports a
+byte-exact drift check of the committed models.
 
 ## Why generated, never authored
 
 The Layers lexicons are the single source of truth for the schema. There
 is no second description of it anywhere in lairs. A hand-written model
-would be a second description, and the moment one exists it can drift
-from the lexicon it claims to mirror, silently, in either direction.
-Generation removes the possibility: the committed models are a pure
-function of the vendored lexicons, and updating to a new Layers version
-is a mechanical sequence rather than a model-by-model edit. Re-vendor the
-lexicons, regenerate, run the drift check.
+would be a second description that could drift from the lexicon it
+claims to mirror. Generation avoids maintaining these competing schema
+descriptions: the committed models are a pure function of the vendored
+lexicons, and updating to a new Layers version is a mechanical sequence
+rather than a model-by-model edit. Re-vendor the lexicons, regenerate,
+and run the drift check.
 
 This is a hard rule, not a preference. Behavior over the generated
 models (builders, view helpers, anchor dispatch) is ordinary code and
@@ -51,9 +50,9 @@ description, the optionality (whether a property is in the lexicon's
 `required` set), the refined type, the integer range, the `knownValues`
 of an open string enum, and, for a union, its discriminator and members.
 
-An important detail of the actual implementation: the spec mapping reads
-its structure from the **lexicon document**, not from the parsed Schema.
-The document retains the `required` sets and the field descriptions that
+The spec mapping reads its structure from the **lexicon document**, not
+from the parsed Schema. The document retains the `required` sets and the
+field descriptions that
 the Schema graph does not surface, and it preserves definition order. The
 Schema is parsed and accepted (which asserts that the document parses
 cleanly under the `atproto` protocol) but the field-by-field walk is
@@ -61,11 +60,11 @@ driven by the JSON. The two sources are complementary: the parse is the
 correctness check, the document is the data.
 
 The emitter renders each spec to module text, the pipeline injects the
-cross-namespace imports a module needs (for example `annotation`
+cross-namespace imports a module needs (for instance `annotation`
 embedding `defs#anchor`), and a `ruff format` then `ruff check --fix`
 then `ruff format` pass converges the output to a stable, lint-clean
-form. That stability is what lets a fresh generation be compared
-byte-for-byte against the committed modules.
+form. A fresh generation can thus be compared byte-for-byte against
+the committed modules.
 
 ## Why not the lossy theory path
 
@@ -80,13 +79,13 @@ discards descriptions, defaults, optionality, refined types, and the
 embed-versus-ref distinction.
 
 Because lairs needs every one of those properties in the committed
-output, it does not route through either. It walks the rich lexicon
-into rich spec models and the emitter renders them directly. The
-substantive codegen work is exactly this mapping. The theory path is
-fine for a quick structural check but is not the generation path.
+output, it does not route through either. Instead, it walks the lexicon
+into spec models, which the emitter renders directly. The theory path
+remains useful for a quick structural check but is not the generation
+path.
 
-The one place this matters most is the union. The Layers lexicons
-contain a single formal `union`: the `selector` of `defs#externalTarget`,
+The distinction is most visible in the union. The Layers lexicons contain
+a single formal `union`: the `selector` of `defs#externalTarget`,
 over the three W3C selector types. It generates a `dx.TaggedUnion`
 (`ExternalTargetSelector`) with a `kind` discriminator and one member
 class per reference. Had codegen gone through the theory, the
@@ -104,19 +103,18 @@ lexicons model anchors this way and how lairs dispatches on them.
 
 ## The drift gate
 
-The generated modules are committed, not generated at install time. This
-buys import speed, IDE and type-checker support, and reviewable diffs
-when a Layers version is bumped. It also creates the obligation that the
-committed modules stay faithful to the vendored lexicons.
+The generated modules are committed rather than generated at install
+time. Committing them provides import speed, IDE and type-checker support,
+and reviewable diffs when a Layers version is bumped. The committed
+modules must thus stay faithful to the vendored lexicons.
 
-The drift gate discharges it. `lairs gen --check` regenerates the modules
-into a temporary directory off the vendored lexicons and compares them
-byte-for-byte against the committed ones. Any difference fails. Each
+`lairs gen --check` enforces this requirement. It regenerates the modules
+into a temporary directory from the vendored lexicons and compares them
+byte-for-byte against the committed modules. Any difference fails. Each
 generated module carries a header recording the lexicon-tree hash it was
-produced from, and the same hash lives in the manifest, so a stale
-generation is visible at a glance and caught in CI. The canonicalization
-pass exists precisely so this comparison is byte-exact rather than
-merely semantically equivalent.
+produced from, and the same hash lives in the manifest. The
+canonicalization pass makes this comparison byte-exact rather than merely
+semantically equivalent.
 
 For the operational steps (vendoring a lexicon tree, regenerating, and
 running the check) see the [codegen guide](../guide/codegen.md).

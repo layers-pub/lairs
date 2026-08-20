@@ -2,11 +2,10 @@
 
 lairs reads `pub.layers.*` records directly from a Personal Data Server
 over the XRPC HTTP interface. Public reads need no authentication, and an
-injected HTTP client can carry a session for private reads. This guide
-covers the read path end to end: resolve an identity, fetch records,
-decode the envelopes into generated models, and fetch blobs. The
-optional appview client is a discovery accelerator over the same
-envelope shape.
+injected HTTP client can carry a session for private reads. The read path
+resolves identities, fetches records, decodes envelopes into generated
+models, and retrieves blobs. The optional appview client accelerates
+discovery over the same envelope shape.
 
 The transport throughout is `httpx`, not the `atproto` SDK. For full
 signatures see the [ATProto reference](../reference/atproto.md). For why
@@ -93,8 +92,8 @@ true streaming.
 `PdsClient.describe_repo` wraps `com.atproto.repo.describeRepo` and
 returns a `RepoDescription` carrying the repo's `collections`, `handle`,
 `handle_is_correct` flag, and `did_doc`, without enumerating any records.
-It is the cheap way to learn which collections a repo holds before
-deciding what to fetch:
+Use it to inspect the collections a repo holds before deciding what to
+fetch:
 
 ```python
 with PdsClient(resolution.pds_endpoint) as client:
@@ -110,15 +109,15 @@ alongside them.
 
 ## Read a whole repository
 
-The bulk `com.atproto.sync.getRepo` CAR path is fully implemented.
-`PdsClient.get_repo_car` fetches the repository as a raw CAR archive and
-returns its bytes. `PdsClient.get_repo` fetches that archive and decodes
-it: it walks the repository's Merkle search tree with `libipld` through
-the module-level `decode_repo_car`, recovering one `RecordEnvelope` per
-record in MST key order. Record values are rendered in DAG-JSON shape, so
-they decode against the generated models exactly as the XRPC record
-endpoints do. This recovers every record across all collections in one
-round trip:
+The bulk `com.atproto.sync.getRepo` CAR path is available through
+`PdsClient.get_repo_car`, which fetches the repository as a raw CAR
+archive and returns its bytes. `PdsClient.get_repo` fetches and decodes
+that archive: it walks the repository's Merkle search tree with `libipld`
+through the module-level `decode_repo_car`, recovering one
+`RecordEnvelope` per record in MST key order. Record values use DAG-JSON
+shape and decode against the generated models in the same way as values
+from the XRPC record endpoints. This recovers every record across all
+collections in one round trip:
 
 ```python
 with PdsClient(resolution.pds_endpoint) as client:
@@ -191,9 +190,9 @@ deferred stub that raises `NotImplementedError`.
 
 ## Query the appview (optional)
 
-The appview is an accelerator for discovery and cross-ref resolution
-without walking PDSes. lairs works with it off, where direct PDS access
-is the contract. `AppviewClient` is a thin client over the Layers query
+The appview accelerates discovery and cross-reference resolution without
+walking PDSes. Direct PDS access remains the contract when no appview is
+available. `AppviewClient` is a thin client over the Layers query
 methods (`pub.layers.*.get*` and `list*`). A bare NSID such as
 `corpus.listCorpora` is prefixed with `pub.layers.`. Responses use the
 same `{uri, cid, value}` envelope, so they decode through the same
@@ -211,7 +210,7 @@ with AppviewClient("https://appview.example") as appview:
 `get` returns a single `RecordEnvelope`, and `list` lazily iterates
 envelopes across pages, reading the records array from `results_key`
 (default `records`) and following the cursor. `query` returns the raw
-decoded response body when neither shape fits.
+decoded response body when the response has neither envelope shape.
 
 ## Read a corpus
 
@@ -243,7 +242,7 @@ separate repository, linked by AT-URI. By default `load_corpus` follows
 those references across account boundaries, transitively, fetching the
 component records the corpus cites (its expressions, and the records those
 reference in turn) by exact AT-URI. Pass `follow_refs=False` to read only
-the corpus's own account, for example when the components are already
+the corpus's own account, for instance when the components are already
 materialized locally. The same control is exposed on the CLI as
 `lairs materialize --follow-refs` / `--no-follow-refs`.
 

@@ -1,7 +1,7 @@
 # Records
 
-The record surface: the `BlobRef` value type, the generated-safe view
-helpers, and the generated `pub.layers.*` record namespaces. The
+The record API includes the `BlobRef` value type, view helpers for the
+generated models, and the generated `pub.layers.*` record namespaces. The
 namespace modules under `lairs.records._generated` are emitted by `lairs
 gen` from the vendored lexicons and must not be hand-edited. See [code
 generation](codegen.md).
@@ -12,7 +12,8 @@ generation](codegen.md).
 
 ## View helpers
 
-Behavior over the generated models, never replacements for them.
+These helpers add behavior over the generated models; they do not replace
+those models.
 
 ::: lairs.records.views.anchor_kind
 
@@ -20,11 +21,11 @@ Behavior over the generated models, never replacements for them.
 
 ## Generated record namespaces
 
-One module per `pub.layers.*` namespace. Each class mirrors a lexicon
-record, object, or union definition. Unions render as `dx.TaggedUnion`
-families with their discriminator. Permission-set (OAuth scope) lexicons
-and method-only namespaces (query, procedure, subscription) contribute no
-record types and emit no module.
+The generator emits one module per `pub.layers.*` namespace. Each class
+mirrors a lexicon record, object, or union definition. Unions render as
+`dx.TaggedUnion` families with their discriminator. Permission-set (OAuth
+scope) lexicons and method-only namespaces (query, procedure, subscription)
+contribute no record types and emit no module.
 
 The shared provenance models that the produce records embed live in
 `defs`: `Licensing` (an optional SPDX `expression` plus an array of

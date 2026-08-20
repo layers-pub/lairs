@@ -1,9 +1,8 @@
 # Knowledge bases: grounding and enrichment
 
-This guide covers the `KnowledgeBase` port and the three bundled connectors:
-Wikidata, the generic W3C/OpenRefine reconciliation adapter, and the glazing
-lexical-semantic connector. It documents their key, license, and dependency
-requirements, and the explicit errors raised when one is absent.
+The `KnowledgeBase` port provides a common interface to the bundled Wikidata,
+W3C/OpenRefine reconciliation, and glazing lexical-semantic connectors. Each
+connector has its own endpoint, license, and dependency requirements.
 
 A knowledge base resolves, entity-links, reconciles, and enriches Layers records
 against external graphs and lexical resources. The `KnowledgeBase` protocol in
@@ -100,9 +99,9 @@ entity = kb.resolve("propbank:give.01")  # bare id defaults to PropBank
 edges = kb.neighbors("propbank:give.01", rels=["verbnet_classes"])
 ```
 
-`resolve` carries the resolved cross-references in the entity's `same_as`, so a
-single resolve doubles as a SemLink lookup. `neighbors` folds a sub-one
-confidence into the edge relation (for example `verbnet_classes@0.85`). The
+`resolve` carries the resolved cross-references in the entity's `same_as`, so it
+also serves as a SemLink lookup. `neighbors` folds a sub-one
+confidence into the edge relation (for instance `verbnet_classes@0.85`). The
 `lang` argument is ignored, since glazing's resources are English-only.
 
 glazing requires the `lairs[lexical]` extra (`glazing>=0.2`) at runtime and is
@@ -113,7 +112,7 @@ glazing-backed method call raises `GlazingNotInstalledError` (a subclass of
 VerbNet, and WordNet data. The data download is a glazing step, separate from
 installing the package.
 
-## Requirements at a glance
+## Requirements
 
 | Connector | Extra | Key / endpoint | Error when absent |
 |---|---|---|---|

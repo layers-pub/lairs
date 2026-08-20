@@ -1,8 +1,8 @@
 # Exporters
 
-The data-plane exporters, which bind to the [``Exporter``](ports.md)
-port and emit framework-native datasets from an Arrow view. Each backend
-library is an optional dependency imported lazily. For usage see [Guides
+These data-plane exporters bind to the [``Exporter``](ports.md) port and
+emit framework-native datasets from an Arrow view. Each backend library
+is an optional dependency imported lazily. For usage, see [Guides
 > Exporters](../guide/exporters.md).
 
 ## HuggingFace datasets

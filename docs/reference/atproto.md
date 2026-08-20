@@ -1,22 +1,23 @@
 # ATProto access
 
-The ATProto client: identity resolution, the PDS and appview record
-clients, content-addressed blob fetch, app-password session auth, and
-the repo firehose consumer. The identity, PDS, blob, and appview
+The ATProto client provides identity resolution, PDS and appview record
+clients, content-addressed blob fetch, app-password session auth, and a
+repo firehose consumer. The identity, PDS, blob, and appview
 transports are built on `httpx`; the firehose runs over a websocket from
 the `websockets` library. Public reads need no auth.
 
 ## Identity
 
-Resolves handles to DIDs, DIDs to documents, and DIDs to PDS endpoints,
-caching results in memory.
+The identity resolver maps handles to DIDs, DIDs to documents, and DIDs
+to PDS endpoints, caching the results in memory.
 
 ::: lairs.atproto.identity
 
 ## PDS records
 
-Wraps `com.atproto.repo.getRecord` and `listRecords`, with cursor
-pagination folded into a lazy iterator and per-record decode collection.
+The PDS module wraps `com.atproto.repo.getRecord` and `listRecords`, folds
+cursor pagination into a lazy iterator, and provides helpers that collect
+decode errors per record.
 `get_repo_car` and `get_repo` add the bulk path: they fetch a whole
 repository as a CAR archive over `com.atproto.sync.getRepo` and decode
 its Merkle search tree into record envelopes in one round trip
@@ -30,17 +31,17 @@ returns a `RepoDescription` table of contents over
 
 ## Blobs
 
-Content-addressed blob fetch over `com.atproto.sync.getBlob`. `get_blob`
-returns the blob in full, while `iter_blob` yields it in chunks without
-buffering the whole blob. Blob upload is owned by the authoring
-component and raises here.
+The blob client fetches content-addressed data over
+`com.atproto.sync.getBlob`. `get_blob` returns the blob in full, while
+`iter_blob` yields it in chunks without buffering the whole blob. Blob
+upload is owned by the authoring component and raises here.
 
 ::: lairs.atproto.blobs
 
 ## Appview
 
-An optional thin client over the Layers appview query API, used for
-discovery without walking PDSes. `query` issues a raw XRPC query and
+The optional appview client provides access to the Layers appview query API
+for discovery without walking PDSes. `query` issues a raw XRPC query and
 returns the decoded response body; `get` runs a `get*` method and
 returns a single record envelope; `list` runs a `list*` method and
 lazily iterates record envelopes across pages, with cursor pagination
@@ -51,20 +52,20 @@ the PDS.
 
 ## Auth
 
-App-password session auth for writes and private reads. `login`
-resolves an actor to its PDS and calls `com.atproto.server.createSession`;
+App-password sessions authorize writes and private reads. `login` resolves
+an actor to its PDS and calls `com.atproto.server.createSession`;
 `SessionAuth` is an `httpx.Auth` that attaches the access token and, on a
-401, refreshes via `com.atproto.server.refreshSession` (falling back to a
-fresh login when the refresh token has expired); `SessionStore` persists
+401, refreshes via `com.atproto.server.refreshSession`, falling back to a
+fresh login when the refresh token has expired. `SessionStore` persists
 the credential-bearing `Session` to the XDG state directory with `0600`
-permissions; and `authed_client` builds an HTTP client wired to a
-self-renewing session.
+permissions. `authed_client` builds an HTTP client with a self-renewing
+session.
 
 ::: lairs.atproto.auth
 
 ## Firehose
 
-The repo firehose consumer. `subscribe_repos` opens a websocket to
+`subscribe_repos` consumes the repo firehose over a websocket to
 `com.atproto.sync.subscribeRepos`, decodes each frame's embedded CAR
 archive through the shared CAR primitives, and yields one
 `FirehoseEvent` per commit op whose collection matches the Layers NSIDs.

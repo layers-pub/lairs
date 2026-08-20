@@ -1,12 +1,10 @@
 # The dataset API
 
-This guide covers loading a corpus, taking dataset views over it, walking the
-cross-reference graph with the join helpers, operating on a `Dataset`, and
-reading the `Features` derived from the model field specs.
-
-The dataset API sits over the generated record models. A `Dataset` is generic
-over the model type it yields, so indexing and iteration stay precisely typed.
-Rationale is in [Concepts](../concepts/index.md), and signatures are in the
+The dataset API loads corpora into typed views over the generated record models.
+Its join helpers walk the cross-reference graph, while `Dataset` operations
+support lazy transformation and columnar materialization. A `Dataset` retains
+the model type it yields across indexing and iteration. Rationale is in
+[Concepts](../concepts/index.md), and signatures are in the
 [reference](../reference/index.md).
 
 ## Loading a corpus
@@ -102,7 +100,8 @@ some = ds.filter(lambda e: e.text != "").take(100)     # in-memory, at most 100
 
 Materialize to columnar form with `to_arrow` (the flattened view, with any
 `anchor` field expanded into typed anchor columns) or `to_pandas`. pandas is an
-optional dependency, and `to_pandas` raises a clear `ImportError` when it is absent.
+optional dependency, and `to_pandas` raises `ImportError` with an install hint
+when it is absent.
 
 ```python
 table = ds.to_arrow()                    # pyarrow.Table

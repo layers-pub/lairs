@@ -4,8 +4,8 @@ A corpus is a graph of `pub.layers.*` records joined by AT-URI. Loading one
 enumerates the relevant collections of the AT-URI's authority, decodes each
 record against its generated model, and groups the results so that an
 expression's annotation layers, segmentations, and media resolve to model
-instances. This chapter loads the running example, inspects its expressions, and
-reads the fields off a generated `Expression` model.
+instances. The first step loads the running example, inspects its expressions,
+and reads fields from a generated `Expression` model.
 
 ## Loading
 
@@ -20,13 +20,11 @@ uri = "at://did:plc:zf3l5xq2example/pub.layers.corpus.corpus/cats-en"
 corpus = lairs.load_corpus(uri, source="pds", pds_client=client)
 ```
 
-Two things about that call.
-
-First, `load_corpus` is re-exported at the top of the `lairs` package, so
+`load_corpus` is re-exported at the top of the `lairs` package, so
 `lairs.load_corpus` and `from lairs.data import load_corpus` name the same
 function. Either import works.
 
-Second, the `pds` source reads directly from a PDS. It currently requires an
+The `pds` source reads directly from a PDS. It currently requires an
 injected `pds_client`: appview-based and endpoint-discovering loads are not yet
 implemented, and `load_corpus` raises `NotImplementedError` when asked to load
 without a client. Public reads themselves need no authentication. The client is
@@ -202,11 +200,10 @@ The same pattern resolves the other relations: `with_segmentation()` groups
 segmentations by their target expression, and `with_media()` resolves each
 expression's `mediaRef` to its media record when that record is loaded.
 
-## What you have
+## Next
 
-You loaded a corpus from a PDS read client, indexed and iterated its expressions
-dataset, read the fields off a generated `Expression` model and its `anchor`, and
-joined expressions to their annotation layers. The next chapter turns these
-records into columnar Arrow and Parquet views.
+The loaded corpus now provides typed expressions and their joined annotation
+layers. The next chapter turns these records into columnar Arrow and Parquet
+views.
 
 [Next: materializing views](02-materializing-views.md).

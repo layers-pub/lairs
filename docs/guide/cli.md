@@ -1,8 +1,8 @@
 # The `lairs` command-line interface
 
-This guide covers the `lairs` command and its subcommands. The CLI is built on
-the standard-library `argparse`, so it adds no command-line dependency. Each
-subcommand dispatches to a finished component call.
+The `lairs` command exposes the library's maintenance, corpus, discovery, and
+authentication workflows. It is built on the standard-library `argparse`, so it
+adds no command-line dependency.
 
 The subcommands fall into four families:
 

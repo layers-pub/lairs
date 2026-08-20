@@ -5,14 +5,14 @@
 the rules in [Stability](../project/stability.md) describe what a minor bump may
 change.
 
-Releases are automated. Pushing a `vX.Y.Z` tag triggers the
+Pushing a `vX.Y.Z` tag triggers the
 [release workflow](https://github.com/layers-pub/lairs/blob/main/.github/workflows/release.yml),
 which verifies the build, publishes to PyPI via Trusted Publishing, and cuts the
 GitHub release. The documentation is published
 separately by the
 [docs workflow](https://github.com/layers-pub/lairs/blob/main/.github/workflows/docs.yml)
 on every push to `main`. A maintainer prepares the release commit and pushes the
-tag; the workflows do the rest.
+tag.
 
 The version is declared once, in `pyproject.toml` (`project.version`). At runtime
 `lairs.__version__` reads it back through `importlib.metadata.version("lairs")`,
@@ -42,8 +42,8 @@ Work from a clean checkout of `main`.
    `lairs/lexicons/MANIFEST.toml` and the [Stability](../project/stability.md)
    page agree.
 
-4. **Verify locally (recommended).** The workflow re-runs all of this, but
-   catching a failure now is faster than catching it in CI:
+4. **Verify locally (recommended).** The workflow re-runs these checks, but local
+   verification catches failures before CI:
 
    ```bash
    uv run ruff format --check lairs tests

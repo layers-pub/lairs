@@ -1,16 +1,14 @@
 # Tutorial
 
-This tutorial works through the three operations that define lairs, in order,
-on a single running example: reading a published corpus from a Personal Data
-Server (PDS), materializing its records into columnar views, and authoring new
-records and computing a publish plan. Each chapter builds on the last. Follow
-them in sequence. Every step is meant to run as written.
+Follow a small English corpus through three lairs workflows: reading published
+records from a Personal Data Server (PDS), materializing them into columnar
+views, and authoring records for a publish plan. The chapters build on one
+another, so follow them in sequence. Each step is intended to run as written.
 
-The running example is a small English corpus: one expression record holding the
-sentence *The cat sat on the mat.*, with a part-of-speech annotation layer over
-it. The same expression and layer reappear in every chapter, so the reading
-chapter shows you the records that the materializing chapter turns into Arrow
-tables, and the authoring chapter rebuilds equivalents from scratch.
+The corpus contains one expression record for *The cat sat on the mat.* and a
+part-of-speech annotation layer over it. The same expression and layer appear in
+each chapter: first as records read from a PDS, then as rows in Arrow tables, and
+finally as newly authored equivalents.
 
 ## Prerequisites
 
@@ -32,12 +30,12 @@ The materializing chapter writes Parquet files and reads them back with
 The authoring chapter writes to a local store on disk and computes a publish plan
 offline. It sends nothing to any PDS.
 
-## What you will not find here
+## Further documentation
 
-The tutorial is a single guided path, not a catalog. It does not enumerate the
-load sources, the dataset transforms, or the exporter back ends. For those, read
-the task-oriented [Guides](../guide/index.md). For the design behind the
-generated models, the anchor system, and the store, read the
+The tutorial follows one guided path. The task-oriented
+[Guides](../guide/index.md) cover the available load sources, dataset
+transformations, and exporter back ends. For the design behind the generated
+models, anchor system, and store, read the
 [Concepts](../concepts/index.md). For per-symbol signatures, read the
 [API reference](../reference/index.md).
 

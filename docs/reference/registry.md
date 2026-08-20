@@ -1,8 +1,8 @@
 # Adapter registry
 
-Named resolution of codec, exporter, and knowledge-base adapters from
-in-process registration and Python entry points. The entry-point groups
-are ``lairs.codecs``, ``lairs.exporters``, and
+The registry resolves codec, exporter, and knowledge-base adapters by
+name from in-process registration and Python entry points. It uses the
+entry-point groups ``lairs.codecs``, ``lairs.exporters``, and
 ``lairs.knowledge_bases``.
 
 ::: lairs.integrations.registry

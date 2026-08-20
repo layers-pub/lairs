@@ -1,10 +1,10 @@
 # API reference
 
-Per-symbol documentation generated from the source docstrings. Use this
-when you know what you want to call and need the exact signature,
-parameter list, raised exceptions, and return type. For task-oriented
-walk-throughs see the [guides](../guide/index.md). For design rationale
-see the [concepts](../concepts/index.md).
+This reference is generated from the source docstrings. Use it when you
+know which symbol you need and want its exact signature, parameters,
+exceptions, or return type. For task-oriented walk-throughs, see the
+[guides](../guide/index.md). For design rationale, see the
+[concepts](../concepts/index.md).
 
 ## Records and data
 

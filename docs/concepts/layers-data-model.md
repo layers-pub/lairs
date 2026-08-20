@@ -3,9 +3,8 @@
 A Layers corpus is not a table. It is a graph of records, joined by
 AT-URI, with annotations anchored into text, tokens, time, or space, and
 media held by reference. The store and dataset layers are built around
-that graph-and-anchor structure rather than a flat row shape. This page
-describes the shape the generated models represent, faithful to the
-lexicons they are generated from.
+that graph-and-anchor structure rather than a flat row shape. The
+generated models preserve this structure from the lexicons.
 
 The model descriptions here summarize the lexicons. The authoritative
 form is the generated code under `lairs.records`, and the lexicons it is
@@ -20,8 +19,8 @@ recursively through a `parentRef` AT-URI, so structural hierarchy is
 expressed as a tree of expression records rather than as nested markup.
 A top-level expression (a document, a recording) has no `parentRef`.
 
-An expression carries several things. It holds its raw `text`, against
-which every byte-offset span is measured, an open `kind` slug
+An expression holds its raw `text`, against which every byte-offset span
+is measured, an open `kind` slug
 (`document`, `sentence`, `word`, and so on), and its `languages`, a list
 of BCP-47 tags that is empty when language is unspecified and holds more
 than one tag under code-switching. It also holds references outward to
@@ -58,12 +57,12 @@ A single abstract annotation object carries whatever fields its layer's
 kind requires. Token tags use `tokenIndex` and `label`, spans use an
 `anchor` and `label`, trees use `parentId` and `childIds`, dependency arcs
 use `headIndex` and `targetIndex`, and predicate-argument structures use
-`arguments`. This is deliberate. Rather than a separate record type per
-annotation shape, Layers has one shape whose populated fields depend on
-the layer kind, and lairs generates one model accordingly. A token-aligned
-layer names its tokenization through `tokenizationId`, and a layer can
-refine or rank another through `parentLayerRef`, `alternativesRef`, and
-`rank`.
+`arguments`. Rather than define a separate record type for each
+annotation shape, Layers uses one shape whose populated fields depend on
+the layer kind, and lairs generates one model accordingly. A
+token-aligned layer names its tokenization through `tokenizationId`, and
+a layer can refine or rank another through `parentLayerRef`,
+`alternativesRef`, and `rank`.
 
 ## Anchors: how annotations attach
 
@@ -71,8 +70,8 @@ An annotation attaches to its source data through an `anchor`. The anchor
 is polymorphic: a byte span in text, a single token reference, a
 non-contiguous token-reference sequence, a temporal span in audio or
 video, a spatio-temporal region with keyframes, a page region in a
-document, or an external web target. Crucially, the lexicon models the
-anchor as an *object with optional fields*, one per variant, where a
+document, or an external web target. The lexicon models the anchor as an
+*object with optional fields*, one per variant, where a
 consumer dispatches on which field is populated, not as a formal tagged
 union. The [anchors-and-modality](anchors-and-modality.md) page explains
 that choice and how lairs resolves an anchor to the slice it points at.
@@ -131,8 +130,8 @@ computed artifact.
   definition carry it, as does the eprint data link, while the ontology,
   the resource collection, the persona, and the media record do not.
 
-The corpus is one such produce. Beyond the provenance fields above it
-carries a `name`, a `description`, a `domain` slug, an `expressionCount`,
+The corpus is one such produce record. Beyond the provenance fields above
+it carries a `name`, a `description`, a `domain` slug, an `expressionCount`,
 an `annotationDesign` (annotator assignment, adjudication, quality
 criteria), and the languages it covers as `languages` (a list of BCP-47
 tags). There is no singular corpus language field; the language facet is
@@ -147,12 +146,12 @@ and the other AT-URI references induce.
 
 ## Judgments and experiments
 
-Annotation through `annotationLayer` records is one mode of capturing
-linguistic structure; elicited human judgment is the other, and it has
-its own record group. A `judgment.experimentDef` record defines an
-experiment or elicitation task, naming the corpus, persona, ontology, and
-templates it draws on, the measure and task types, and the response scale
-or labels. A `judgment.judgmentSet` collects the judgments a single
+Layers represents linguistic structure in `annotationLayer` records and
+elicited human judgments in a separate record group. A
+`judgment.experimentDef` record defines an experiment or elicitation task,
+naming the corpus, persona, ontology, and templates it draws on, the
+measure and task types, and the response scale or labels. A
+`judgment.judgmentSet` collects the judgments a single
 annotator gave for one experiment, pointing back at it through
 `experimentRef`. A `judgment.agreementReport` summarizes inter-annotator
 agreement across several judgment sets, naming the `judgmentSetRefs` it
@@ -200,20 +199,19 @@ target is a normal condition, not an error.
 nodes, alignment endpoints, annotation dependencies, and any other
 pointer that must reach across the three scopes Layers distinguishes:
 
-- `localId`: a UUID of an object *within the same record* (for example
+- `localId`: a UUID of an object *within the same record* (for instance
   one annotation referring to another in the same layer).
 - `recordRef` (with optional `objectId`): an AT-URI of *another
   record*, optionally narrowed to a UUID inside it.
 - `knowledgeRef`: an *external* knowledge-base entry.
 
 Like the anchor, `objectRef` is a lexicon object with optional fields,
-and a consumer dispatches on which are populated. This is what lets a
-single reference shape span an in-record pointer, a cross-record link,
-and an external grounding without three separate types.
+and a consumer dispatches on which are populated. A single reference
+shape can thus span an in-record pointer, a cross-record link, and an
+external grounding without three separate types.
 
-The shape that matters for the rest of the system is this: a corpus is a
-graph of records joined by AT-URI, annotations anchored into
-text/token/time/space, and media held by reference. The store
+The resulting corpus is a graph of records joined by AT-URI, with
+annotations anchored into text, tokens, time, or space and media held by
+reference. This structure determines the interfaces of the store
 ([reproducibility](reproducibility.md)) and the dataset and media layers
-([anchors and modality](anchors-and-modality.md)) are built on that
-shape.
+([anchors and modality](anchors-and-modality.md)).

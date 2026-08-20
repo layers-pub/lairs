@@ -1,12 +1,10 @@
 # Anchors and modality
 
-An annotation is meaningless without knowing what it points at. In
-Layers, the pointer is an *anchor*, and a single anchor model spans every
-modality the format carries: text, tokens, audio, video, and
-time-series signals. This page explains how the lexicons represent the
-anchor, why that representation is an object with optional fields rather
-than a tagged union, and how one resolver unifies slicing across all the
-targets an anchor can select.
+An annotation is interpretable only with respect to what it points at.
+Layers represents this pointer as an *anchor*. A single anchor model
+covers text, tokens, audio, video, and time-series signals. The lexicons
+define that model as an object with optional fields rather than a tagged
+union, and lairs resolves those fields against each kind of target.
 
 ## The polymorphic anchor
 
@@ -29,9 +27,9 @@ variant field is set.
 
 ## Why an object, not a tagged union
 
-This is a deliberate representational choice in the lexicons, and lairs
-mirrors it. The Layers format contains exactly one formal `union` (the
-`selector` of `externalTarget`, which does generate a `dx.TaggedUnion`).
+lairs preserves the representation defined by the lexicons. The Layers
+format contains exactly one formal `union` (the `selector` of
+`externalTarget`, which does generate a `dx.TaggedUnion`).
 The anchor is *not* a union. It is an object with optional fields. The
 [generated-models](generated-models.md) page covers why that distinction
 survives codegen. Here the question is why the format chose it.
@@ -48,20 +46,18 @@ a discriminated choice, and the cost is that dispatch is structural
 accepts that cost on both sides: the codegen emits a plain model, and the
 runtime dispatches by probing fields.
 
-That structural dispatch shows up in two helpers. `anchor_kind` returns
-the name of the set anchor field, checking the variant fields in lexicon
-priority order. `flatten_anchor` projects whichever variant is set into a
-fixed set of typed Arrow columns (`byte_start`, `token_index`,
-`t_start_ms`, `bbox_x`, and so on). Both work by looking at which fields
-are populated, because the anchor is an object, not a tag.
+Two helpers use this structural dispatch. `anchor_kind` returns the name
+of the set anchor field, checking the variant fields in lexicon priority
+order. `flatten_anchor` projects whichever variant is set into a fixed
+set of typed Arrow columns (`byte_start`, `token_index`, `t_start_ms`,
+`bbox_x`, and so on). Both inspect the populated fields because the
+anchor is an object, not a tag.
 
 ## One resolver, many targets
 
-The point of a unified anchor model is a unified resolver.
-`resolve_anchor(anchor, target)` is the single API the dataset layer
-calls for "give me the data this annotation points at." It dispatches
-over the anchor kind and returns the corresponding slice or view of
-whatever target it is given:
+The dataset layer resolves all anchor variants through
+`resolve_anchor(anchor, target)`. The function dispatches on the anchor
+kind and returns the corresponding slice or view of the target:
 
 - a `textSpan` against expression text returns the UTF-8 byte slice,
   decoded back to a string.
@@ -76,42 +72,41 @@ whatever target it is given:
   frame's `index` as the time argument, which stands in for the frame's
   temporal position rather than its millisecond timestamp.
 
-The dispatch is structural, like the helpers above. The resolver unwraps
-the anchor object to find its single set variant, and if it is handed a
-bare variant model instead of the wrapper it infers the kind from the
-fields the model carries (a `byte_start` means a text span, a
-`token_index` means a token reference, keyframes mean a spatio-temporal
-anchor, and so on). It also tolerates both the camelCase lexicon names
-and the snake_case generated names, so it works whether it is given a raw
-decoded value or a generated model instance.
+Like the helpers above, the resolver uses structural dispatch. It unwraps
+the anchor object to find its single set variant. Given a bare variant
+model instead of the wrapper, it infers the kind from the model's fields
+(a `byte_start` means a text span, a `token_index` means a token
+reference, keyframes mean a spatio-temporal anchor, and so on). It also
+accepts both the camelCase lexicon names and the snake_case generated
+names, so callers may pass either a raw decoded value or a generated
+model instance.
 
-The type signature reflects the breadth of targets. An anchor target is a
-string (text), a tuple of strings (tokens), an audio buffer, a signal
-buffer, a video frame, or a bounding box, and the resolver returns one of
-the same. A mismatch between the anchor kind and the target type raises
-rather than guessing, and an undeterminable anchor kind raises too. The
-modality decoders themselves (audio, video, neural) live behind optional
+An anchor target is a string (text), a tuple of strings (tokens), an
+audio buffer, a signal buffer, a video frame, or a bounding box, and the
+resolver returns one of the same. A mismatch between the anchor kind and
+the target type raises rather than guessing, as does an undeterminable
+anchor kind. The modality decoders themselves (audio, video, neural) live
+behind optional
 extras and supply the buffer types and the slicing math. The resolver is
 the layer that turns an anchor into the right call.
 
-The targets the resolver slices come from `resolve_media`, the public
-entry point that turns a media record (a `blob` or an `externalUri`) into
-a `MediaHandle` holding the raw bytes plus typed metadata. Both are
-exported from `lairs.media` alongside `resolve_anchor`. A handle's decoded
-bytes feed the modality decoders that produce the audio buffer, signal
-buffer, or video frame an anchor then resolves against.
+`resolve_media` supplies the targets that the anchor resolver slices. It
+turns a media record (a `blob` or an `externalUri`) into a `MediaHandle`
+holding the raw bytes plus typed metadata. Both are exported from
+`lairs.media` alongside `resolve_anchor`. A handle's decoded bytes feed
+the modality decoders, which produce the audio buffer, signal buffer, or
+video frame against which an anchor resolves.
 
-## Why this is the unifying idea
+## One interface across modalities
 
-Layers carries heavy, heterogeneous modalities, and a generic tabular
-dataset library cannot express the relationship between an annotation and
-the audio sample window or video frame crop it refers to. The anchor is
-what makes that relationship uniform: every annotation, regardless of
-modality, attaches through the same object, and one resolver turns it
-into the concrete slice. Because every modality reduces to (target) plus
-(anchor), the per-modality code stays small and the rest of the system
-(the dataset API, the Arrow flattening, and the integration adapters)
-binds to the single resolver rather than to five modality-specific paths.
+A generic tabular dataset library does not by itself encode the
+relationship between an annotation and the audio sample window or video
+frame crop it refers to. The anchor supplies a uniform relation: every
+annotation attaches through the same object, and one resolver turns that
+anchor into a concrete slice. For resolution, each modality thus reduces
+to (target) plus (anchor). The dataset API, Arrow flattening, and
+integration adapters can bind to this resolver instead of five
+modality-specific paths.
 
 For the mechanics of decoding and slicing each modality, see the
 [media guide](../guide/media.md). For how the resolver fits the

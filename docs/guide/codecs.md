@@ -1,15 +1,13 @@
 # Codecs: external annotation formats
 
-This guide covers decoding external annotation formats into Layers records and
-encoding records back, through the `Codec` port. It documents the bundled
-CoNLL-U and brat codecs, the `CorpusFragment` they pivot through, the round-trip
-`Iso` fixtures, and which extras each codec needs.
+The `Codec` port converts external annotation formats to Layers records and
+back. lairs includes CoNLL-U and brat codecs, both of which operate through a
+`CorpusFragment` and provide round-trip `Iso` fixtures.
 
-A codec is a bidirectional converter between an external format and lairs
-records, bound to the `Codec` protocol in `lairs.integrations.ports`. It
-translates an external format's spans and labels into lairs anchors and one of
-the annotation kinds, and lairs owns the rest. Resolve a codec by name through the
-registry:
+A codec is a bidirectional converter bound to the `Codec` protocol in
+`lairs.integrations.ports`. It maps an external format's spans, labels, and
+relations to lairs anchors and annotation kinds. Resolve a codec by name through
+the registry:
 
 ```python
 import lairs
@@ -109,7 +107,7 @@ round-trippable form (entity tags `T1..Tn`, relation tags `R1..Rn`, attribute
 tags `A1..An`, attributes grouped under their target) that the fixtures sample
 from.
 
-## Extras at a glance
+## Dependencies
 
 | Codec | Extra | Works without the extra |
 |---|---|---|
