@@ -24,9 +24,7 @@ import pyarrow.types as pat
 if TYPE_CHECKING:
     from types import ModuleType
 
-    # tensorflow is markered out of its extra on the 3.14 floor (no cp314
-    # wheel yet), so it is absent by design rather than misconfigured.
-    import tensorflow as tf  # ty: ignore[unresolved-import]
+    import tensorflow as tf
 
 type _FeedScalar = str | bytes | int | float | bool | None
 """A scalar Arrow value on its way into a tensorflow tensor.
@@ -236,7 +234,7 @@ def _require_tensorflow() -> ModuleType:
         When tensorflow is not installed.
     """
     try:
-        import tensorflow as tf  # noqa: PLC0415  # ty: ignore[unresolved-import]
+        import tensorflow as tf  # noqa: PLC0415
     except ImportError as error:  # pragma: no cover - exercised only without tf
         message = (
             "the tfdata exporter requires tensorflow; install the optional "

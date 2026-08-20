@@ -20,10 +20,7 @@ if TYPE_CHECKING:
 
     import datasets
     import pyarrow as pa
-
-    # tensorflow is markered out of its extra on the 3.14 floor (no cp314 wheel
-    # yet), so it is absent by design rather than misconfigured.
-    import tensorflow as tf  # ty: ignore[unresolved-import]
+    import tensorflow as tf
 
     from lairs.integrations.codecs import CorpusFragment, FragmentRecord
     from lairs.integrations.hf.datasets import ExportSpec
