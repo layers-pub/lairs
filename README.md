@@ -66,11 +66,15 @@ pip install "lairs[conllu]"       # the CoNLL-U codec
 
 ```python
 import lairs
+from lairs.atproto import PdsClient
 
-corpus = lairs.load_corpus(
-    "at://did:plc:abc/pub.layers.corpus.corpus/ud-en",
-    source="pds",
-)
+# read a corpus straight from the public Layers PDS
+with PdsClient("https://repo.layers.pub") as client:
+    corpus = lairs.load_corpus(
+        "at://did:plc:myu6umexofclib2tvwn23gsc/pub.layers.corpus.corpus/92cfd1034bcef513c2796962",
+        source="pds",
+        pds_client=client,
+    )
 print(len(corpus.expressions))
 print(corpus.expressions[0].text)
 ```
