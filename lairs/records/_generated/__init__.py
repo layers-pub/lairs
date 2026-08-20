@@ -8,8 +8,10 @@ module mirrors one lexicon namespace; nothing here is hand-authored.
 from __future__ import annotations
 
 from lairs.records._generated import (
+    acquisition,
     alignment,
     annotation,
+    catalog,
     changelog,
     corpus,
     defs,
@@ -25,8 +27,10 @@ from lairs.records._generated import (
 )
 
 __all__ = [
+    "acquisition",
     "alignment",
     "annotation",
+    "catalog",
     "changelog",
     "corpus",
     "defs",

@@ -16,12 +16,12 @@ direct PDS access is the contract rather than the appview, see
 ## Resolve an identity
 
 A read starts from a handle or a DID and ends at a PDS endpoint.
-`IdentityResolver` resolves a handle to a DID (via the
-`.well-known/atproto-did` HTTP endpoint), a DID to its DID document (via
-the PLC directory for `did:plc`, or the `did:web` document URL), and a
-DID to its PDS service endpoint. Results are cached in memory for the
-life of the resolver, so repeated lookups during a pull do not re-hit the
-network.
+`IdentityResolver` resolves a handle to a DID (racing the DNS `_atproto`
+TXT record against the `.well-known/atproto-did` HTTP endpoint), a DID to
+its DID document (via the PLC directory for `did:plc`, or the `did:web`
+document URL), and a DID to its PDS service endpoint. Results are cached
+in memory for the life of the resolver, so repeated lookups during a pull
+do not re-hit the network.
 
 ```python
 from lairs.atproto.identity import IdentityResolver
@@ -41,10 +41,13 @@ each with a module-level throwaway-resolver wrapper for one-shot use. A
 failure at any step raises `IdentityError`, which wraps DNS, HTTP, and
 document-shape failures behind one type.
 
-Handle resolution uses only the HTTP `.well-known` path. The DNS
-`_atproto` TXT method is not in core, since it would add a DNS resolver
-dependency. Inject a client that performs the TXT lookup if a handle is
-served only over DNS.
+Handle resolution runs both ATProto methods at once and takes the first
+to yield a `did:`: the DNS `_atproto` TXT record and the
+`.well-known/atproto-did` HTTP endpoint. A handle configures only one of
+them (a DNS-method handle has no HTTP host; an HTTP-method handle has no
+TXT record), so racing them keeps a lookup bounded by the faster method
+rather than the sum of both. The DNS lookup uses `dnspython`; bound its
+per-query lifetime with the resolver's `dns_timeout`.
 
 ## Fetch records
 

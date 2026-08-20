@@ -13,9 +13,12 @@ reads. All results are returned as ``dx.Model`` instances.
 
 from __future__ import annotations
 
+import concurrent.futures
 from typing import TYPE_CHECKING, Self
 
 import didactic.api as dx
+import dns.exception
+import dns.resolver
 import httpx
 
 if TYPE_CHECKING:
@@ -40,6 +43,9 @@ _ATPROTO_PDS_SERVICE_ID = "#atproto_pds"
 
 _ATPROTO_PDS_SERVICE_TYPE = "AtprotoPersonalDataServer"
 """The DID document service type for an ATProto PDS endpoint."""
+
+_DNS_TIMEOUT_SECONDS = 5.0
+"""The per-query lifetime for the ``_atproto`` DNS TXT handle lookup."""
 
 
 class IdentityResolution(dx.Model):
@@ -156,6 +162,8 @@ class IdentityResolver:
         for private reads later.
     plc_directory : str, optional
         The PLC directory base URL used for ``did:plc`` resolution.
+    dns_timeout : float, optional
+        The per-query lifetime, in seconds, for the ``_atproto`` DNS TXT lookup.
     """
 
     def __init__(
@@ -163,10 +171,12 @@ class IdentityResolver:
         client: httpx.Client | None = None,
         *,
         plc_directory: str = DEFAULT_PLC_DIRECTORY,
+        dns_timeout: float = _DNS_TIMEOUT_SECONDS,
     ) -> None:
         self._client = client if client is not None else httpx.Client()
         self._owns_client = client is None
         self._plc_directory = plc_directory.rstrip("/")
+        self._dns_timeout = dns_timeout
         self._handle_cache: dict[str, str] = {}
         self._document_cache: dict[str, dict[str, JsonValue]] = {}
         self._pds_cache: dict[str, str] = {}
@@ -208,12 +218,12 @@ class IdentityResolver:
     def resolve_handle(self, handle: str) -> str:
         """Resolve a handle to a DID.
 
-        Resolution uses the ``.well-known/atproto-did`` HTTP endpoint, which is
-        the dependency-free path and covers both DNS- and HTTP-method handles
-        once the handle host serves it. A DNS ``_atproto`` TXT lookup would
-        require a third-party resolver and is left to the optional firehose or
-        an injected client; lairs does not add a DNS dependency to core.
-        Results are cached.
+        Both ATProto handle-resolution methods are attempted concurrently and
+        the first to yield a ``did:`` wins: the DNS ``_atproto`` TXT record and
+        the ``.well-known/atproto-did`` HTTP endpoint. Racing them keeps a
+        lookup bounded by the faster method, since a handle configures only one
+        (a DNS-method handle has no HTTP host; an HTTP-method handle has no TXT
+        record). Results are cached.
 
         Parameters
         ----------
@@ -233,12 +243,74 @@ class IdentityResolver:
         cached = self._handle_cache.get(handle)
         if cached is not None:
             return cached
-        did = self._resolve_handle_http(handle)
+        did = self._resolve_handle_concurrent(handle)
         if did is None or not did.startswith("did:"):
             msg = f"could not resolve handle to a did: {handle}"
             raise IdentityError(msg)
         self._handle_cache[handle] = did
         return did
+
+    def _resolve_handle_concurrent(self, handle: str) -> str | None:
+        """Race the DNS and HTTP resolution methods; the first DID wins.
+
+        The two methods run at once; the first to return a ``did:`` is used and
+        the other is abandoned without blocking the return, so the lookup takes
+        as long as the faster method rather than the sum of both.
+
+        Parameters
+        ----------
+        handle : str
+            The ATProto handle.
+
+        Returns
+        -------
+        str or None
+            The resolved DID, or ``None`` if neither method yielded one.
+        """
+        methods = (self._resolve_handle_dns, self._resolve_handle_http)
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(methods))
+        try:
+            futures = [pool.submit(method, handle) for method in methods]
+            for future in concurrent.futures.as_completed(futures):
+                did = future.result()
+                if did is not None and did.startswith("did:"):
+                    return did
+            return None
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+
+    def _resolve_handle_dns(self, handle: str) -> str | None:
+        """Resolve a handle via its ``_atproto`` DNS TXT record.
+
+        The record's value is ``did=<did>``. Any DNS failure (no such record,
+        timeout, or SERVFAIL) yields ``None`` so the HTTP method can still win.
+
+        Parameters
+        ----------
+        handle : str
+            The ATProto handle.
+
+        Returns
+        -------
+        str or None
+            The DID, or ``None`` if the TXT record did not yield one.
+        """
+        try:
+            answer = dns.resolver.resolve(
+                f"_atproto.{handle}",
+                "TXT",
+                lifetime=self._dns_timeout,
+            )
+        except dns.exception.DNSException:
+            return None
+        prefix = "did="
+        for record in answer:
+            text = b"".join(record.strings).decode("utf-8", "replace").strip()
+            if text.startswith(prefix):
+                did = text.removeprefix(prefix).strip()
+                if did.startswith("did:"):
+                    return did
+        return None
 
     def _resolve_handle_http(self, handle: str) -> str | None:
         """Resolve a handle via the ``.well-known/atproto-did`` endpoint.

@@ -1,6 +1,6 @@
 [project]
 name = "lairs"
-version = "0.5.0"
+version = "0.6.0"
 description = "A read/write dataset client for the Layers format, built on didactic."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -32,9 +32,12 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "didactic>=0.9.0",
-    "panproto>=0.56.0",
+    "didactic>=0.9.1",
+    "panproto>=0.71.0",
     "httpx",
+    # identity handle resolution races the DNS `_atproto` TXT method against the
+    # HTTP well-known method, so DNS is part of the shipped resolver, not optional.
+    "dnspython>=2",
     "pyarrow",
     "libipld",
     "multiformats",
@@ -47,7 +50,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-hf = ["datasets", "huggingface_hub"]
+# the datasets floor is what keeps the resolver on the 5.x line. nothing else in
+# the graph constrains it, and left unbounded it settles on 2.14.4, which drags
+# huggingface-hub back to 0.36 and multiprocess to 0.70.15.
+hf = ["datasets>=5", "huggingface_hub"]
 torch = ["torch"]
 # tensorflow ships no cp314 wheel yet; the marker keeps resolution clean on
 # the development floor while leaving the extra declared.
@@ -124,7 +130,10 @@ dev = [
     "hypothesis",
     # numpy 2.3 is the first release with cp314 wheels; pin the floor so the
     # combined optional set resolves to a wheel instead of a failing source build.
-    "numpy>=2.3",
+    # the ceiling tracks numba, which the audio extra pulls in through librosa and
+    # which declares numpy<2.5. without it the resolver keeps numpy at its newest
+    # and walks numba back to 0.53.1, whose llvmlite supports no Python past 3.9.
+    "numpy>=2.3,<2.5",
     "lairs[hf]",
     "lairs[torch]",
     "lairs[tf]",
@@ -193,15 +202,46 @@ convention = "numpy"
 python-version = "3.14"
 
 [tool.ty.rules]
-# strictest posture: every ty rule is an error. didactic and panproto resolve
-# from PyPI, so unresolved imports of the core deps are genuine failures.
-# heavy optional-extra libraries are only referenced under TYPE_CHECKING, so
-# those import sites are not type-checked unless the extra is installed.
+# strictest posture: every ty rule that does not default to "error" is promoted
+# to one here, with one deliberate exception left at its default.
+# possibly-missing-attribute fires on optional-extra modules such as mlflow,
+# whose attributes cannot be proven present when the extra is absent.
+# didactic and panproto resolve from PyPI, so unresolved imports of the core
+# deps are genuine failures. heavy optional-extra libraries are only referenced
+# under TYPE_CHECKING, so those import sites are not type-checked unless the
+# extra is installed.
+ambiguous-protocol-member = "error"
+blanket-ignore-comment = "error"
+deprecated = "error"
 division-by-zero = "error"
+experimental-syntax = "error"
+ignore-comment-unknown-rule = "error"
+ineffective-final = "error"
+invalid-enum-member-annotation = "error"
+invalid-ignore-comment = "error"
+invalid-legacy-positional-parameter = "error"
+invalid-named-tuple-override = "error"
+mismatched-type-name = "error"
+missing-override-decorator = "error"
+missing-type-argument = "error"
+possibly-missing-implicit-call = "error"
+possibly-missing-import = "error"
+possibly-missing-submodule = "error"
 possibly-unresolved-reference = "error"
+pydantic-discarded-extra-argument = "error"
+redundant-cast = "error"
+redundant-final-classvar = "error"
+subclass-of-dataclass-with-order = "error"
+undefined-reveal = "error"
+unresolved-global = "error"
 unresolved-import = "error"
 unresolved-reference = "error"
+unsupported-base = "error"
+unsupported-dynamic-base = "error"
+unused-awaitable = "error"
 unused-ignore-comment = "error"
+unused-type-ignore-comment = "error"
+useless-overload-body = "error"
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"

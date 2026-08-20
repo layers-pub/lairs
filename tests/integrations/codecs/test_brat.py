@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import override
 
 import didactic.api as dx
 import pytest
@@ -291,10 +292,12 @@ def test_iso_law_property() -> None:
 class _RoundTripIso(dx.Iso[_Standoff, _Standoff]):
     """Compose the brat Iso with its inverse for ``verify_iso``."""
 
+    @override
     def forward(self, a: _Standoff, /) -> _Standoff:
         iso = BratIso()
         return iso.backward(iso.forward(a))
 
+    @override
     def backward(self, b: _Standoff, /) -> _Standoff:
         return b
 

@@ -87,7 +87,9 @@ Each `[[source]]` adds a source by `name` and `endpoint`; a `kind` of `pds` or
 that built-in's fields. The second entry above disables the built-in
 `repo.layers.pub` without redefining it. `lairs sources list` prints the resolved
 sources (add `--json` for machine-readable output), and `lairs index build
---source <name>` crawls a named source instead of a bare `--endpoint`.
+--source <name>` crawls a named source instead of a bare `--endpoint`. With
+neither flag, `lairs index build` crawls the first enabled source, so a default
+install indexes `repo.layers.pub` with no configuration.
 
 ### Settings
 

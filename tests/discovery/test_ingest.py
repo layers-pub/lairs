@@ -5,7 +5,7 @@ from __future__ import annotations
 import secrets
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 import httpx
 import pytest
@@ -19,7 +19,12 @@ from lairs.atproto.pds import (
 )
 from lairs.discovery import ingest
 from lairs.discovery.index import DiscoveryIndex
-from lairs.discovery.ingest import build_index, discover, update_index
+from lairs.discovery.ingest import (
+    build_index,
+    discover,
+    discover_collections,
+    update_index,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -77,6 +82,102 @@ def test_build_index_indexes_corpora(tmp_path: Path) -> None:
     assert report.repos_with_corpora == 1
     assert report.cards_built == 1
     assert index.get_card(_URI_A) is not None
+
+
+class _CountingRepo(_FakeRepo):
+    """A fake repo that counts how often it is described."""
+
+    def __init__(
+        self,
+        collections: tuple[str, ...],
+        envelopes: list[RecordEnvelope],
+    ) -> None:
+        super().__init__(collections, envelopes)
+        self.describe_calls = 0
+
+    @override
+    def describe_repo(self, repo: str) -> RepoDescription:
+        self.describe_calls += 1
+        return super().describe_repo(repo)
+
+
+@pytest.mark.integration
+def test_build_index_skips_repos_whose_rev_has_not_moved(tmp_path: Path) -> None:
+    # the first crawl records the revision; a second crawl at the same revision
+    # must not describe the repo again.
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    envelope = RecordEnvelope(uri=_URI_A, cid="bafy", value=_CORPUS_VALUE)
+    fake = _CountingRepo((_CORPUS_NSID,), [envelope])
+    revs = {"did:plc:x": "rev-1"}
+    first = build_index(
+        index,
+        ["did:plc:x"],
+        describe=fake,
+        list_corpora=fake,
+        endpoint="https://pds.example",
+        revs=revs,
+    )
+    assert first.repos_with_corpora == 1
+    assert first.repos_unchanged == 0
+    assert fake.describe_calls == 1
+
+    second = build_index(
+        index,
+        ["did:plc:x"],
+        describe=fake,
+        list_corpora=fake,
+        endpoint="https://pds.example",
+        revs=revs,
+    )
+    assert second.repos_unchanged == 1
+    assert second.repos_with_corpora == 0
+    assert fake.describe_calls == 1
+    # nothing was staged, so the pass makes no commit.
+    assert second.revision is None
+
+
+@pytest.mark.integration
+def test_build_index_redescribes_when_rev_moves(tmp_path: Path) -> None:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    envelope = RecordEnvelope(uri=_URI_A, cid="bafy", value=_CORPUS_VALUE)
+    fake = _CountingRepo((_CORPUS_NSID,), [envelope])
+    build_index(
+        index,
+        ["did:plc:x"],
+        describe=fake,
+        list_corpora=fake,
+        endpoint="https://pds.example",
+        revs={"did:plc:x": "rev-1"},
+    )
+    moved = build_index(
+        index,
+        ["did:plc:x"],
+        describe=fake,
+        list_corpora=fake,
+        endpoint="https://pds.example",
+        revs={"did:plc:x": "rev-2"},
+    )
+    assert moved.repos_unchanged == 0
+    assert fake.describe_calls == 2
+
+
+@pytest.mark.integration
+def test_build_index_without_revs_always_describes(tmp_path: Path) -> None:
+    # no revisions supplied (for example an explicit --seed-did list) means no
+    # skipping is possible, so every repo is described on every pass.
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    envelope = RecordEnvelope(uri=_URI_A, cid="bafy", value=_CORPUS_VALUE)
+    fake = _CountingRepo((_CORPUS_NSID,), [envelope])
+    for _ in range(2):
+        report = build_index(
+            index,
+            ["did:plc:x"],
+            describe=fake,
+            list_corpora=fake,
+            endpoint="https://pds.example",
+        )
+        assert report.repos_unchanged == 0
+    assert fake.describe_calls == 2
 
 
 @pytest.mark.integration
@@ -170,6 +271,47 @@ def test_discover_skips_describe_errors() -> None:
     assert cards == []
 
 
+_CATALOG_COLLECTION_NSID = "pub.layers.catalog.collection"
+_COLLECTION_URI = "at://did:plc:x/pub.layers.catalog.collection/c"
+_COLLECTION_VALUE: JsonValue = {
+    "$type": _CATALOG_COLLECTION_NSID,
+    "name": "UD English-EWT",
+    "kind": "treebank",
+    "createdAt": "2026-06-18T00:00:00Z",
+    "languages": ["en"],
+}
+
+
+def test_discover_collections_yields_cards() -> None:
+    envelope = RecordEnvelope(uri=_COLLECTION_URI, cid="bafy", value=_COLLECTION_VALUE)
+    fake = _FakeRepo((_CATALOG_COLLECTION_NSID,), [envelope])
+    cards = list(
+        discover_collections(
+            ["did:plc:x"],
+            describe=fake,
+            list_collections=fake,
+            endpoint="https://pds.example",
+        ),
+    )
+    assert len(cards) == 1
+    assert cards[0].summary.uri == _COLLECTION_URI
+    assert cards[0].summary.kind == "treebank"
+    assert cards[0].provenance.discovered_via == "crawl"
+
+
+def test_discover_collections_skips_repo_without_collections() -> None:
+    fake = _FakeRepo((_CORPUS_NSID,), [])
+    cards = list(
+        discover_collections(
+            ["did:plc:x"],
+            describe=fake,
+            list_collections=fake,
+            endpoint="https://pds.example",
+        ),
+    )
+    assert cards == []
+
+
 def test_discover_skips_undecodable_corpus() -> None:
     # a malformed corpus record (missing required fields) is skipped, not raised,
     # so one bad record on a repo does not abort the crawl of the rest.
@@ -254,6 +396,48 @@ def test_update_index_from_firehose(
     cursor = index.get_cursor("wss://relay.example")
     assert cursor is not None
     assert cursor.seq == 5
+
+
+@pytest.mark.integration
+def test_build_index_indexes_collections(tmp_path: Path) -> None:
+    # a repo holding catalogue collections but no corpora is still crawled, and its
+    # collections become collection cards keyed on their own index NSID.
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    envelope = RecordEnvelope(uri=_COLLECTION_URI, cid="bafy", value=_COLLECTION_VALUE)
+    fake = _FakeRepo((_CATALOG_COLLECTION_NSID,), [envelope])
+    report = build_index(
+        index,
+        ["did:plc:x"],
+        describe=fake,
+        list_corpora=fake,
+        endpoint="https://pds.example",
+    )
+    # no corpora, so the corpus counters stay at zero; a collection card is built.
+    assert report.repos_with_corpora == 0
+    assert report.cards_built == 1
+    assert index.get_collection_card(_COLLECTION_URI) is not None
+
+
+@pytest.mark.integration
+def test_update_index_routes_collection_events(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # a firehose commit on the catalogue-collection NSID is routed to the
+    # collection card path, not skipped as an undecodable corpus.
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    event = FirehoseEvent(
+        seq=7,
+        repo="did:plc:x",
+        collection=_CATALOG_COLLECTION_NSID,
+        rkey="c",
+        action="create",
+        record=_COLLECTION_VALUE,
+    )
+    monkeypatch.setattr(ingest, "subscribe_repos", _fixed_subscribe([event]))
+    report = update_index(index, "wss://relay.example", limit=1)
+    assert report.cards_built == 1
+    assert index.get_collection_card(_COLLECTION_URI) is not None
 
 
 def _fixed_subscribe(

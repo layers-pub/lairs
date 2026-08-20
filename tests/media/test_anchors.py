@@ -292,6 +292,49 @@ def test_real_spatio_temporal_honors_interpolation_uri() -> None:
     assert result.width == 10
 
 
+def test_interpolation_uri_outranks_the_slug() -> None:
+    # the lexicon calls interpolationUri the selector and the slug the fallback
+    # "when interpolationUri unavailable", so a readable URI wins a disagreement.
+    anchor = Anchor(
+        spatioTemporalAnchor=SpatioTemporalAnchor(
+            temporalSpan=TemporalSpan(start=0, ending=100),
+            keyframes=(
+                Keyframe(timeMs=0, bbox=BoundingBox(x=0, y=0, width=10, height=10)),
+                Keyframe(timeMs=100, bbox=BoundingBox(x=20, y=0, width=10, height=10)),
+            ),
+            interpolationUri="at://did:plc:x/pub.layers.interpolation/step",
+            interpolation="linear",
+        )
+    )
+    frame = VideoFrame(index=0, width=100, height=100, time_ms=50, pixels=b"")
+    result = resolve_anchor(anchor, frame)
+    assert isinstance(result, VideoFrame)
+    # step holds the left keyframe box; linear would have interpolated to x=10.
+    assert result.width == 10
+
+
+def test_opaque_interpolation_uri_falls_through_to_the_slug() -> None:
+    # a real interpolationUri points at a typeDef whose record key is an opaque
+    # content hash, so the trailing segment names no mode and the slug decides.
+    anchor = Anchor(
+        spatioTemporalAnchor=SpatioTemporalAnchor(
+            temporalSpan=TemporalSpan(start=0, ending=100),
+            keyframes=(
+                Keyframe(timeMs=0, bbox=BoundingBox(x=0, y=0, width=10, height=10)),
+                Keyframe(timeMs=100, bbox=BoundingBox(x=20, y=0, width=10, height=10)),
+            ),
+            interpolationUri=(
+                "at://did:plc:x/pub.layers.ontology.typeDef/4bb484463e473a5b32dbe2e7"
+            ),
+            interpolation="step",
+        )
+    )
+    frame = VideoFrame(index=0, width=100, height=100, time_ms=50, pixels=b"")
+    result = resolve_anchor(anchor, frame)
+    assert isinstance(result, VideoFrame)
+    assert result.width == 10
+
+
 def test_int_attr_excludes_bool() -> None:
     class _Flagged(dx.Model):
         token_index: bool = dx.field(description="a flag, not an index")

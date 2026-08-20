@@ -132,8 +132,8 @@ Resolve a handle or DID and list its datasets, one row per corpus.
 lairs datasets alice.example --language en --min-expressions 100
 ```
 
-The actor (handle or DID) is positional. `--source` chooses the discovery
-source (`auto`, `pds`, or `appview`, default `auto`), `--appview` sets the
+The actor (handle or DID) is positional. `--source-type` chooses the discovery
+mechanism (`auto`, `pds`, or `appview`, default `auto`), `--appview` sets the
 appview base URL, and `--endpoint` overrides the PDS base URL. The shared facet
 flags filter the rows: `--language`, `--domain`, `--license`, `--min-expressions`,
 `--max-expressions`, `--text` (a case-insensitive substring over name and
@@ -149,8 +149,8 @@ starring the dataset-shaped collections, without dumping records.
 lairs toc alice.example --counts
 ```
 
-The actor is positional. `--source` chooses the discovery source (`auto`,
-`pds`, or `appview`, default `auto`) and `--endpoint` overrides the PDS base
+The actor is positional. `--source-type` chooses the discovery mechanism
+(`auto`, `pds`, or `appview`, default `auto`) and `--endpoint` overrides the PDS base
 URL. `--counts` counts records per collection, which drains each collection.
 `--json` prints JSON instead of a table.
 
@@ -163,7 +163,7 @@ deduplicated by corpus.
 lairs search alice.example bob.example --domain news
 ```
 
-One or more actors are positional. `--source`, `--appview`, the shared facet
+One or more actors are positional. `--source-type`, `--appview`, the shared facet
 flags (`--language`, `--domain`, `--license`, `--min-expressions`,
 `--max-expressions`, `--text`, `--has-adjudication`), `--limit`, and `--json`
 behave as for `datasets`.
@@ -174,16 +174,28 @@ Maintain a local, searchable dataset index in a panproto Repository, built from
 a crawl and kept fresh from the firehose. The group has four subcommands.
 
 ```bash
+lairs index build --into ./index
 lairs index build --into ./index --endpoint https://relay.example
 lairs index update --index ./index --relay https://relay.example
 lairs index search --index ./index "treebank" --domain news
 lairs index diff --index ./index v1 v2
 ```
 
-`index build` crawls repositories into the index. `--into` and `--endpoint` are
-required; `--seed-did` (repeatable) restricts the crawl to specific DIDs (the
-default crawls every repo), `--max-repos` bounds the repositories visited, and
-`--message` sets the crawl commit message (default `backfill crawl`).
+`index build` crawls repositories into the index. Only `--into` is required.
+The crawl target is `--endpoint` (a relay or PDS URL) or `--source` (a
+configured source name); with neither, it defaults to the first enabled source,
+which is the built-in Layers PDS `repo.layers.pub` unless you re-point or
+disable it in `sources.toml`. `--seed-did` (repeatable) restricts the crawl to
+specific DIDs (the default crawls every repo), `--max-repos` bounds the
+repositories visited, and `--message` sets the crawl commit message (default
+`backfill crawl`).
+
+A re-run is incremental. When `index build` enumerates the service itself it
+reads each repository's current commit revision from the same `listRepos` pass
+and compares it against the revision recorded at the last crawl, describing only
+the repositories whose revision moved. The rest are counted as `repos unchanged
+since last crawl` in the summary. A crawl restricted with `--seed-did` carries no
+revisions, so those repositories are described every time.
 
 `index update` tails the firehose into an existing index. `--index` and
 `--relay` are required; `--limit` stops after that many events.

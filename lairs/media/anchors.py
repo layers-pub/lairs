@@ -315,19 +315,26 @@ def _resolve_interpolation(variant: dx.Model) -> Interpolation:
     """Resolve the interpolation mode, honoring ``interpolationUri`` as well.
 
     The lexicon treats ``interpolationUri`` as the primary selector and the
-    ``interpolation`` slug as the fallback. The known interpolation-node URIs end
-    in their slug, so the trailing path segment of ``interpolationUri`` is mapped
-    to a known mode when present; otherwise the explicit slug is used. Anything
-    unrecognized falls back to ``linear``.
+    ``interpolation`` slug as the explicit fallback "when interpolationUri
+    unavailable", so the URI is consulted first and the slug second.
+
+    A URI is resolved only when its trailing segment happens to name a known
+    mode. That is a best-effort read, not a resolution: an ``interpolationUri``
+    points at a typeDef record whose record key is an opaque content hash under
+    the current key scheme, so the trailing segment is normally a hash and
+    carries no mode. Resolving such a URI properly needs a ``getRecord``, which
+    this pure function deliberately does not do. When the URI cannot be read
+    offline the slug decides, and only when neither yields a known mode does
+    this fall back to ``linear``.
     """
-    slug = _str_attr(variant, "interpolation")
-    if slug is not None and slug in _INTERPOLATION_MODES:
-        return _INTERPOLATION_MODES[slug]
     uri = _str_attr(variant, "interpolation_uri", "interpolationUri")
     if uri:
         tail = uri.rstrip("/").rsplit("/", 1)[-1].rsplit("#", 1)[-1].lower()
         if tail in _INTERPOLATION_MODES:
             return _INTERPOLATION_MODES[tail]
+    slug = _str_attr(variant, "interpolation")
+    if slug is not None and slug in _INTERPOLATION_MODES:
+        return _INTERPOLATION_MODES[slug]
     return "linear"
 
 

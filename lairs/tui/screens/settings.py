@@ -9,7 +9,7 @@ dataset.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, override
 
 from rich.text import Text
 from textual.binding import Binding
@@ -48,6 +48,7 @@ class SettingsScreen(ModalScreen[None]):
         self._index = index
         self._muted_uris: list[str] = []
 
+    @override
     def compose(self) -> ComposeResult:
         """Compose the sources table and the muted-datasets table."""
         box = Vertical(

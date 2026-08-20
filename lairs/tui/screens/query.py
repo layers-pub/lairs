@@ -8,7 +8,7 @@ modes. Selecting a schema node inserts its name into the editor.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, override
 
 from rich.markup import escape
 from rich.text import Text
@@ -68,6 +68,7 @@ class QueryPane(Horizontal):
         self._error: str | None = None
         self._seeded: set[int] = set()
 
+    @override
     def compose(self):  # noqa: ANN201 - Textual compose generator
         """Compose the schema tree, mode bar, editor, actions, and results."""
         schema = VerticalScroll(Tree("schema", id="schema"), id="schema-wrap")
@@ -175,7 +176,7 @@ class QueryPane(Horizontal):
         if event.button.id == "run":
             self.action_run()
 
-    def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+    def on_tree_node_selected(self, event: Tree.NodeSelected[str | None]) -> None:
         """Insert a selected table or column name at the editor cursor.
 
         A separating space is added when the cursor does not already sit at a

@@ -30,7 +30,11 @@ from lairs.integrations.registry import (
 from lairs.records.blobref import BlobRef
 
 if TYPE_CHECKING:
-    from lairs.integrations.ports import Codec, Exporter, KnowledgeBase
+    from lairs.integrations.registry import (
+        CodecAdapter,
+        ExporterAdapter,
+        KnowledgeBaseAdapter,
+    )
 
 __all__ = [
     "BlobRef",
@@ -51,7 +55,7 @@ __all__ = [
     "table_of_contents",
 ]
 
-_FALLBACK_VERSION = "0.5.0"
+_FALLBACK_VERSION = "0.6.0"
 """The version reported when no installed distribution metadata is available.
 
 This literal is the single source of truth for source and editable trees where
@@ -79,7 +83,7 @@ def _resolve_version() -> str:
 __version__ = _resolve_version()
 
 
-def codec(name: str) -> type[Codec]:
+def codec(name: str) -> type[CodecAdapter]:
     """Look up a registered codec adapter class by name.
 
     Parameters
@@ -100,7 +104,7 @@ def codec(name: str) -> type[Codec]:
     return get_codec(name)
 
 
-def exporter(name: str) -> type[Exporter]:
+def exporter(name: str) -> type[ExporterAdapter]:
     """Look up a registered exporter adapter class by name.
 
     Parameters
@@ -121,7 +125,7 @@ def exporter(name: str) -> type[Exporter]:
     return get_exporter(name)
 
 
-def knowledge_base(name: str) -> type[KnowledgeBase]:
+def knowledge_base(name: str) -> type[KnowledgeBaseAdapter]:
     """Look up a registered knowledge-base adapter class by name.
 
     Parameters

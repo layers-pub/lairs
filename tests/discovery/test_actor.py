@@ -216,6 +216,30 @@ def test_table_of_contents_lists_collections() -> None:
     assert corpus_col.count is None
 
 
+def test_table_of_contents_stars_catalog_collection() -> None:
+    # the catalogue collection is the browsable, citable dataset-as-a-whole
+    # artifact, so it is flagged dataset-like in the table of contents.
+    catalog_nsid = "pub.layers.catalog.collection"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/xrpc/com.atproto.repo.describeRepo"
+        return httpx.Response(
+            200,
+            json={
+                "did": _DID,
+                "handle": "alice.test",
+                "handleIsCorrect": True,
+                "collections": [catalog_nsid, "app.bsky.feed.post"],
+            },
+        )
+
+    with _pds(handler) as client:
+        toc = table_of_contents(_DID, pds_client=client)
+    assert toc.dataset_collections == (catalog_nsid,)
+    catalog_col = next(item for item in toc.collections if item.nsid == catalog_nsid)
+    assert catalog_col.is_dataset_like is True
+
+
 def test_table_of_contents_counts_records() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/xrpc/com.atproto.repo.describeRepo":

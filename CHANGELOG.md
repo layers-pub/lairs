@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Data-access surfaces.** Typed read surfaces over a repository's `pub.layers.*`
+  records: `Corpus`, `Acquisition`, `Collection`, and signal-bearing `Media`, plus
+  the lazy `Dataset` view, all built on a shared PDS graph loader (`lairs.data`)
+  that enumerates an authority's collections and follows AT-URI references across
+  account boundaries into a model pool keyed by AT-URI.
+- **Single-actor collection discovery.** `lairs.discovery.collections` lists an
+  actor's `pub.layers.catalog.collection` records as `CollectionSummary` rows,
+  preferring a configured appview's server-side facets and falling back to a direct
+  PDS read.
+- **DNS handle resolution.** `IdentityResolver.resolve_handle` now races the
+  `_atproto` DNS TXT record against the `.well-known/atproto-did` HTTP method and
+  returns the first `did:`, so a handle served only over DNS resolves without an
+  injected client. Adds a `dnspython` dependency and a `dns_timeout` setting.
+
+### Changed
+
+- Raised the panproto floor to `0.71.0`.
+
+## [0.6.0] - 2026-07-20
+
+### Added
+
+- **`lairs index build` defaults to the Layers PDS.** `--endpoint` and
+  `--source` are no longer a required choice: with neither flag, the crawl
+  targets the first enabled configured source, which on a default install is
+  the built-in Layers PDS (`repo.layers.pub`). `lairs index build --into ./index`
+  is now enough to index the public corpus. A user who re-points or disables the
+  built-in in `sources.toml` moves the default with it; when every source is
+  disabled, the command reports that and exits non-zero rather than crawling
+  nothing. The new `lairs.discovery.default_source` exposes the same resolution
+  to library callers.
+
+- **Incremental re-crawls.** `com.atproto.sync.listRepos` reports each
+  repository's current commit revision, and the new
+  `PdsClient.list_repo_listings` surfaces it as a `RepoListing` alongside the
+  head CID (`list_repos` remains as a DID-only view). `build_index` accepts a
+  `revs` mapping and skips any repository whose revision matches the one
+  recorded at the last crawl, reported as `repos_unchanged` on the
+  `CrawlReport` and stored as `RepoCrawlState.last_seen_rev`. `lairs index
+  build` supplies the mapping whenever it enumerates the service itself, so a
+  re-crawl costs one `listRepos` pass plus a `describeRepo` for only the
+  repositories that actually moved. An explicit `--seed-did` list carries no
+  revisions, so those repositories are always described.
+
+### Changed
+
+- **Dependency floors raised** to `didactic>=0.9.1` and `panproto>=0.58.0`,
+  picking up upstream fixes.
+- **The adapter registries are concretely parameterized.** `Registry[Codec]`,
+  `Registry[Exporter]`, and `Registry[KnowledgeBase]` used the protocols bare,
+  so all eight type arguments were implicitly unknown. Every codec is
+  `Codec[CorpusFragment, FragmentRecord]` and every knowledge base is
+  `KnowledgeBase[Entity, Candidate, Edge]`, so those are now exact; an
+  exporter's view is always `pyarrow.Table` while its spec and result differ per
+  adapter, so those are closed unions over the shipped adapters. A third-party
+  exporter introducing a new spec or result type widens the aliases. With the
+  registries typed, ty's `missing-type-argument` rule is promoted to an error,
+  leaving `possibly-missing-attribute` as the one rule at its default.
+- **`--source` renamed to `--source-type` on `datasets`, `toc`, and `search`.**
+  On those commands the flag selects the discovery *mechanism* (`auto`, `pds`,
+  or `appview`), which collided with `--source` on `lairs index build`, where it
+  names a configured source. The two meanings now have two names. Because
+  argparse accepts unambiguous prefixes, existing `--source pds` invocations
+  keep working on the renamed commands, but scripts should move to
+  `--source-type`.
+
+### Fixed
+
+- **The `tfdata` exporter validates before it requires tensorflow.** `export`
+  imported tensorflow before reading the Arrow view, so a bad column raised
+  `ModuleNotFoundError` instead of the intended lairs error whenever the
+  optional extra was absent, contradicting the method's own documented
+  contract. The Arrow read and its null-column check now run first.
+
 ## [0.5.0] - 2026-06-29
 
 ### Added
@@ -158,7 +234,8 @@ didactic model.
   repositories, discovering datasets, building and searching the index, managing
   sessions, and launching the explorer.
 
-[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/layers-pub/lairs/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/layers-pub/lairs/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/layers-pub/lairs/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/layers-pub/lairs/compare/v0.3.0...v0.4.0

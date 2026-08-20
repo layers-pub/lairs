@@ -22,8 +22,10 @@ from lairs.records._generated import defs
 _LEXICON_ROOT = Path(__file__).resolve().parents[3] / "lairs" / "lexicons"
 
 _NAMESPACES = (
+    "acquisition",
     "alignment",
     "annotation",
+    "catalog",
     "changelog",
     "corpus",
     "defs",

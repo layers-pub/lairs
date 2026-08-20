@@ -393,13 +393,16 @@ class TfDataExporter:
             When tensorflow is not installed.
         """
         resolved = spec if spec is not None else TfDataSpec()
-        tf = _require_tensorflow()
+        # read and validate the Arrow side first: a bad column must raise a
+        # clear lairs error whether or not the tensorflow extra is installed.
         specs = feature_specs_of(view.schema, columns=resolved.columns)
+        columns = {feature.name: _column_values(view, feature) for feature in specs}
+        tf = _require_tensorflow()
         tensors: dict[str, tf.Tensor] = {}
         for feature in specs:
             dtype = _dtype_for(feature.dtype, tf)
             tensors[feature.name] = tf.ragged.constant(
-                _column_values(view, feature),
+                columns[feature.name],
                 dtype=dtype,
             )
         dataset = tf.data.Dataset.from_tensor_slices(tensors)

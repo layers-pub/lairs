@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 import didactic.api as dx
 
@@ -243,6 +243,7 @@ class BratIso(dx.Iso[_Standoff, CorpusFragment]):
     entities, binary relations, and attributes).
     """
 
+    @override
     def forward(self, a: _Standoff, /) -> CorpusFragment:
         """Build a corpus fragment from a parsed standoff.
 
@@ -261,6 +262,7 @@ class BratIso(dx.Iso[_Standoff, CorpusFragment]):
             source="brat",
         )
 
+    @override
     def backward(self, b: CorpusFragment, /) -> _Standoff:
         """Recover a parsed standoff from a corpus fragment.
 

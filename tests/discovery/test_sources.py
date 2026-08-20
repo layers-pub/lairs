@@ -16,6 +16,7 @@ def test_exports() -> None:
     assert set(sources.__all__) == {
         "Source",
         "UnknownSourceError",
+        "default_source",
         "default_sources_path",
         "load_sources",
         "resolve_source",
@@ -80,6 +81,44 @@ def test_relay_kind_is_honored(tmp_path: Path) -> None:
     relay = sources.resolve_source("relay", path=cfg)
     assert relay.kind == "relay"
     assert relay.endpoint == "wss://relay.example"
+
+
+def test_default_source_is_the_builtin(tmp_path: Path) -> None:
+    # with no config file, the default target is the built-in Layers PDS.
+    default = sources.default_source(tmp_path / "absent.toml")
+    assert default is not None
+    assert default.name == "layers-pub"
+    assert default.endpoint == "https://repo.layers.pub"
+
+
+def test_default_source_follows_a_repointed_builtin(tmp_path: Path) -> None:
+    cfg = _write(
+        tmp_path / "sources.toml",
+        '[[source]]\nname = "layers-pub"\nendpoint = "https://mirror.example"\n',
+    )
+    default = sources.default_source(cfg)
+    assert default is not None
+    assert default.endpoint == "https://mirror.example"
+
+
+def test_default_source_skips_a_disabled_builtin(tmp_path: Path) -> None:
+    # disabling the built-in hands the default to the next enabled source.
+    cfg = _write(
+        tmp_path / "sources.toml",
+        '[[source]]\nname = "layers-pub"\nenabled = false\n'
+        '[[source]]\nname = "my-pds"\nendpoint = "https://pds.example"\n',
+    )
+    default = sources.default_source(cfg)
+    assert default is not None
+    assert default.name == "my-pds"
+
+
+def test_default_source_is_none_when_all_disabled(tmp_path: Path) -> None:
+    cfg = _write(
+        tmp_path / "sources.toml",
+        '[[source]]\nname = "layers-pub"\nenabled = false\n',
+    )
+    assert sources.default_source(cfg) is None
 
 
 def test_resolve_unknown_raises(tmp_path: Path) -> None:

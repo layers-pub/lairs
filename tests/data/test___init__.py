@@ -9,6 +9,8 @@ import lairs.data as mod
 
 def test_public_surface() -> None:
     assert set(mod.__all__) == {
+        "Acquisition",
+        "Collection",
         "Corpus",
         "Dataset",
         "ExpressionWithAnnotations",
@@ -16,9 +18,15 @@ def test_public_surface() -> None:
         "ExpressionWithSegmentation",
         "FeatureSpec",
         "Features",
+        "SessionWithMedia",
+        "SessionWithParticipants",
         "dtype_of",
         "features_of",
+        "load_acquisition",
+        "load_collection",
         "load_corpus",
+        "media_by_kind",
+        "signal_media",
     }
 
 

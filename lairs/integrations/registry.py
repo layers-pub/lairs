@@ -16,7 +16,32 @@ from importlib.metadata import entry_points
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
+    import datasets
+    import pyarrow as pa
+    import tensorflow as tf
+
+    from lairs.integrations.codecs import CorpusFragment, FragmentRecord
+    from lairs.integrations.hf.datasets import ExportSpec
+    from lairs.integrations.kb import Candidate, Edge, Entity
     from lairs.integrations.ports import Codec, Exporter, KnowledgeBase
+    from lairs.integrations.tfdata import TfDataSpec
+    from lairs.integrations.torch import TorchExportResult, TorchExportSpec
+    from lairs.integrations.webdataset import WebDatasetSpec
+
+    # the concrete instantiations the three families are registered under.
+    # every codec and knowledge base shares one set of type arguments, so those
+    # two are exact. an exporter's spec and result differ per adapter, so each
+    # is a closed union over the adapters lairs ships: a third-party exporter
+    # that introduces a new spec or result type widens these aliases.
+    type CodecAdapter = Codec[CorpusFragment, FragmentRecord]
+    type KnowledgeBaseAdapter = KnowledgeBase[Entity, Candidate, Edge]
+    type ExporterSpec = ExportSpec | TorchExportSpec | TfDataSpec | WebDatasetSpec
+    type ExporterResult = (
+        datasets.Dataset | TorchExportResult | tf.data.Dataset | list[Path]
+    )
+    type ExporterAdapter = Exporter[pa.Table, ExporterSpec, ExporterResult]
 
 __all__ = [
     "Registry",
@@ -130,18 +155,18 @@ class Registry[A]:
 
 
 # the module-level default registries, one per adapter family.
-_CODECS: Registry[Codec] = Registry("codec", "lairs.codecs")
-_EXPORTERS: Registry[Exporter] = Registry(
+_CODECS: Registry[CodecAdapter] = Registry("codec", "lairs.codecs")
+_EXPORTERS: Registry[ExporterAdapter] = Registry(
     "exporter",
     "lairs.exporters",
 )
-_KNOWLEDGE_BASES: Registry[KnowledgeBase] = Registry(
+_KNOWLEDGE_BASES: Registry[KnowledgeBaseAdapter] = Registry(
     "knowledge base",
     "lairs.knowledge_bases",
 )
 
 
-def register_codec(name: str, adapter: type[Codec]) -> None:
+def register_codec(name: str, adapter: type[CodecAdapter]) -> None:
     """Register a codec class in the default registry.
 
     Parameters
@@ -154,7 +179,7 @@ def register_codec(name: str, adapter: type[Codec]) -> None:
     _CODECS.register(name, adapter)
 
 
-def register_exporter(name: str, adapter: type[Exporter]) -> None:
+def register_exporter(name: str, adapter: type[ExporterAdapter]) -> None:
     """Register an exporter class in the default registry.
 
     Parameters
@@ -169,7 +194,7 @@ def register_exporter(name: str, adapter: type[Exporter]) -> None:
 
 def register_knowledge_base(
     name: str,
-    adapter: type[KnowledgeBase],
+    adapter: type[KnowledgeBaseAdapter],
 ) -> None:
     """Register a knowledge-base class in the default registry.
 
@@ -183,7 +208,7 @@ def register_knowledge_base(
     _KNOWLEDGE_BASES.register(name, adapter)
 
 
-def get_codec(name: str) -> type[Codec]:
+def get_codec(name: str) -> type[CodecAdapter]:
     """Retrieve a codec class from the default registry.
 
     Parameters
@@ -204,7 +229,7 @@ def get_codec(name: str) -> type[Codec]:
     return _CODECS.get(name)
 
 
-def get_exporter(name: str) -> type[Exporter]:
+def get_exporter(name: str) -> type[ExporterAdapter]:
     """Retrieve an exporter class from the default registry.
 
     Parameters
@@ -225,7 +250,7 @@ def get_exporter(name: str) -> type[Exporter]:
     return _EXPORTERS.get(name)
 
 
-def get_knowledge_base(name: str) -> type[KnowledgeBase]:
+def get_knowledge_base(name: str) -> type[KnowledgeBaseAdapter]:
     """Retrieve a knowledge-base class from the default registry.
 
     Parameters
@@ -265,7 +290,10 @@ def available(family: str) -> list[str]:
         If ``family`` is not a known family.
     """
     registries: dict[
-        str, Registry[Codec] | Registry[Exporter] | Registry[KnowledgeBase]
+        str,
+        Registry[CodecAdapter]
+        | Registry[ExporterAdapter]
+        | Registry[KnowledgeBaseAdapter],
     ] = {
         "codecs": _CODECS,
         "exporters": _EXPORTERS,

@@ -9,7 +9,7 @@ a detail panel. The facet inputs map onto a
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from rich.text import Text
 from textual.containers import Horizontal, VerticalScroll
@@ -61,6 +61,7 @@ class ExplorePane(Horizontal):
         self._hits: list[DatasetCard] = []
         self._error: str | None = None
 
+    @override
     def compose(self):  # noqa: ANN201 - Textual compose generator
         """Compose the filter bar, results table, and detail panel."""
         with VerticalScroll(id="explore-left"):

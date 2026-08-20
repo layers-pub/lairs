@@ -15,7 +15,7 @@ so there is never a concurrent writer.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, override
 
 import httpx
 from rich.text import Text
@@ -61,6 +61,7 @@ class DiscoverPane(Horizontal):
         self._cards: list[DatasetCard] = []
         self._crawled = False
 
+    @override
     def compose(self):  # noqa: ANN201 - Textual compose generator
         """Compose the sources list, the discovered-datasets table, and status."""
         with Vertical(id="discover-left"):

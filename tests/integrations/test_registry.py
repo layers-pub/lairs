@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from lairs.integrations import registry
+from lairs.integrations.codecs import CorpusFragment, FragmentRecord
 from lairs.integrations.registry import Registry, UnknownAdapterError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 class Widget:
@@ -116,8 +122,28 @@ def test_available_families() -> None:
 
 
 def test_register_default_codec() -> None:
+    # the adapter must satisfy Codec[CorpusFragment, FragmentRecord], the one
+    # instantiation the codec registry holds.
     class MyCodec:
         name = "my"
+
+        def decode(
+            self,
+            src: str | bytes,
+            *,
+            into: CorpusFragment | None = None,
+        ) -> CorpusFragment:
+            text = src if isinstance(src, str) else src.decode("utf-8")
+            record = FragmentRecord(
+                local_id="r0",
+                nsid="pub.layers.expression.expression",
+                value_json=text,
+            )
+            existing = into.records if into is not None else ()
+            return CorpusFragment(records=(*existing, record), source="my")
+
+        def encode(self, records: Iterable[FragmentRecord]) -> bytes | str:
+            return "".join(record.value_json for record in records)
 
     registry.register_codec("my-test-codec", MyCodec)
     assert registry.get_codec("my-test-codec") is MyCodec

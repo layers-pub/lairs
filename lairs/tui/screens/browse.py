@@ -9,7 +9,7 @@ record with its type-aware view.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, override
 
 from rich.text import Text
 from textual.binding import Binding
@@ -54,6 +54,7 @@ class BrowsePane(Horizontal):
         self._views: list[tuple[str, Callable[[], str]]] = []
         self._mode = 0
 
+    @override
     def compose(self):  # noqa: ANN201 - Textual compose generator
         """Compose the type tree, records table, and detail panel."""
         types = VerticalScroll(Tree("types", id="types"), id="types-wrap")
@@ -105,7 +106,7 @@ class BrowsePane(Horizontal):
             for nsid, count in types:
                 ns_node.add_leaf(f"{label_of(nsid)} ({count})", data=nsid)
 
-    def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+    def on_tree_node_selected(self, event: Tree.NodeSelected[str | None]) -> None:
         """Load the records of the selected type into the records table."""
         data = event.node.data
         if isinstance(data, str):

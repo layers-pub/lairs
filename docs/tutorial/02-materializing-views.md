@@ -78,7 +78,8 @@ from lairs.store.arrow import ANCHOR_COLUMNS
 
 ANCHOR_COLUMNS
 # ('anchor_kind', 'byte_start', 'byte_end', 'token_id', 'token_index',
-#  't_start_ms', 't_end_ms', 'bbox_x', 'bbox_y', 'bbox_w', 'bbox_h')
+#  'token_indexes', 't_start_ms', 't_end_ms', 'bbox_x', 'bbox_y', 'bbox_w',
+#  'bbox_h', 'page', 'ext_source')
 ```
 
 Every flattened table carries all of these columns. `anchor_kind` names the

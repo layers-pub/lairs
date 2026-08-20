@@ -7,10 +7,14 @@ from datetime import UTC, datetime
 from lairs.discovery.cards import (
     CardFreshness,
     CardProvenance,
+    CollectionCard,
     DatasetCard,
+    card_from_collection,
     card_from_corpus,
     card_uri,
+    collection_card_uri,
 )
+from lairs.records._generated.catalog import Collection
 from lairs.records._generated.corpus import (
     AdjudicationSpec,
     AnnotationDesign,
@@ -98,4 +102,58 @@ def test_dataset_card_round_trips() -> None:
         freshness=_freshness(),
     )
     restored = DatasetCard.model_validate_json(card.model_dump_json())
+    assert restored == card
+
+
+_COLLECTION_URI = "at://did:plc:x/pub.layers.catalog.collection/c"
+
+
+def test_collection_card_uri_is_deterministic_and_namespaced() -> None:
+    first = collection_card_uri(_COLLECTION_URI)
+    assert first == collection_card_uri(_COLLECTION_URI)
+    assert first.startswith("at://did:lairs:index/lairs.index.collectionCard/")
+    # a collection card and a dataset card of the same URI live under different NSIDs.
+    assert first != card_uri(_COLLECTION_URI)
+
+
+def test_card_from_collection_projects_and_flags_container() -> None:
+    collection = Collection(
+        name="Universal Dependencies",
+        kind="project",
+        createdAt=_NOW,
+    )
+    card = card_from_collection(
+        _COLLECTION_URI,
+        collection,
+        provenance=_provenance(),
+        freshness=_freshness(),
+    )
+    assert card.summary.name == "Universal Dependencies"
+    assert card.summary.kind == "project"
+    assert card.summary.did == "did:plc:x"
+    assert card.summary.handle == "alice.test"
+    # a project habitually contains other collections.
+    assert card.is_container is True
+
+
+def test_card_from_collection_leaf_is_not_container() -> None:
+    collection = Collection(name="UD English-EWT", kind="treebank", createdAt=_NOW)
+    card = card_from_collection(
+        _COLLECTION_URI,
+        collection,
+        provenance=_provenance(),
+        freshness=_freshness(),
+    )
+    assert card.is_container is False
+
+
+def test_collection_card_round_trips() -> None:
+    collection = Collection(name="demo", kind="corpus", createdAt=_NOW)
+    card = card_from_collection(
+        _COLLECTION_URI,
+        collection,
+        provenance=_provenance(),
+        freshness=_freshness(),
+    )
+    restored = CollectionCard.model_validate_json(card.model_dump_json())
     assert restored == card

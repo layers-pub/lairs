@@ -16,29 +16,36 @@ from typing import TYPE_CHECKING
 
 import didactic.api as dx
 
+from lairs.discovery.collection_summary import summary_from_collection
 from lairs.discovery.models import (  # noqa: TC001  (runtime: didactic field sort)
+    CollectionSummary,
     DatasetSummary,
 )
 from lairs.discovery.summary import summary_from_corpus
 
 if TYPE_CHECKING:
+    from lairs.records._generated import catalog as catalog_records
     from lairs.records._generated import corpus as corpus_records
 
 __all__ = [
     "CARD_NSID",
+    "CATALOG_CARD_NSID",
     "CRAWL_STATE_NSID",
     "CURSOR_NSID",
     "INDEX_DID",
     "MUTED_NSID",
     "CardFreshness",
     "CardProvenance",
+    "CollectionCard",
     "CrawlReport",
     "DatasetCard",
     "MutedDataset",
     "RepoCrawlState",
     "SyncCursor",
+    "card_from_collection",
     "card_from_corpus",
     "card_uri",
+    "collection_card_uri",
 ]
 
 INDEX_DID = "did:lairs:index"
@@ -46,6 +53,30 @@ INDEX_DID = "did:lairs:index"
 
 CARD_NSID = "lairs.index.datasetCard"
 """The collection NSID for dataset cards in the local index."""
+
+CATALOG_CARD_NSID = "lairs.index.collectionCard"
+"""The collection NSID for catalogue-collection cards in the local index.
+
+A second card type keyed on its own NSID, so the corpus-derived dataset cards
+are undisturbed while the catalogue collection (the citable dataset-as-a-whole
+artifact) gets its own indexed, searchable row.
+"""
+
+# collection kinds that habitually contain other collections. Advisory only:
+# container-ness is a kind, not an enforced structural constraint, so this only
+# hints a browser whether a card is likely to open into children.
+_CONTAINER_KINDS = frozenset(
+    {
+        "project",
+        "language-group",
+        "sub-project",
+        "experiment-series",
+        "treebank-family",
+        "benchmark",
+        "shared-task",
+        "archive",
+    },
+)
 
 CURSOR_NSID = "lairs.index.syncCursor"
 """The collection NSID for firehose sync cursors in the local index."""
@@ -194,6 +225,10 @@ class RepoCrawlState(dx.Model):
         The number of corpora indexed from the repo.
     last_crawled_at : datetime
         When the repo was last crawled.
+    last_seen_rev : str or None
+        The repository commit revision observed at the last crawl. A later pass
+        compares it against the revision ``listRepos`` reports and re-describes
+        the repo only when the two differ.
     repos_cursor : str or None
         A ``listRepos`` pagination checkpoint, when crawling a relay.
     """
@@ -211,6 +246,10 @@ class RepoCrawlState(dx.Model):
     last_crawled_at: datetime | None = dx.field(
         default=None,
         description="when the repo was last crawled",
+    )
+    last_seen_rev: str | None = dx.field(
+        default=None,
+        description="repository commit revision observed at the last crawl",
     )
     repos_cursor: str | None = dx.field(
         default=None,
@@ -258,6 +297,9 @@ class CrawlReport(dx.Model):
         The number of cards built or refreshed.
     cards_unchanged : int
         The number of cards that were already current (dedup hits).
+    repos_unchanged : int
+        The number of repositories skipped because their commit revision had
+        not moved since the last crawl.
     cards_removed : int
         The number of cards removed in response to a corpus-deletion commit.
     skipped : tuple of str
@@ -275,6 +317,10 @@ class CrawlReport(dx.Model):
     cards_unchanged: int = dx.field(
         default=0,
         description="cards already current (dedup hits)",
+    )
+    repos_unchanged: int = dx.field(
+        default=0,
+        description="repositories skipped because their revision had not moved",
     )
     cards_removed: int = dx.field(
         default=0,
@@ -364,4 +410,94 @@ def card_from_corpus(
         adjudication_method=method,
         redundancy_count=redundancy,
         quality_metrics=metrics,
+    )
+
+
+class CollectionCard(dx.Model):
+    """A searchable, denormalized index entry for one catalogue collection.
+
+    The catalogue-collection parallel to :class:`DatasetCard`, keyed on its own
+    index NSID so the corpus card path is untouched.
+
+    Attributes
+    ----------
+    summary : CollectionSummary
+        The collection-derived listing projection.
+    provenance : CardProvenance
+        Where the card came from.
+    freshness : CardFreshness
+        First-seen and last-updated bookkeeping.
+    is_container : bool
+        Whether the collection's kind habitually contains other collections
+        (advisory: container-ness is a kind, never an enforced constraint).
+    """
+
+    summary: dx.Embed[CollectionSummary] = dx.field(
+        description="collection listing summary",
+    )
+    provenance: dx.Embed[CardProvenance] = dx.field(description="card provenance")
+    freshness: dx.Embed[CardFreshness] = dx.field(description="card freshness")
+    is_container: bool = dx.field(
+        default=False,
+        description="whether the collection kind habitually contains collections",
+    )
+
+
+def collection_card_uri(collection_uri: str) -> str:
+    """Build the deterministic index AT-URI for a collection's card.
+
+    The same collection always maps to the same card key, so re-indexing is
+    idempotent and content-addressed dedup falls out for free.
+
+    Parameters
+    ----------
+    collection_uri : str
+        The collection AT-URI.
+
+    Returns
+    -------
+    str
+        The card's index AT-URI under the local ``lairs.index.*`` namespace.
+    """
+    digest = hashlib.sha256(collection_uri.encode("utf-8")).hexdigest()[:_RKEY_LENGTH]
+    return f"at://{INDEX_DID}/{CATALOG_CARD_NSID}/{digest}"
+
+
+def card_from_collection(
+    collection_uri: str,
+    collection: catalog_records.Collection,
+    *,
+    provenance: CardProvenance,
+    freshness: CardFreshness,
+) -> CollectionCard:
+    """Build a ``CollectionCard`` from a discovered collection and its provenance.
+
+    Parameters
+    ----------
+    collection_uri : str
+        The collection AT-URI.
+    collection : pub.layers.catalog.Collection
+        The discovered collection record.
+    provenance : CardProvenance
+        Where the collection was discovered.
+    freshness : CardFreshness
+        First-seen and last-updated bookkeeping for the card.
+
+    Returns
+    -------
+    CollectionCard
+        The denormalized index card.
+    """
+    summary = summary_from_collection(
+        collection,
+        uri=collection_uri,
+        did=provenance.source_did,
+        handle=provenance.source_handle,
+        source_endpoint=provenance.source_endpoint,
+    )
+    return CollectionCard(
+        summary=summary,
+        provenance=provenance,
+        freshness=freshness,
+        is_container=collection.kind in _CONTAINER_KINDS,
     )

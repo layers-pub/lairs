@@ -36,6 +36,7 @@ import httpx
 import libipld
 from multiformats import CID, multihash
 
+from lairs._aturi import is_valid_rkey
 from lairs._types import JsonValue  # noqa: TC001  (runtime: didactic field sort)
 from lairs.atproto.pds import PdsClient, decode
 from lairs.author.changelog import build_entry, diff_record
@@ -1440,7 +1441,16 @@ def _augment_with_changelog(  # noqa: PLR0913  (the hook threads publish's knobs
             continue
         raw = json.loads(entry.model_dump_json())
         value = _value_with_type(raw, _CHANGELOG_NSID)
-        rkey = f"{_rkey_of(uri)}.{version.major}.{version.minor}.{version.patch}"
+        subject_rkey = _rkey_of(uri)
+        # a subject URI with no rkey segment would otherwise yield ".0.1.0",
+        # which passes the record-key syntax and reaches the wire as garbage.
+        if not subject_rkey:
+            msg = f"cannot build a changelog rkey for a subject without one: {uri!r}"
+            raise WriteError(msg)
+        rkey = f"{subject_rkey}.{version.major}.{version.minor}.{version.patch}"
+        if not is_valid_rkey(rkey):
+            msg = f"derived changelog rkey is not a valid record key: {rkey!r}"
+            raise WriteError(msg)
         changelog_ops.append(
             WriteOp(
                 action="create",

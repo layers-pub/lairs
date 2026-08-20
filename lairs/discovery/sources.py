@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 __all__ = [
     "Source",
     "UnknownSourceError",
+    "default_source",
     "default_sources_path",
     "load_sources",
     "resolve_source",
@@ -253,6 +254,29 @@ def load_sources(path: Path | None = None) -> list[Source]:
     """
     resolved = path if path is not None else default_sources_path()
     return _merge(_BUILTIN_SOURCES, _read_user_entries(resolved))
+
+
+def default_source(path: Path | None = None) -> Source | None:
+    """Return the source to crawl when the caller names none.
+
+    This is the first enabled source in :func:`load_sources` order, which is the
+    built-in Layers PDS on a default install. A user who disables or re-points
+    the built-in in ``sources.toml`` therefore moves the default with it.
+
+    Parameters
+    ----------
+    path : pathlib.Path or None, optional
+        The sources file to read; defaults to :func:`default_sources_path`.
+
+    Returns
+    -------
+    Source or None
+        The first enabled source, or ``None`` when every source is disabled.
+    """
+    for source in load_sources(path):
+        if source.enabled:
+            return source
+    return None
 
 
 def resolve_source(name: str, *, path: Path | None = None) -> Source:

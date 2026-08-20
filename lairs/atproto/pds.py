@@ -38,6 +38,7 @@ __all__ = [
     "RecordEnvelope",
     "RecordNotFoundError",
     "RepoDescription",
+    "RepoListing",
     "decode",
     "decode_all",
     "decode_repo_car",
@@ -92,6 +93,41 @@ class RecordEnvelope(dx.Model):
     value: JsonValue = dx.field(
         default=None,
         description="record value, decoded against a generated model on demand",
+    )
+
+
+class RepoListing(dx.Model):
+    """One repository entry from ``com.atproto.sync.listRepos``.
+
+    The ``rev`` is the repository's current commit revision, which a crawl
+    compares against the revision it last recorded to decide whether the repo
+    moved at all. One paginated ``listRepos`` pass therefore tells a caller
+    which repositories need re-describing, without a per-repo round trip.
+
+    Attributes
+    ----------
+    did : str
+        The repository's DID.
+    head : str or None
+        The CID of the repository's current commit, when the service reports it.
+    rev : str or None
+        The repository's current commit revision, when the service reports it.
+    active : bool or None
+        Whether the service reports the repository as active.
+    """
+
+    did: str = dx.field(description="the repository's DID")
+    head: str | None = dx.field(
+        default=None,
+        description="CID of the repository's current commit",
+    )
+    rev: str | None = dx.field(
+        default=None,
+        description="the repository's current commit revision",
+    )
+    active: bool | None = dx.field(
+        default=None,
+        description="whether the service reports the repository as active",
     )
 
 
@@ -702,11 +738,18 @@ class PdsClient:
         body = response.json()
         return _repo_description_from_body(body if isinstance(body, dict) else {})
 
-    def list_repos(self, *, cursor: str | None = None) -> Iterator[str]:
-        """Enumerate the DIDs of repositories this service hosts.
+    def list_repo_listings(
+        self,
+        *,
+        cursor: str | None = None,
+    ) -> Iterator[RepoListing]:
+        """Enumerate this service's repositories with their commit revisions.
 
         Wraps ``com.atproto.sync.listRepos`` with cursor pagination folded into a
         lazy iterator, the seed source for a backfill crawl over a relay or PDS.
+        Each entry carries the repository's ``rev``, so one pass over this
+        iterator is enough to tell which repositories have moved since a
+        previous crawl.
 
         Parameters
         ----------
@@ -715,8 +758,8 @@ class PdsClient:
 
         Yields
         ------
-        str
-            Repository DIDs, across all pages.
+        RepoListing
+            One listing per repository, across all pages.
 
         Raises
         ------
@@ -741,11 +784,43 @@ class PdsClient:
                     if isinstance(repo, dict):
                         did = repo.get("did")
                         if isinstance(did, str):
-                            yield did
+                            head = repo.get("head")
+                            rev = repo.get("rev")
+                            active = repo.get("active")
+                            yield RepoListing(
+                                did=did,
+                                head=head if isinstance(head, str) else None,
+                                rev=rev if isinstance(rev, str) else None,
+                                active=active if isinstance(active, bool) else None,
+                            )
             returned_cursor = page.get("cursor")
             if not isinstance(returned_cursor, str) or returned_cursor == "":
                 return
             next_cursor = returned_cursor
+
+    def list_repos(self, *, cursor: str | None = None) -> Iterator[str]:
+        """Enumerate the DIDs of repositories this service hosts.
+
+        A DID-only view over :meth:`list_repo_listings`, for callers that do not
+        need each repository's commit revision.
+
+        Parameters
+        ----------
+        cursor : str or None, optional
+            An opaque pagination cursor to resume from.
+
+        Yields
+        ------
+        str
+            Repository DIDs, across all pages.
+
+        Raises
+        ------
+        httpx.HTTPStatusError
+            If the service returns a non-success status for any page.
+        """
+        for listing in self.list_repo_listings(cursor=cursor):
+            yield listing.did
 
 
 def get_record(

@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 import didactic.api as dx
 
@@ -273,6 +273,7 @@ class ConlluIso(dx.Iso[_ConlluSentence, CorpusFragment]):
     require the optional ``conllu`` library.
     """
 
+    @override
     def forward(self, a: _ConlluSentence, /) -> CorpusFragment:
         """Build a corpus fragment from a parsed sentence.
 
@@ -291,6 +292,7 @@ class ConlluIso(dx.Iso[_ConlluSentence, CorpusFragment]):
             source="conllu",
         )
 
+    @override
     def backward(self, b: CorpusFragment, /) -> _ConlluSentence:
         """Recover a parsed sentence from a corpus fragment.
 

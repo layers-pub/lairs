@@ -10,12 +10,13 @@ import pytest
 from lairs.discovery.cards import (
     CardFreshness,
     CardProvenance,
+    CollectionCard,
     DatasetCard,
     RepoCrawlState,
     SyncCursor,
 )
 from lairs.discovery.index import DiscoveryIndex, default_index_path
-from lairs.discovery.models import DatasetSummary
+from lairs.discovery.models import CollectionSummary, DatasetSummary
 
 _NOW = datetime(2026, 6, 18, tzinfo=UTC)
 
@@ -61,6 +62,57 @@ def test_card_pool_keys_by_index_uri(tmp_path: Path) -> None:
     index.put_card(_card(_URI_A, "a"))
     pool = index.card_pool()
     assert len(pool) == 1
+
+
+_COLLECTION_A = "at://did:plc:x/pub.layers.catalog.collection/a"
+_COLLECTION_B = "at://did:plc:x/pub.layers.catalog.collection/b"
+
+
+def _collection_card(collection_uri: str, name: str) -> CollectionCard:
+    return CollectionCard(
+        summary=CollectionSummary(
+            uri=collection_uri,
+            did="did:plc:x",
+            name=name,
+            kind="treebank",
+        ),
+        provenance=CardProvenance(
+            source_did="did:plc:x",
+            source_endpoint="https://pds.example",
+            discovered_via="crawl",
+        ),
+        freshness=CardFreshness(first_seen_at=_NOW, last_updated_at=_NOW),
+    )
+
+
+def test_put_and_get_collection_card_round_trip(tmp_path: Path) -> None:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    card = _collection_card(_COLLECTION_A, "UD English-EWT")
+    index.put_collection_card(card)
+    assert index.get_collection_card(_COLLECTION_A) == card
+    # a dataset card of the same URI is a separate slot.
+    assert index.get_card(_COLLECTION_A) is None
+
+
+def test_collection_cards_lists_only_collection_cards(tmp_path: Path) -> None:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    index.put_card(_card(_URI_A, "corpus"))
+    index.put_collection_card(_collection_card(_COLLECTION_A, "a"))
+    index.put_collection_card(_collection_card(_COLLECTION_B, "b"))
+    names = {card.summary.name for card in index.collection_cards()}
+    assert names == {"a", "b"}
+    # the corpus card is not enumerated by collection_cards.
+    assert {card.summary.name for card in index.cards()} == {"corpus"}
+
+
+@pytest.mark.integration
+def test_remove_collection_card_removes_from_index(tmp_path: Path) -> None:
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    index.put_collection_card(_collection_card(_COLLECTION_A, "a"))
+    index.commit("seed")
+    assert index.get_collection_card(_COLLECTION_A) is not None
+    assert index.remove_collection_card(_COLLECTION_A) is True
+    assert index.get_collection_card(_COLLECTION_A) is None
 
 
 @pytest.mark.integration

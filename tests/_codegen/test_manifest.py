@@ -50,4 +50,4 @@ def test_manifest_round_trips(tmp_path: Path) -> None:
 def test_loads_the_vendored_manifest() -> None:
     loaded = load_manifest(_VENDORED_MANIFEST)
     assert loaded.lexicon_tree_hash
-    assert loaded.record_types == 26
+    assert loaded.record_types == 30

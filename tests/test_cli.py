@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 import json
 import shutil
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 import httpx
 import pytest
@@ -15,18 +15,26 @@ from lairs._codegen.manifest import load_manifest
 from lairs.atproto import auth
 from lairs.atproto.auth import Session
 from lairs.atproto.identity import IdentityError
+from lairs.atproto.pds import RepoListing
 from lairs.author.publish import PublishPlan
+from lairs.data.acquisition import Acquisition
+from lairs.data.collection import Collection
 from lairs.data.corpus import Corpus
 from lairs.discovery import CardDiff, CrawlReport, SearchHit, SearchQuery
 from lairs.discovery.cards import CardFreshness, CardProvenance, DatasetCard
+from lairs.discovery.links import Rollup
 from lairs.discovery.models import (
     CollectionCount,
+    CollectionSummary,
     DatasetSummary,
     RepoTableOfContents,
 )
+from lairs.records._generated import acquisition as acquisition_records
+from lairs.records._generated import catalog as catalog_records
 from lairs.records._generated import expression as expression_records
 from lairs.records._generated import media as media_records
 from lairs.records._generated import persona as persona_records
+from lairs.records._generated.defs import Uuid
 from lairs.store.repository import Repository
 
 if TYPE_CHECKING:
@@ -449,7 +457,14 @@ def test_cli_toc_against_live_pds(
         timeout=30.0,
     ).raise_for_status()
     code = cli.main(
-        ["toc", pds_server.did, "--endpoint", pds_server.endpoint, "--source", "pds"],
+        [
+            "toc",
+            pds_server.did,
+            "--endpoint",
+            pds_server.endpoint,
+            "--source-type",
+            "pds",
+        ],
     )
     captured = capsys.readouterr()
     assert code == 0
@@ -685,6 +700,9 @@ class _FakeBuildClient:
     def list_repos(self) -> list[str]:
         return ["did:plc:auto"]
 
+    def list_repo_listings(self) -> list[RepoListing]:
+        return [RepoListing(did="did:plc:auto", rev="rev-1")]
+
 
 def test_index_build_reports_crawl(
     monkeypatch: pytest.MonkeyPatch,
@@ -752,6 +770,49 @@ def test_index_build_resolves_source(
     _ = capsys.readouterr()
 
 
+def test_index_build_defaults_to_the_layers_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # with neither --endpoint nor --source, the crawl targets the built-in.
+    monkeypatch.setenv("LAIRS_SOURCES_FILE", str(tmp_path / "absent.toml"))
+    captured: dict[str, object] = {}
+
+    def fake_build_index(
+        _index: object,
+        _dids: object,
+        **kwargs: object,
+    ) -> CrawlReport:
+        captured.update(kwargs)
+        return CrawlReport(repos_seen=1, repos_with_corpora=1, cards_built=1)
+
+    monkeypatch.setattr(cli.discovery, "DiscoveryIndex", _FakeIndex)
+    monkeypatch.setattr(cli.discovery, "build_index", fake_build_index)
+    monkeypatch.setattr(cli, "PdsClient", _FakeBuildClient)
+    code = cli.main(["index", "build", "--into", str(tmp_path / "idx")])
+    assert code == 0
+    assert captured["endpoint"] == "https://repo.layers.pub"
+    _ = capsys.readouterr()
+
+
+def test_index_build_errors_when_no_source_is_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # every source disabled leaves nothing to default to.
+    cfg = tmp_path / "sources.toml"
+    cfg.write_text(
+        '[[source]]\nname = "layers-pub"\nenabled = false\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LAIRS_SOURCES_FILE", str(cfg))
+    code = cli.main(["index", "build", "--into", str(tmp_path / "idx")])
+    assert code == 1
+    assert "no enabled source to crawl" in capsys.readouterr().err
+
+
 def test_index_build_unknown_source_errors(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -789,6 +850,35 @@ def test_sources_list_json(
     assert code == 0
     assert payload[0]["name"] == "layers-pub"
     assert payload[0]["builtin"] is True
+
+
+def test_index_build_reports_enumeration_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # the listRepos enumeration is a network call too, so a transport failure
+    # there must print a clean error rather than escape as a traceback.
+    class _FailingEnumerationClient(_FakeBuildClient):
+        @override
+        def list_repo_listings(self) -> list[RepoListing]:
+            msg = "timed out"
+            raise httpx.ConnectTimeout(msg)
+
+    monkeypatch.setattr(cli.discovery, "DiscoveryIndex", _FakeIndex)
+    monkeypatch.setattr(cli, "PdsClient", _FailingEnumerationClient)
+    code = cli.main(
+        [
+            "index",
+            "build",
+            "--into",
+            str(tmp_path / "idx"),
+            "--endpoint",
+            "https://pds.example",
+        ],
+    )
+    assert code == 1
+    assert "error: timed out" in capsys.readouterr().err
 
 
 def test_index_build_reports_http_error(
@@ -997,7 +1087,7 @@ def test_toc_prints_table(
         )
 
     monkeypatch.setattr(cli.discovery, "table_of_contents", fake_toc)
-    code = cli.main(["toc", "alice.test", "--source", "pds", "--counts"])
+    code = cli.main(["toc", "alice.test", "--source-type", "pds", "--counts"])
     out = capsys.readouterr().out
     assert code == 0
     assert seen == {
@@ -1343,3 +1433,166 @@ def test_login_and_publish_live(
     )
     assert fetched.status_code == 200
     assert fetched.json()["value"]["text"] == "published via cli"
+
+
+# ---- catalogue collection / acquisition subcommands ------------------------
+
+
+def test_collections_prints_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_list(actor: str, **kwargs: object) -> tuple[CollectionSummary, ...]:
+        _ = (actor, kwargs)
+        return (
+            CollectionSummary(
+                uri="at://did:plc:x/pub.layers.catalog.collection/a",
+                did="did:plc:x",
+                name="UD English-EWT",
+                kind="treebank",
+                citable=True,
+            ),
+        )
+
+    monkeypatch.setattr(discovery, "list_collections", fake_list)
+    code = cli.main(["collections", "did:plc:x"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "UD English-EWT" in out
+    assert "treebank" in out
+
+
+def test_collections_reports_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(discovery, "list_collections", _raise_value_error)
+    code = cli.main(["collections", "did:plc:x"])
+    assert code == 1
+    assert "error: bad source" in capsys.readouterr().err
+
+
+def test_print_collections_table(capsys: pytest.CaptureFixture[str]) -> None:
+    rows = (
+        CollectionSummary(
+            uri="at://did:plc:x/pub.layers.catalog.collection/a",
+            did="did:plc:x",
+            name="demo collection",
+            kind="project",
+            citable=True,
+        ),
+    )
+    cli._print_collections(rows, as_json=False)
+    out = capsys.readouterr().out
+    assert "demo collection" in out
+    assert "project" in out
+    assert "*cite" in out
+
+
+def test_collection_prints_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    uri = "at://did:plc:x/pub.layers.catalog.collection/a"
+
+    def fake_load(u: str, **kwargs: object) -> Collection:
+        _ = kwargs
+        surface = Collection.new(uri=u)
+        surface.add_record(
+            u,
+            catalog_records.Collection(
+                name="UD English-EWT",
+                kind="treebank",
+                createdAt=_NOW,
+            ),
+        )
+        return surface
+
+    monkeypatch.setattr("lairs.data.load_collection", fake_load)
+    code = cli.main(["collection", uri, "--endpoint", "https://pds.example"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "UD English-EWT" in out
+    assert "treebank" in out
+
+
+def test_rollup_prints_totals(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_rollup(collection: str, **kwargs: object) -> Rollup:
+        _ = kwargs
+        return Rollup(
+            collection=collection,
+            computed_at="2026-06-18T00:00:00Z",
+            descendant_collection_count=3,
+            totals=(
+                catalog_records.ContentSummary(
+                    produceCollection="pub.layers.expression.expression",
+                    count=100,
+                    countSource="computed",
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(discovery, "rollup_of_collection", fake_rollup)
+    code = cli.main(
+        [
+            "rollup",
+            "at://did:plc:x/pub.layers.catalog.collection/a",
+            "--appview",
+            "https://appview.example",
+        ],
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "100" in out
+    assert "pub.layers.expression.expression" in out
+
+
+def test_sessions_prints_counts(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    uri = "at://did:plc:acq/pub.layers.acquisition.session/s1"
+
+    def fake_load(u: str, **kwargs: object) -> Acquisition:
+        _ = kwargs
+        acq = Acquisition.new(uri=u)
+        acq.add_record(
+            u,
+            acquisition_records.Session(
+                sessionId="ses-01",
+                createdAt=_NOW,
+                streams=(
+                    acquisition_records.Stream(
+                        uuid=Uuid(value="11111111-1111-1111-1111-111111111111"),
+                    ),
+                ),
+            ),
+        )
+        return acq
+
+    monkeypatch.setattr("lairs.data.load_acquisition", fake_load)
+    code = cli.main(["sessions", uri, "--endpoint", "https://pds.example"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "ses-01" in out
+    assert "1 session" in out
+
+
+def test_print_toc_stars_catalog_collection(capsys: pytest.CaptureFixture[str]) -> None:
+    toc = RepoTableOfContents(
+        did="did:plc:x",
+        collections=(
+            CollectionCount(
+                nsid="pub.layers.catalog.collection",
+                is_dataset_like=True,
+            ),
+        ),
+        dataset_collections=("pub.layers.catalog.collection",),
+    )
+    cli._print_toc(toc, as_json=False)
+    out = capsys.readouterr().out
+    assert "pub.layers.catalog.collection" in out
+    assert "[*]" in out
