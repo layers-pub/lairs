@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-20
+
 ### Added
 
 - **Data-access surfaces.** Typed read surfaces over a repository's `pub.layers.*`
@@ -22,15 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_atproto` DNS TXT record against the `.well-known/atproto-did` HTTP method and
   returns the first `did:`, so a handle served only over DNS resolves without an
   injected client. Adds a `dnspython` dependency and a `dns_timeout` setting.
-
-### Changed
-
-- Raised the panproto floor to `0.71.0`.
-
-## [0.6.0] - 2026-07-20
-
-### Added
-
 - **`lairs index build` defaults to the Layers PDS.** `--endpoint` and
   `--source` are no longer a required choice: with neither flag, the crawl
   targets the first enabled configured source, which on a default install is
@@ -55,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Dependency floors raised** to `didactic>=0.9.1` and `panproto>=0.58.0`,
+- **Dependency floors raised** to `didactic>=0.9.1` and `panproto>=0.71.0`,
   picking up upstream fixes.
 - **The adapter registries are concretely parameterized.** `Registry[Codec]`,
   `Registry[Exporter]`, and `Registry[KnowledgeBase]` used the protocols bare,
