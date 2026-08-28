@@ -26,7 +26,7 @@ def test_exports() -> None:
 def test_default_sources_are_builtin(tmp_path: Path) -> None:
     # with no config file, only the built-in default is present.
     loaded = sources.load_sources(tmp_path / "absent.toml")
-    assert [s.name for s in loaded] == ["layers-pub"]
+    assert [s.name for s in loaded] == ["layers-pub", "decomp", "megaattitude"]
     layers = loaded[0]
     assert layers.endpoint == "https://repo.layers.pub"
     assert layers.kind == "pds"
@@ -46,8 +46,8 @@ def test_user_source_is_added(tmp_path: Path) -> None:
     )
     loaded = sources.load_sources(cfg)
     names = [s.name for s in loaded]
-    assert names == ["layers-pub", "my-pds"]
-    added = loaded[1]
+    assert names == ["layers-pub", "decomp", "megaattitude", "my-pds"]
+    added = loaded[-1]
     assert added.endpoint == "https://pds.example"
     assert added.kind == "pds"
     assert added.enabled is True
@@ -69,7 +69,11 @@ def test_user_entry_overrides_builtin(tmp_path: Path) -> None:
 
 def test_new_source_without_endpoint_is_skipped(tmp_path: Path) -> None:
     cfg = _write(tmp_path / "sources.toml", '[[source]]\nname = "broken"\n')
-    assert [s.name for s in sources.load_sources(cfg)] == ["layers-pub"]
+    assert [s.name for s in sources.load_sources(cfg)] == [
+        "layers-pub",
+        "decomp",
+        "megaattitude",
+    ]
 
 
 def test_relay_kind_is_honored(tmp_path: Path) -> None:
@@ -102,10 +106,12 @@ def test_default_source_follows_a_repointed_builtin(tmp_path: Path) -> None:
 
 
 def test_default_source_skips_a_disabled_builtin(tmp_path: Path) -> None:
-    # disabling the built-in hands the default to the next enabled source.
+    # disabling the built-ins hands the default to the next enabled source.
     cfg = _write(
         tmp_path / "sources.toml",
         '[[source]]\nname = "layers-pub"\nenabled = false\n'
+        '[[source]]\nname = "decomp"\nenabled = false\n'
+        '[[source]]\nname = "megaattitude"\nenabled = false\n'
         '[[source]]\nname = "my-pds"\nendpoint = "https://pds.example"\n',
     )
     default = sources.default_source(cfg)
@@ -116,7 +122,9 @@ def test_default_source_skips_a_disabled_builtin(tmp_path: Path) -> None:
 def test_default_source_is_none_when_all_disabled(tmp_path: Path) -> None:
     cfg = _write(
         tmp_path / "sources.toml",
-        '[[source]]\nname = "layers-pub"\nenabled = false\n',
+        '[[source]]\nname = "layers-pub"\nenabled = false\n'
+        '[[source]]\nname = "decomp"\nenabled = false\n'
+        '[[source]]\nname = "megaattitude"\nenabled = false\n',
     )
     assert sources.default_source(cfg) is None
 

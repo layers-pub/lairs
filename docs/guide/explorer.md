@@ -63,9 +63,14 @@ later crawl nor launch auto-indexing will re-index the dataset until you unmute 
 
 ### Sources
 
-A **source** is a PDS or relay endpoint lairs crawls for datasets. lairs ships a
-built-in default for the public Layers PDS (`repo.layers.pub`), which is
-deliberately kept off the firehose and so would otherwise be undiscoverable.
+A **source** is a PDS or relay endpoint lairs crawls for datasets. lairs ships
+three built-in sources for the public Layers network, each deliberately kept off
+the firehose and so otherwise undiscoverable: `layers-pub` (`repo.layers.pub`),
+carrying the Universal Dependencies, UniMorph, and Unified Verb Index datasets;
+`decomp` (`repo.decomp.io`), the Universal Decompositional Semantics datasets;
+and `megaattitude` (`repo.megaattitude.io`), the MegaAttitude datasets. The
+first is the default target; the others share the same PDS today, and the index
+dedups by dataset URI, so crawling all three stays idempotent.
 Sources are configured in a `sources.toml` file under the XDG config directory
 (`~/.config/lairs/sources.toml`, overridable with `LAIRS_SOURCES_FILE`):
 

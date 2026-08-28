@@ -97,12 +97,29 @@ class Source(dx.Model):
     )
 
 
-# the built-in default sources, listed first. repo.layers.pub is off the
-# firehose, so it is registered here to stay discoverable.
+# the built-in default sources, listed first. none are on the firehose, so they
+# are registered here to stay discoverable. layers-pub carries the Universal
+# Dependencies, UniMorph, and Unified Verb Index datasets; decomp carries the
+# Universal Decompositional Semantics datasets under their decomp.io handles;
+# megaattitude carries the MegaAttitude datasets under their megaattitude.io
+# handles. all three resolve to one PDS today, and the index dedups by dataset
+# URI, so a crawl that visits every source stays idempotent.
 _BUILTIN_SOURCES: tuple[Source, ...] = (
     Source(
         name="layers-pub",
         endpoint="https://repo.layers.pub",
+        kind=_KIND_PDS,
+        builtin=True,
+    ),
+    Source(
+        name="decomp",
+        endpoint="https://repo.decomp.io",
+        kind=_KIND_PDS,
+        builtin=True,
+    ),
+    Source(
+        name="megaattitude",
+        endpoint="https://repo.megaattitude.io",
         kind=_KIND_PDS,
         builtin=True,
     ),
