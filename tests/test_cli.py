@@ -804,7 +804,9 @@ def test_index_build_errors_when_no_source_is_enabled(
     # every source disabled leaves nothing to default to.
     cfg = tmp_path / "sources.toml"
     cfg.write_text(
-        '[[source]]\nname = "layers-pub"\nenabled = false\n',
+        '[[source]]\nname = "layers-pub"\nenabled = false\n'
+        '[[source]]\nname = "decomp"\nenabled = false\n'
+        '[[source]]\nname = "megaattitude"\nenabled = false\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("LAIRS_SOURCES_FILE", str(cfg))
