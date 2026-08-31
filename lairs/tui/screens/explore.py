@@ -9,19 +9,19 @@ a detail panel. The facet inputs map onto a
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, override
+from typing import override
 
 from rich.text import Text
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import DataTable, Input, Markdown
 
+from lairs.discovery.cards import CollectionCard, DatasetCard
 from lairs.discovery.index import DiscoveryIndex
-from lairs.discovery.query import SearchQuery, search
-
-if TYPE_CHECKING:
-    from lairs.discovery.cards import DatasetCard
+from lairs.discovery.query import SearchQuery, search, search_collections
 
 __all__ = ["ExplorePane"]
+
+type _Card = DatasetCard | CollectionCard
 
 _COLUMNS: tuple[str, ...] = ("Name", "Domain", "Lang", "License", "#Expr", "Score")
 
@@ -58,7 +58,8 @@ class ExplorePane(Horizontal):
         self._index_path = index_path
         self._index: DiscoveryIndex | None = None
         self._cards: list[DatasetCard] = []
-        self._hits: list[DatasetCard] = []
+        self._collection_cards: list[CollectionCard] = []
+        self._hits: list[_Card] = []
         self._error: str | None = None
 
     @override
@@ -95,6 +96,7 @@ class ExplorePane(Horizontal):
         """
         self._index = None
         self._cards = []
+        self._collection_cards = []
         self._error = None
         self._load_index()
         self._refilter()
@@ -111,6 +113,7 @@ class ExplorePane(Horizontal):
         try:
             self._index = DiscoveryIndex.open(Path(self._index_path))
             self._cards = self._index.cards()
+            self._collection_cards = self._index.collection_cards()
         except (OSError, ValueError) as error:  # pragma: no cover - defensive
             self._error = f"Could not open index at {self._index_path}:\n\n{error}"
 
@@ -132,30 +135,43 @@ class ExplorePane(Horizontal):
             self._hits = []
             self.query_one("#detail", Markdown).update(self._error)
             return
-        hits = search(self._cards, self._query())
-        self._hits = [hit.card for hit in hits]
-        for hit in hits:
-            summary = hit.card.summary
+        query = self._query()
+        scored: list[tuple[float, _Card]] = [
+            (hit.score, hit.card) for hit in search(self._cards, query)
+        ]
+        scored += [
+            (hit.score, hit.card)
+            for hit in search_collections(self._collection_cards, query)
+        ]
+        scored.sort(key=lambda pair: (-pair[0], pair[1].summary.name))
+        self._hits = [card for _, card in scored]
+        for score, card in scored:
+            summary = card.summary
+            expressions = getattr(summary, "expression_count", None)
             table.add_row(
                 Text(summary.name),
-                Text(summary.domain or "-"),
-                Text(_languages(hit.card)),
+                Text(_facet(card)),
+                Text(_languages(card)),
                 Text(summary.license or "-"),
-                Text(
-                    str(summary.expression_count) if summary.expression_count else "-"
-                ),
-                Text(f"{hit.score:.1f}"),
+                Text(str(expressions) if expressions else "-"),
+                Text(f"{score:.1f}"),
             )
         if self._hits:
             self._show_card(self._hits[0])
         else:
+            indexed = len(self._cards) + len(self._collection_cards)
             self.query_one("#detail", Markdown).update(
-                f"No datasets match.\n\n*{len(self._cards)} indexed.*"
+                f"No datasets match.\n\n*{indexed} indexed.*"
             )
 
-    def _show_card(self, card: DatasetCard) -> None:
-        """Render a dataset card into the detail panel as Markdown."""
-        self.query_one("#detail", Markdown).update(_card_markdown(card))
+    def _show_card(self, card: _Card) -> None:
+        """Render a dataset or collection card into the detail panel."""
+        markdown = (
+            _card_markdown(card)
+            if isinstance(card, DatasetCard)
+            else _collection_markdown(card)
+        )
+        self.query_one("#detail", Markdown).update(markdown)
 
     def on_input_changed(self, event: Input.Changed) -> None:  # noqa: ARG002
         """Re-filter whenever any facet input changes."""
@@ -170,12 +186,44 @@ class ExplorePane(Horizontal):
             self._show_card(self._hits[event.cursor_row])
 
 
-def _languages(card: DatasetCard) -> str:
+def _facet(card: _Card) -> str:
+    """Return the domain (dataset) or kind (collection) label for a row."""
+    if isinstance(card, DatasetCard):
+        return card.summary.domain or "-"
+    return card.summary.kind or "-"
+
+
+def _languages(card: _Card) -> str:
     """Return a compact language label for a card row."""
     summary = card.summary
     if summary.languages:
         return ", ".join(summary.languages[:3])
-    return summary.language or "-"
+    return getattr(summary, "language", None) or "-"
+
+
+def _collection_markdown(card: CollectionCard) -> str:
+    """Render a collection card to a Markdown detail view."""
+    summary = card.summary
+    lines: list[str] = [f"# {summary.name}", ""]
+    if summary.description:
+        lines += [summary.description, ""]
+    lines.append("| field | value |")
+    lines.append("| --- | --- |")
+    rows: list[tuple[str, str | None]] = [
+        ("kind", summary.kind),
+        ("languages", ", ".join(summary.languages) or None),
+        ("license", summary.license),
+        ("version", summary.version),
+        ("members", _maybe_int(summary.member_count)),
+        ("access", summary.access),
+        ("stability", summary.stability),
+        ("handle", summary.handle),
+    ]
+    for label, value in rows:
+        if value:
+            lines.append(f"| {label} | {value} |")
+    lines += ["", f"`{summary.uri}`"]
+    return "\n".join(lines)
 
 
 def _card_markdown(card: DatasetCard) -> str:

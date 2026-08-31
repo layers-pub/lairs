@@ -12,12 +12,21 @@ from typing import TYPE_CHECKING
 
 import didactic.api as dx
 
-from lairs.discovery.cards import DatasetCard  # noqa: TC001  (runtime: didactic sort)
+from lairs.discovery.cards import (  # noqa: TC001  (runtime: didactic sort)
+    CollectionCard,
+    DatasetCard,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-__all__ = ["SearchHit", "SearchQuery", "search"]
+__all__ = [
+    "CollectionHit",
+    "SearchHit",
+    "SearchQuery",
+    "search",
+    "search_collections",
+]
 
 _NAME_HIT_WEIGHT = 2.0
 """Score added when the query text matches the corpus name."""
@@ -170,6 +179,104 @@ def search(cards: Iterable[DatasetCard], query: SearchQuery) -> list[SearchHit]:
         SearchHit(card=card, score=_score(card, query))
         for card in cards
         if _matches(card, query)
+    ]
+    hits.sort(key=lambda hit: (-hit.score, hit.card.summary.name))
+    return hits
+
+
+class CollectionHit(dx.Model):
+    """A matched collection card with its ranking score.
+
+    Attributes
+    ----------
+    card : CollectionCard
+        The matched catalogue-collection card.
+    score : float
+        The ranking score; higher ranks first.
+    """
+
+    card: dx.Embed[CollectionCard] = dx.field(
+        description="the matched collection card",
+    )
+    score: float = dx.field(description="ranking score, higher ranks first")
+
+
+def _collection_matches(card: CollectionCard, query: SearchQuery) -> bool:
+    """Return whether a collection card satisfies every set facet of a query.
+
+    Corpus-only facets (expression bounds, quality metric, annotation rounds)
+    have no counterpart on a catalogue collection, so a query that sets any of
+    them cannot match a collection. The remaining facets are matched against the
+    collection's own fields, with its ``kind`` standing in for a corpus domain.
+    """
+    if (
+        query.min_expressions is not None
+        or query.max_expressions is not None
+        or query.annotation_metric is not None
+        or query.min_annotation_rounds is not None
+    ):
+        return False
+    summary = card.summary
+    text = (query.text or "").lower()
+    language_ok = query.language is None or query.language in summary.languages
+    text_ok = (
+        query.text is None
+        or text in summary.name.lower()
+        or (summary.description is not None and text in summary.description.lower())
+    )
+    return all(
+        (
+            language_ok,
+            text_ok,
+            query.domain is None or query.domain == summary.kind,
+            query.license is None or query.license == summary.license,
+        ),
+    )
+
+
+def _collection_score(card: CollectionCard, query: SearchQuery) -> float:
+    """Compute a deterministic relevance score for a matched collection card."""
+    summary = card.summary
+    score = 0.0
+    if query.text is not None:
+        text = query.text.lower()
+        if text in summary.name.lower():
+            score += _NAME_HIT_WEIGHT
+        if summary.description is not None and text in summary.description.lower():
+            score += _DESCRIPTION_HIT_WEIGHT
+    if summary.member_count is not None:
+        score += _SIGNAL_WEIGHT
+    return score
+
+
+def search_collections(
+    cards: Iterable[CollectionCard],
+    query: SearchQuery,
+) -> list[CollectionHit]:
+    """Filter and rank collection cards against a query.
+
+    The catalogue-collection parallel to :func:`search`, matched on the facets a
+    collection carries: text, language, license, and the collection ``kind`` in
+    place of a corpus domain. A query that sets a corpus-only facet (expression
+    bounds, quality metric, annotation rounds) matches no collections.
+
+    Parameters
+    ----------
+    cards : collections.abc.Iterable of CollectionCard
+        The collection cards to search (for example
+        ``DiscoveryIndex.collection_cards()``).
+    query : SearchQuery
+        The query to apply.
+
+    Returns
+    -------
+    list of CollectionHit
+        The matching collection cards, ranked by score then name.
+    """
+    hits = [
+        CollectionHit(card=card, score=_collection_score(card, query))
+        for card in cards
+        if _collection_matches(card, query)
     ]
     hits.sort(key=lambda hit: (-hit.score, hit.card.summary.name))
     return hits

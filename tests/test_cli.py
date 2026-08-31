@@ -21,7 +21,12 @@ from lairs.data.acquisition import Acquisition
 from lairs.data.collection import Collection
 from lairs.data.corpus import Corpus
 from lairs.discovery import CardDiff, CrawlReport, SearchHit, SearchQuery
-from lairs.discovery.cards import CardFreshness, CardProvenance, DatasetCard
+from lairs.discovery.cards import (
+    CardFreshness,
+    CardProvenance,
+    CollectionCard,
+    DatasetCard,
+)
 from lairs.discovery.links import Rollup
 from lairs.discovery.models import (
     CollectionCount,
@@ -652,12 +657,34 @@ def _make_search_hit(name: str, *, domain: str = "biomedical") -> SearchHit:
     return SearchHit(card=card, score=2.5)
 
 
+def _make_collection_card(name: str, *, kind: str = "paradigm-set") -> CollectionCard:
+    """Build a real CollectionCard (a catalog-collection dataset) for handlers."""
+    summary = CollectionSummary(
+        uri="at://did:plc:x/pub.layers.catalog.collection/a",
+        did="did:plc:x",
+        name=name,
+        kind=kind,
+        languages=("ady",),
+        license="CC-BY-4.0",
+    )
+    return CollectionCard(
+        summary=summary,
+        provenance=CardProvenance(
+            source_did="did:plc:x",
+            source_endpoint="https://pds.example",
+            discovered_via="crawl",
+        ),
+        freshness=CardFreshness(first_seen_at=_NOW, last_updated_at=_NOW),
+    )
+
+
 class _FakeIndex:
     """A stand-in DiscoveryIndex that records construction and calls."""
 
     last_init: Path | None = None
     last_open: Path | None = None
     cards_value: tuple[DatasetCard, ...] = ()
+    collection_cards_value: tuple[CollectionCard, ...] = ()
     diff_value: CardDiff = CardDiff(added=(), changed=(), removed=())
 
     def __init__(self, path: Path) -> None:
@@ -675,6 +702,9 @@ class _FakeIndex:
 
     def cards(self) -> tuple[DatasetCard, ...]:
         return type(self).cards_value
+
+    def collection_cards(self) -> tuple[CollectionCard, ...]:
+        return type(self).collection_cards_value
 
     def diff_cards(self, base: str, head: str) -> CardDiff:
         type(self).diff_value = CardDiff(
@@ -1004,6 +1034,25 @@ def test_index_search_builds_query_and_prints(
     assert query.min_expressions == 3
     assert query.min_annotation_rounds == 2
     assert "biomed corpus" in out
+
+
+def test_index_search_surfaces_collection_cards(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # a catalog-collection dataset (UniMorph, MegaAttitude) has no corpus card,
+    # so it must surface through the global search's collection path.
+    monkeypatch.setattr(cli.discovery, "DiscoveryIndex", _FakeIndex)
+    monkeypatch.setattr(
+        _FakeIndex,
+        "collection_cards_value",
+        (_make_collection_card("UniMorph Adyghe"),),
+    )
+    code = cli.main(["index", "search", "--index", str(tmp_path / "idx"), "unimorph"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "UniMorph Adyghe" in out
 
 
 def test_index_search_duckdb_branch(

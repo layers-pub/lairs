@@ -41,7 +41,13 @@ from lairs.discovery.models import (
     DatasetSummary,
     RepoTableOfContents,
 )
-from lairs.discovery.query import SearchHit, SearchQuery, search
+from lairs.discovery.query import (
+    CollectionHit,
+    SearchHit,
+    SearchQuery,
+    search,
+    search_collections,
+)
 from lairs.discovery.sources import (
     Source,
     UnknownSourceError,
@@ -56,6 +62,7 @@ __all__ = [
     "CollectionCard",
     "CollectionCount",
     "CollectionFilter",
+    "CollectionHit",
     "CollectionSummary",
     "CrawlReport",
     "DatasetCard",
@@ -87,6 +94,7 @@ __all__ = [
     "resolve_source",
     "rollup_of_collection",
     "search",
+    "search_collections",
     "table_of_contents",
     "update_index",
 ]

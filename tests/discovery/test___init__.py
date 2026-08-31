@@ -11,6 +11,7 @@ def test_exports() -> None:
         "CollectionCard",
         "CollectionCount",
         "CollectionFilter",
+        "CollectionHit",
         "CollectionSummary",
         "CrawlReport",
         "DatasetCard",
@@ -42,6 +43,7 @@ def test_exports() -> None:
         "resolve_source",
         "rollup_of_collection",
         "search",
+        "search_collections",
         "table_of_contents",
         "update_index",
     }

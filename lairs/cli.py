@@ -82,7 +82,14 @@ if TYPE_CHECKING:
     from lairs.author.publish import PublishPlan
     from lairs.data.acquisition import Acquisition
     from lairs.data.collection import Collection
-    from lairs.discovery import CardDiff, CrawlReport, Rollup, SearchHit, SearchQuery
+    from lairs.discovery import (
+        CardDiff,
+        CollectionHit,
+        CrawlReport,
+        Rollup,
+        SearchHit,
+        SearchQuery,
+    )
     from lairs.discovery.models import (
         CollectionFilter,
         CollectionSummary,
@@ -1381,16 +1388,43 @@ def _print_report(report: CrawlReport) -> None:
         print(f"committed {report.revision}")
 
 
-def _print_hits(hits: list[SearchHit]) -> None:
-    """Print ranked search hits."""
-    if not hits:
-        print("no datasets found")
-        return
+def _print_hits(
+    hits: list[SearchHit],
+    collection_hits: list[CollectionHit],
+) -> None:
+    """Print ranked search hits across dataset and collection cards."""
+    rows: list[tuple[float, str, str, str, str]] = []
     for hit in hits:
         summary = hit.card.summary
-        domain = summary.domain or "-"
-        language = summary.language or "-"
-        print(f"{hit.score:.1f}  {summary.name}  [{domain}/{language}]  {summary.uri}")
+        rows.append(
+            (
+                hit.score,
+                summary.name,
+                summary.domain or "-",
+                summary.language or "-",
+                summary.uri,
+            ),
+        )
+    for collection_hit in collection_hits:
+        collection_summary = collection_hit.card.summary
+        language = (
+            collection_summary.languages[0] if collection_summary.languages else "-"
+        )
+        rows.append(
+            (
+                collection_hit.score,
+                collection_summary.name,
+                collection_summary.kind,
+                language,
+                collection_summary.uri,
+            ),
+        )
+    if not rows:
+        print("no datasets found")
+        return
+    rows.sort(key=lambda row: (-row[0], row[1]))
+    for score, name, domain, language, uri in rows:
+        print(f"{score:.1f}  {name}  [{domain}/{language}]  {uri}")
 
 
 def _print_card_diff(diff: CardDiff) -> None:
@@ -1634,7 +1668,8 @@ def _run_index_search(args: argparse.Namespace) -> int:
         )
     else:
         hits = discovery.search(index.cards(), query)
-    _print_hits(hits)
+    collection_hits = discovery.search_collections(index.collection_cards(), query)
+    _print_hits(hits, collection_hits)
     return 0
 
 
