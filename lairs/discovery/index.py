@@ -368,27 +368,32 @@ class DiscoveryIndex:
         """
         self._repo.save(_digest_uri(CRAWL_STATE_NSID, state.did), state)
 
-    def mute(self, card: DatasetCard) -> None:
+    def mute(self, card: DatasetCard | CollectionCard) -> None:
         """Permanently mute a dataset: remove its card and record the mute.
 
-        Muting removes any indexed card for the corpus and stores a
-        self-describing :class:`~lairs.discovery.cards.MutedDataset` record, so a
-        later crawl does not re-index it and the user can review and unmute it.
+        Muting removes any indexed card for the dataset (a corpus dataset card or
+        a catalogue-collection card) and stores a self-describing
+        :class:`~lairs.discovery.cards.MutedDataset` record, so a later crawl does
+        not re-index it and the user can review and unmute it. The mute record is
+        keyed on the dataset AT-URI, so it works the same for either card type.
 
         Parameters
         ----------
-        card : lairs.discovery.cards.DatasetCard
+        card : DatasetCard or CollectionCard
             The card to mute.
         """
-        corpus_uri = card.summary.uri
-        self.remove_card(corpus_uri)
+        uri = card.summary.uri
+        if isinstance(card, CollectionCard):
+            self.remove_collection_card(uri)
+        else:
+            self.remove_card(uri)
         record = MutedDataset(
-            uri=corpus_uri,
+            uri=uri,
             name=card.summary.name,
             source_endpoint=card.provenance.source_endpoint,
             muted_at=datetime.now(UTC),
         )
-        self._repo.save(_digest_uri(MUTED_NSID, corpus_uri), record)
+        self._repo.save(_digest_uri(MUTED_NSID, uri), record)
 
     def unmute(self, corpus_uri: str) -> bool:
         """Unmute a dataset, returning whether it was muted.

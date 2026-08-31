@@ -105,6 +105,19 @@ def test_collection_cards_lists_only_collection_cards(tmp_path: Path) -> None:
     assert {card.summary.name for card in index.cards()} == {"corpus"}
 
 
+def test_mute_collection_card_removes_and_records(tmp_path: Path) -> None:
+    # muting a collection dataset removes its collection card and records a mute,
+    # keyed by URI exactly as for a corpus dataset.
+    index = DiscoveryIndex.init(tmp_path / "idx")
+    card = _collection_card(_COLLECTION_A, "UniMorph Adyghe")
+    index.put_collection_card(card)
+    index.mute(card)
+    assert index.get_collection_card(_COLLECTION_A) is None
+    assert index.is_muted(_COLLECTION_A) is True
+    assert index.unmute(_COLLECTION_A) is True
+    assert index.is_muted(_COLLECTION_A) is False
+
+
 @pytest.mark.integration
 def test_remove_collection_card_removes_from_index(tmp_path: Path) -> None:
     index = DiscoveryIndex.init(tmp_path / "idx")

@@ -30,7 +30,7 @@ from lairs.discovery.cards import CardFreshness, CardProvenance, DatasetCard
 from lairs.discovery.models import DatasetSummary
 from lairs.tui.app import HelpScreen, LairsApp
 from lairs.tui.query import QueryError
-from lairs.tui.screens.discover import DiscoverPane
+from lairs.tui.screens.discover import DiscoverPane, _type_label
 from lairs.tui.screens.explore import (
     ExplorePane,
     _card_markdown,
@@ -497,6 +497,56 @@ class _FakeDiscoverClient:
         yield from _DISCOVER_ENVELOPES
 
 
+_DISCOVER_COLLECTION_NSID = "pub.layers.catalog.collection"
+
+
+def _discover_collection_value(name: str, kind: str) -> JsonValue:
+    """Build a minimal catalogue-collection record value for the fake PDS."""
+    return {
+        "$type": _DISCOVER_COLLECTION_NSID,
+        "name": name,
+        "kind": kind,
+        "createdAt": "2026-06-18T00:00:00Z",
+    }
+
+
+_DISCOVER_COLLECTION_ENVELOPE = RecordEnvelope(
+    uri="at://did:plc:disc/pub.layers.catalog.collection/u",
+    cid="bafu",
+    value=_discover_collection_value("UniMorph Adyghe", "paradigm-set"),
+)
+
+
+class _FakeMixedDiscoverClient:
+    """A PdsClient stand-in serving one corpus and one catalogue collection."""
+
+    def __init__(self, endpoint: str | None) -> None:
+        self.endpoint = endpoint
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def list_repos(self) -> list[str]:
+        return ["did:plc:disc"]
+
+    def describe_repo(self, repo: str) -> RepoDescription:
+        return RepoDescription(
+            did=repo,
+            handle="disc.test",
+            collections=(_DISCOVER_NSID, _DISCOVER_COLLECTION_NSID),
+        )
+
+    def list_records(self, repo: str, collection: str) -> Iterator[RecordEnvelope]:
+        _ = repo
+        if collection == _DISCOVER_COLLECTION_NSID:
+            yield _DISCOVER_COLLECTION_ENVELOPE
+        else:
+            yield _DISCOVER_ENVELOPES[0]
+
+
 class _FailingDiscoverClient:
     """A PdsClient stand-in whose crawl fails, to exercise error handling."""
 
@@ -557,6 +607,39 @@ def test_discover_tab_lists_new_datasets(
             pane = app.query_one(DiscoverPane)
             assert pane._crawled is True
             assert all(pane._state_of(card) == "new" for card in pane._cards)
+
+    asyncio.run(scenario())
+
+
+def test_discover_tab_lists_collection_datasets(
+    index_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # the Discover crawl surfaces catalogue-collection datasets (UniMorph,
+    # MegaAttitude), not just corpora, tagged with the collection's own kind, and
+    # toggling one indexes a collection card.
+    monkeypatch.setattr(
+        "lairs.tui.screens.discover.PdsClient",
+        _FakeMixedDiscoverClient,
+    )
+
+    async def scenario() -> None:
+        app = LairsApp(index_path=index_path)
+        async with app.run_test(size=(140, 45)) as pilot:
+            await pilot.pause()
+            await pilot.press("4")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = app.query_one(DiscoverPane)
+            collection = next(
+                card for card in pane._cards if card.summary.name == "UniMorph Adyghe"
+            )
+            assert _type_label(collection) == "paradigm-set"
+            pane._toggle(pane._cards.index(collection))
+            assert pane._state_of(collection) == "indexed"
+            assert app._index is not None
+            assert app._index.get_collection_card(collection.summary.uri) is not None
 
     asyncio.run(scenario())
 

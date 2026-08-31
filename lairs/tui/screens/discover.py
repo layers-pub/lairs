@@ -1,10 +1,12 @@
 """The Discover pane: browse configured sources and pick datasets to index.
 
-Lists the configured sources, crawls the selected source for datasets in a
-background worker, and shows each dataset with its index state: ``indexed`` (in
-the local index and visible in Explore), ``new`` (discovered but not indexed), or
-``muted`` (permanently excluded). Toggling a dataset indexes it or mutes it. The
-crawl reuses :func:`lairs.discovery.discover` over a
+Lists the configured sources, crawls the selected source for datasets of every
+type in a background worker, and shows each dataset with its type (``corpus`` or
+a catalogue collection's kind) and index state: ``indexed`` (in the local index
+and visible in Explore), ``new`` (discovered but not indexed), or ``muted``
+(permanently excluded). Toggling a dataset indexes it or mutes it. The crawl
+reuses :func:`lairs.discovery.discover` and
+:func:`lairs.discovery.discover_collections` over a
 :class:`~lairs.atproto.pds.PdsClient`, so it follows the same ``listRepos`` path
 as ``lairs index build``.
 
@@ -26,24 +28,33 @@ from textual.coordinate import Coordinate
 from textual.widgets import DataTable, Static
 
 from lairs.atproto.pds import PdsClient
-from lairs.discovery import discover, load_sources
+from lairs.discovery import discover, discover_collections, load_sources
+from lairs.discovery.cards import CollectionCard, DatasetCard
 
 if TYPE_CHECKING:
-    from lairs.discovery.cards import DatasetCard
     from lairs.discovery.index import DiscoveryIndex
-    from lairs.discovery.models import DatasetSummary
     from lairs.discovery.sources import Source
 
 __all__ = ["DiscoverPane"]
 
-_DATASET_COLUMNS: tuple[str, ...] = ("state", "name", "domain", "lang")
+type _Card = DatasetCard | CollectionCard
+
+_DATASET_COLUMNS: tuple[str, ...] = ("state", "name", "type", "lang")
 
 
-def _lang_label(summary: DatasetSummary) -> str:
+def _lang_label(card: _Card) -> str:
     """Return a compact language label for a dataset row."""
-    if summary.languages:
-        return ", ".join(summary.languages[:3])
+    languages = card.summary.languages
+    if languages:
+        return ", ".join(languages[:3])
     return "-"
+
+
+def _type_label(card: _Card) -> str:
+    """Return a dataset's type: ``corpus`` or the collection's own kind."""
+    if isinstance(card, DatasetCard):
+        return "corpus"
+    return card.summary.kind or "collection"
 
 
 class DiscoverPane(Horizontal):
@@ -58,7 +69,7 @@ class DiscoverPane(Horizontal):
         super().__init__(id="discover-pane")
         self._index = index
         self._sources: list[Source] = []
-        self._cards: list[DatasetCard] = []
+        self._cards: list[_Card] = []
         self._crawled = False
 
     @override
@@ -141,7 +152,7 @@ class DiscoverPane(Horizontal):
         """
         try:
             with PdsClient(source.endpoint) as client:
-                dids = client.list_repos()
+                dids = list(client.list_repos())
                 for card in discover(
                     dids,
                     describe=client,
@@ -149,6 +160,13 @@ class DiscoverPane(Horizontal):
                     endpoint=source.endpoint,
                 ):
                     self.app.call_from_thread(self._add_card, card)
+                for collection_card in discover_collections(
+                    dids,
+                    describe=client,
+                    list_collections=client,
+                    endpoint=source.endpoint,
+                ):
+                    self.app.call_from_thread(self._add_card, collection_card)
         except (httpx.HTTPError, OSError) as error:
             self.app.call_from_thread(self._set_status, f"crawl failed: {error}")
             return
@@ -158,25 +176,29 @@ class DiscoverPane(Horizontal):
         """Report the final dataset count once the crawl finishes."""
         self._set_status(f"{len(self._cards)} dataset(s)")
 
-    def _add_card(self, card: DatasetCard) -> None:
+    def _add_card(self, card: _Card) -> None:
         """Append a discovered card and render its row with its index state."""
         self._cards.append(card)
-        summary = card.summary
         self.query_one("#discovered", DataTable).add_row(
             Text(self._state_of(card)),
-            Text(summary.name),
-            Text(summary.domain or "-"),
-            Text(_lang_label(summary)),
+            Text(card.summary.name),
+            Text(_type_label(card)),
+            Text(_lang_label(card)),
         )
 
-    def _state_of(self, card: DatasetCard) -> str:
+    def _state_of(self, card: _Card) -> str:
         """Return the dataset's state: indexed, new, or muted."""
         if self._index is None:
             return "new"
         uri = card.summary.uri
         if self._index.is_muted(uri):
             return "muted"
-        if self._index.get_card(uri) is not None:
+        indexed = (
+            self._index.get_collection_card(uri)
+            if isinstance(card, CollectionCard)
+            else self._index.get_card(uri)
+        )
+        if indexed is not None:
             return "indexed"
         return "new"
 
@@ -189,7 +211,10 @@ class DiscoverPane(Horizontal):
             self._index.mute(card)
         else:
             self._index.unmute(card.summary.uri)
-            self._index.put_card(card)
+            if isinstance(card, CollectionCard):
+                self._index.put_collection_card(card)
+            else:
+                self._index.put_card(card)
         self._index.commit("discover toggle")
         table = self.query_one("#discovered", DataTable)
         table.update_cell_at(Coordinate(row, 0), Text(self._state_of(card)))
