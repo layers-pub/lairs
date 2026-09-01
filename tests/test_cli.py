@@ -554,10 +554,11 @@ def test_judgments_command_materializes_with_out(
     )
     captured = capsys.readouterr()
     assert code == 0
-    assert "wrote 3 view(s)" in captured.out
+    assert "wrote 4 view(s)" in captured.out
     assert (out / "judgments.parquet").exists()
     assert (out / "items.parquet").exists()
     assert (out / "participants.parquet").exists()
+    assert (out / "region_responses.parquet").exists()
 
 
 # nsid helper ----------------------------------------------------------------

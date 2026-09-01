@@ -48,6 +48,7 @@ __all__ = [
     "LabelCount",
     "Participant",
     "ParticipantSummary",
+    "RegionResponseRow",
     "load_judgment_study",
 ]
 
@@ -104,6 +105,18 @@ _PARTICIPANTS_SCHEMA = pa.schema(
         ("participant_id", pa.string()),
         ("name", pa.string()),
         ("judgment_count", pa.int64()),
+    ],
+)
+_REGION_RESPONSES_SCHEMA = pa.schema(
+    [
+        ("participant_id", pa.string()),
+        ("item_ref", pa.string()),
+        ("region_index", pa.int64()),
+        ("reading_time_ms", pa.int64()),
+        ("first_fixation_ms", pa.int64()),
+        ("gaze_duration_ms", pa.int64()),
+        ("go_past_ms", pa.int64()),
+        ("fixation_count", pa.int64()),
     ],
 )
 
@@ -185,6 +198,61 @@ class JudgmentRow(dx.Model):
     response_time_ms: int | None = dx.field(
         default=None,
         description="response time for this item, in milliseconds",
+    )
+
+
+class RegionResponseRow(dx.Model):
+    """One per-region reading measurement, flattened for browse and query.
+
+    A judgment in a self-paced-reading or eye-tracking study records one of
+    these per region of its item (its stimulus). Each row ties the measurement
+    to the participant and item it belongs to.
+
+    Attributes
+    ----------
+    participant_id : str
+        The judging participant's identifier.
+    item_ref : str
+        The AT-URI of the judged item the region belongs to.
+    region_index : int or None
+        The region's position within the item.
+    reading_time_ms : int or None
+        Total reading time on the region, in milliseconds.
+    first_fixation_ms : int or None
+        First-fixation duration, in milliseconds (eye tracking).
+    gaze_duration_ms : int or None
+        Gaze duration, in milliseconds (eye tracking).
+    go_past_ms : int or None
+        Go-past (regression-path) time, in milliseconds (eye tracking).
+    fixation_count : int or None
+        Number of fixations on the region (eye tracking).
+    """
+
+    participant_id: str = dx.field(description="the judging participant's id")
+    item_ref: str = dx.field(description="AT-URI of the judged item")
+    region_index: int | None = dx.field(
+        default=None,
+        description="the region's position within the item",
+    )
+    reading_time_ms: int | None = dx.field(
+        default=None,
+        description="total reading time on the region, in milliseconds",
+    )
+    first_fixation_ms: int | None = dx.field(
+        default=None,
+        description="first-fixation duration, in milliseconds",
+    )
+    gaze_duration_ms: int | None = dx.field(
+        default=None,
+        description="gaze duration, in milliseconds",
+    )
+    go_past_ms: int | None = dx.field(
+        default=None,
+        description="go-past (regression-path) time, in milliseconds",
+    )
+    fixation_count: int | None = dx.field(
+        default=None,
+        description="number of fixations on the region",
     )
 
 
@@ -412,6 +480,39 @@ class JudgmentStudy:
                 )
         return Dataset(rows, model=JudgmentRow)
 
+    def region_responses(self) -> Dataset[RegionResponseRow]:
+        """Return every per-region reading measurement, one row per region.
+
+        Self-paced-reading and eye-tracking studies attach region responses to
+        their judgments; this flattens them across the study, tying each to its
+        participant and item. A study without region responses yields an empty
+        dataset.
+
+        Returns
+        -------
+        lairs.data.dataset.Dataset
+            A dataset of flattened region-response rows.
+        """
+        rows: list[RegionResponseRow] = []
+        for judgment_set in self._judgment_sets():
+            participant_id = _participant_id(judgment_set.agent) or ""
+            for judgment in judgment_set.judgments:
+                item_ref = _item_ref(judgment) or ""
+                rows.extend(
+                    RegionResponseRow(
+                        participant_id=participant_id,
+                        item_ref=item_ref,
+                        region_index=region.regionIndex,
+                        reading_time_ms=region.readingTimeMs,
+                        first_fixation_ms=region.firstFixationMs,
+                        gaze_duration_ms=region.gazeDurationMs,
+                        go_past_ms=region.goPastMs,
+                        fixation_count=region.fixationCount,
+                    )
+                    for region in judgment.regionResponses or ()
+                )
+        return Dataset(rows, model=RegionResponseRow)
+
     def _item_text(self, item_ref: str | None) -> str | None:
         """Return the text of the expression an item ref names, if it resolved."""
         if item_ref is None:
@@ -544,15 +645,33 @@ class JudgmentStudy:
         ]
         return pa.Table.from_pylist(rows, schema=_PARTICIPANTS_SCHEMA)
 
+    def _region_responses_arrow(self) -> pa.Table:
+        """Return the per-region reading measurements as an Arrow table."""
+        rows = [
+            {
+                "participant_id": row.participant_id,
+                "item_ref": row.item_ref,
+                "region_index": row.region_index,
+                "reading_time_ms": row.reading_time_ms,
+                "first_fixation_ms": row.first_fixation_ms,
+                "gaze_duration_ms": row.gaze_duration_ms,
+                "go_past_ms": row.go_past_ms,
+                "fixation_count": row.fixation_count,
+            }
+            for row in self.region_responses()
+        ]
+        return pa.Table.from_pylist(rows, schema=_REGION_RESPONSES_SCHEMA)
+
     def materialize(self, out_dir: Path) -> list[Path]:
         """Materialize the study to Parquet views for querying.
 
         Writes ``judgments.parquet`` (the long-format participant-by-item
-        matrix), ``items.parquet`` (per-item response distributions), and
-        ``participants.parquet`` (per-participant judgment counts) into
-        ``out_dir``, so the study is queryable with the DuckDB engine and the
-        explorer's Query tab. The views are derived, rebuildable outputs, never
-        the source of truth.
+        matrix), ``items.parquet`` (per-item response distributions),
+        ``participants.parquet`` (per-participant judgment counts), and
+        ``region_responses.parquet`` (per-region reading measurements, empty for
+        studies without them) into ``out_dir``, so the study is queryable with
+        the DuckDB engine and the explorer's Query tab. The views are derived,
+        rebuildable outputs, never the source of truth.
 
         Parameters
         ----------
@@ -568,6 +687,7 @@ class JudgmentStudy:
             "judgments": self.to_arrow(),
             "items": self._items_arrow(),
             "participants": self._participants_arrow(),
+            "region_responses": self._region_responses_arrow(),
         }
         # materialize takes a repository for its default derive path, unused when
         # explicit views are passed; a throwaway repo satisfies the signature

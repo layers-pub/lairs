@@ -24,6 +24,7 @@ def test_public_surface() -> None:
         "LabelCount",
         "Participant",
         "ParticipantSummary",
+        "RegionResponseRow",
         "SessionWithMedia",
         "SessionWithParticipants",
         "dtype_of",

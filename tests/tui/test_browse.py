@@ -214,6 +214,27 @@ def test_judgment_set_distribution_view_renders_scalar_histogram() -> None:
     assert "Median response time: 1200 ms" in md
 
 
+def test_judgment_set_distribution_shows_region_reading_times() -> None:
+    """The Distribution view summarizes per-region reading times when present."""
+    data: Mapping[str, JsonValue] = {
+        "agent": {"id": "m1"},
+        "experimentRef": "at://did:plc:s/pub.layers.judgment.experimentDef/x",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "judgments": [
+            {
+                "item": {"recordRef": "at://x/e/i1"},
+                "regionResponses": [
+                    {"region": {"recordRef": "at://x/e/i1"}, "readingTimeMs": 300},
+                    {"region": {"recordRef": "at://x/e/i1"}, "readingTimeMs": 500},
+                ],
+            },
+        ],
+    }
+    uri = "at://did:plc:s/pub.layers.judgment.judgmentSet/a"
+    md = render_view(None, _JUDGMENT_SET, uri, data, "Distribution")  # ty: ignore[invalid-argument-type]
+    assert "Region reading times: 2 regions, median 500 ms" in md
+
+
 def test_experiment_renders_guidelines() -> None:
     """The experiment view surfaces the study guidelines."""
 

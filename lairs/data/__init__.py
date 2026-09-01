@@ -33,6 +33,7 @@ from lairs.data.judgment import (
     LabelCount,
     Participant,
     ParticipantSummary,
+    RegionResponseRow,
     load_judgment_study,
 )
 from lairs.data.media import media_by_kind, signal_media
@@ -53,6 +54,7 @@ __all__ = [
     "LabelCount",
     "Participant",
     "ParticipantSummary",
+    "RegionResponseRow",
     "SessionWithMedia",
     "SessionWithParticipants",
     "dtype_of",

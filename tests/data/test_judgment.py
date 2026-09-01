@@ -14,7 +14,12 @@ from lairs.data import judgment as judgment_mod
 from lairs.data.judgment import JudgmentStudy, load_judgment_study
 from lairs.records._generated.defs import AgentRef, ObjectRef
 from lairs.records._generated.expression import Expression
-from lairs.records._generated.judgment import ExperimentDef, Judgment, JudgmentSet
+from lairs.records._generated.judgment import (
+    ExperimentDef,
+    Judgment,
+    JudgmentSet,
+    RegionResponse,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -202,6 +207,7 @@ def test_materialize_writes_queryable_views(tmp_path: Path) -> None:
         "judgments.parquet",
         "items.parquet",
         "participants.parquet",
+        "region_responses.parquet",
     }
     judgments = pq.read_table(tmp_path / "judgments.parquet")
     assert judgments.num_rows == 4
@@ -212,6 +218,53 @@ def test_materialize_writes_queryable_views(tmp_path: Path) -> None:
     }
     participants = pq.read_table(tmp_path / "participants.parquet")
     assert participants.num_rows == 2
+
+
+def test_region_responses_surface_and_materialize(tmp_path: Path) -> None:
+    study = JudgmentStudy.new()
+    study.add_record(_EXPERIMENT, _experiment())
+    study.add_record(_ITEM_1, _expression("The reader paused here."))
+    judgment = Judgment(
+        item=ObjectRef(recordRef=_ITEM_1),
+        regionResponses=(
+            RegionResponse(
+                region=ObjectRef(recordRef=_ITEM_1), regionIndex=0, readingTimeMs=320
+            ),
+            RegionResponse(
+                region=ObjectRef(recordRef=_ITEM_1),
+                regionIndex=1,
+                readingTimeMs=480,
+                firstFixationMs=210,
+            ),
+        ),
+    )
+    study.add_record(
+        _SET_A,
+        JudgmentSet(
+            agent=AgentRef(id="m1"),
+            judgments=(judgment,),
+            experimentRef=_EXPERIMENT,
+            createdAt=_NOW,
+        ),
+    )
+    rows = list(study.region_responses())
+    assert len(rows) == 2
+    assert [row.region_index for row in rows] == [0, 1]
+    assert [row.reading_time_ms for row in rows] == [320, 480]
+    assert rows[1].first_fixation_ms == 210
+    assert rows[0].participant_id == "m1"
+    # the region measurements materialize as their own queryable view.
+    written = study.materialize(tmp_path)
+    assert (tmp_path / "region_responses.parquet") in written
+    table = pq.read_table(tmp_path / "region_responses.parquet")
+    assert table.num_rows == 2
+    assert set(table.column("reading_time_ms").to_pylist()) == {320, 480}
+
+
+def test_region_responses_empty_when_absent() -> None:
+    fake = _study_fake()
+    study = load_judgment_study(_EXPERIMENT, source="pds", pds_client=fake)  # ty: ignore[invalid-argument-type]
+    assert list(study.region_responses()) == []
 
 
 def test_judgments_carry_response_time() -> None:
@@ -259,5 +312,6 @@ def test_exports() -> None:
         "LabelCount",
         "Participant",
         "ParticipantSummary",
+        "RegionResponseRow",
         "load_judgment_study",
     }

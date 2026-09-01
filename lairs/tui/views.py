@@ -258,6 +258,7 @@ def _render_judgment_set(
     scalars: list[int] = []
     labels: dict[str, int] = {}
     response_times: list[int] = []
+    region_reading_times: list[int] = []
     for judgment in judgments:
         obj = _obj(judgment)
         scalar = obj.get("scalarValue")
@@ -269,11 +270,23 @@ def _render_judgment_set(
         response_time = obj.get("responseTimeMs")
         if isinstance(response_time, int):
             response_times.append(response_time)
+        for region in _items(obj.get("regionResponses")):
+            reading = _obj(region).get("readingTimeMs")
+            if isinstance(reading, int):
+                region_reading_times.append(reading)
     lines += _distribution_section(scalars, labels)
     if response_times:
         response_times.sort()
         median = response_times[len(response_times) // 2]
         lines += ["", f"Median response time: {median} ms"]
+    if region_reading_times:
+        region_reading_times.sort()
+        median_region = region_reading_times[len(region_reading_times) // 2]
+        lines += [
+            "",
+            f"Region reading times: {len(region_reading_times)} regions, "
+            f"median {median_region} ms",
+        ]
     return "\n".join(lines + _footer(uri))
 
 
