@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scale, each item's response distribution, and the participants. Item text
   resolves by bulk-loading the stimulus expression accounts the judgments
   reference rather than one fetch per item.
+- **Judgment materialization.** `JudgmentStudy.to_arrow` and `.materialize`
+  write the judgments as a long-format participant-by-item table plus per-item
+  and per-participant views, and `lairs judgments <uri> --out <dir>` writes
+  `judgments.parquet`, `items.parquet`, and `participants.parquet`, so a study is
+  queryable with DuckDB and the explorer's Query tab.
 
 ### Changed
 

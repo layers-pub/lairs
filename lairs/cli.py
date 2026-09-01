@@ -423,6 +423,15 @@ def _add_judgments(subparsers: _Subparsers) -> None:
         help="the base URL of the PDS to load from",
     )
     sub.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help=(
+            "materialize the study to Parquet views (judgments, items, "
+            "participants) in this directory instead of printing"
+        ),
+    )
+    sub.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -872,6 +881,12 @@ def _run_judgments(args: argparse.Namespace) -> int:
     except (httpx.HTTPError, IdentityError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    if args.out is not None:
+        written = study.materialize(args.out)
+        print(f"wrote {len(written)} view(s) to {args.out}")
+        for path in written:
+            print(f"  {path.name}")
+        return 0
     _print_judgment_study(study, args.uri, limit=args.limit, as_json=args.json)
     return 0
 

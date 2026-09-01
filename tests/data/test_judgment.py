@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import pyarrow.parquet as pq
 import pytest
 
 from lairs.atproto.pds import RecordEnvelope
@@ -17,6 +18,7 @@ from lairs.records._generated.judgment import ExperimentDef, Judgment, JudgmentS
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
     import didactic.api as dx
 
@@ -170,6 +172,45 @@ def test_categorical_distribution_reports_label_counts() -> None:
         "yes": 2,
         "no": 1,
     }
+
+
+def test_to_arrow_is_long_format() -> None:
+    fake = _study_fake()
+    study = load_judgment_study(_EXPERIMENT, source="pds", pds_client=fake)  # ty: ignore[invalid-argument-type]
+    table = study.to_arrow()
+    assert table.column_names == [
+        "participant_id",
+        "item_ref",
+        "item_text",
+        "scalar_value",
+        "categorical_value",
+        "confidence",
+    ]
+    assert table.num_rows == 4
+    assert set(table.column("item_text").to_pylist()) == {
+        "The cat sat.",
+        "Sat cat the on mat.",
+    }
+
+
+def test_materialize_writes_queryable_views(tmp_path: Path) -> None:
+    fake = _study_fake()
+    study = load_judgment_study(_EXPERIMENT, source="pds", pds_client=fake)  # ty: ignore[invalid-argument-type]
+    written = study.materialize(tmp_path)
+    assert {path.name for path in written} == {
+        "judgments.parquet",
+        "items.parquet",
+        "participants.parquet",
+    }
+    judgments = pq.read_table(tmp_path / "judgments.parquet")
+    assert judgments.num_rows == 4
+    items = pq.read_table(tmp_path / "items.parquet")
+    assert set(items.column("item_text").to_pylist()) == {
+        "The cat sat.",
+        "Sat cat the on mat.",
+    }
+    participants = pq.read_table(tmp_path / "participants.parquet")
+    assert participants.num_rows == 2
 
 
 def test_load_judgment_study_rejects_unknown_source() -> None:

@@ -21,16 +21,21 @@ avoid clashing with the surface types defined here.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import didactic.api as dx
+import pyarrow as pa
 
 from lairs._aturi import authority_of
 from lairs.data._loader import decode_envelope, load_graph
 from lairs.data.dataset import Dataset
 from lairs.records._generated import expression as expression_records
 from lairs.records._generated import judgment as judgment_records
+from lairs.store.arrow import materialize as materialize_views
 from lairs.store.pool import ModelPool
+from lairs.store.repository import Repository
 
 if TYPE_CHECKING:
     from lairs.atproto.pds import PdsClient
@@ -70,6 +75,36 @@ _SOURCE_PDS = "pds"
 _SOURCE_APPVIEW = "appview"
 _SOURCE_AUTO = "auto"
 _VALID_SOURCES = frozenset({_SOURCE_PDS, _SOURCE_APPVIEW, _SOURCE_AUTO})
+
+# the Arrow schemas of the materialized views. explicit schemas keep column
+# types stable across studies, including an empty study with no judgments.
+_JUDGMENTS_SCHEMA = pa.schema(
+    [
+        ("participant_id", pa.string()),
+        ("item_ref", pa.string()),
+        ("item_text", pa.string()),
+        ("scalar_value", pa.int64()),
+        ("categorical_value", pa.string()),
+        ("confidence", pa.int64()),
+    ],
+)
+_ITEMS_SCHEMA = pa.schema(
+    [
+        ("item_ref", pa.string()),
+        ("item_text", pa.string()),
+        ("count", pa.int64()),
+        ("mean", pa.float64()),
+        ("minimum", pa.int64()),
+        ("maximum", pa.int64()),
+    ],
+)
+_PARTICIPANTS_SCHEMA = pa.schema(
+    [
+        ("participant_id", pa.string()),
+        ("name", pa.string()),
+        ("judgment_count", pa.int64()),
+    ],
+)
 
 
 class LabelCount(dx.Model):
@@ -445,6 +480,91 @@ class JudgmentStudy:
             for participant_id in order
         ]
         return Dataset(summaries, model=ParticipantSummary)
+
+    def to_arrow(self) -> pa.Table:
+        """Return the judgments as a long-format Arrow table.
+
+        One row per judgment, with the columns ``participant_id``, ``item_ref``,
+        ``item_text``, ``scalar_value``, ``categorical_value``, and
+        ``confidence``. This is the queryable matrix a materialized study writes
+        as ``judgments.parquet``.
+
+        Returns
+        -------
+        pyarrow.Table
+            The long-format judgment table.
+        """
+        rows = [
+            {
+                "participant_id": row.participant_id,
+                "item_ref": row.item_ref,
+                "item_text": row.item_text,
+                "scalar_value": row.scalar_value,
+                "categorical_value": row.categorical_value,
+                "confidence": row.confidence,
+            }
+            for row in self.judgments()
+        ]
+        return pa.Table.from_pylist(rows, schema=_JUDGMENTS_SCHEMA)
+
+    def _items_arrow(self) -> pa.Table:
+        """Return the per-item distributions as an Arrow table."""
+        rows = [
+            {
+                "item_ref": item.item_ref,
+                "item_text": item.item_text,
+                "count": item.count,
+                "mean": item.mean,
+                "minimum": item.minimum,
+                "maximum": item.maximum,
+            }
+            for item in self.item_distributions()
+        ]
+        return pa.Table.from_pylist(rows, schema=_ITEMS_SCHEMA)
+
+    def _participants_arrow(self) -> pa.Table:
+        """Return the per-participant summaries as an Arrow table."""
+        rows = [
+            {
+                "participant_id": summary.participant_id,
+                "name": summary.name,
+                "judgment_count": summary.judgment_count,
+            }
+            for summary in self.participant_summaries()
+        ]
+        return pa.Table.from_pylist(rows, schema=_PARTICIPANTS_SCHEMA)
+
+    def materialize(self, out_dir: Path) -> list[Path]:
+        """Materialize the study to Parquet views for querying.
+
+        Writes ``judgments.parquet`` (the long-format participant-by-item
+        matrix), ``items.parquet`` (per-item response distributions), and
+        ``participants.parquet`` (per-participant judgment counts) into
+        ``out_dir``, so the study is queryable with the DuckDB engine and the
+        explorer's Query tab. The views are derived, rebuildable outputs, never
+        the source of truth.
+
+        Parameters
+        ----------
+        out_dir : pathlib.Path
+            The output directory for the views.
+
+        Returns
+        -------
+        list of pathlib.Path
+            The written view files, in name order.
+        """
+        views = {
+            "judgments": self.to_arrow(),
+            "items": self._items_arrow(),
+            "participants": self._participants_arrow(),
+        }
+        # materialize takes a repository for its default derive path, unused when
+        # explicit views are passed; a throwaway repo satisfies the signature
+        # without leaving a stray store in the caller's output directory.
+        with tempfile.TemporaryDirectory(prefix="lairs-materialize-") as scratch:
+            repo = Repository.init(Path(scratch) / "repo")
+            return materialize_views(repo, out_dir, views=views)
 
 
 def _distribution_for(

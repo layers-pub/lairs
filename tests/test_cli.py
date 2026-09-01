@@ -494,6 +494,72 @@ def test_judgments_command_prints_study(
     assert "mturk/1" in captured.out
 
 
+def test_judgments_command_materializes_with_out(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    experiment_uri = "at://did:plc:s/pub.layers.judgment.experimentDef/x"
+    item_uri = "at://did:plc:i/pub.layers.expression.expression/i1"
+    study = JudgmentStudy.new()
+    study.add_record(
+        experiment_uri,
+        judgment_records.ExperimentDef(
+            name="Demo", scaleMin=1, scaleMax=7, createdAt=_NOW
+        ),
+    )
+    study.add_record(
+        item_uri,
+        expression_records.Expression(
+            createdAt=_NOW, id="i1", kind="sentence", text="The cat sat."
+        ),
+    )
+    study.add_record(
+        "at://did:plc:s/pub.layers.judgment.judgmentSet/a",
+        judgment_records.JudgmentSet(
+            agent=AgentRef(id="mturk/1"),
+            judgments=(
+                judgment_records.Judgment(
+                    item=ObjectRef(recordRef=item_uri), scalarValue=6
+                ),
+            ),
+            experimentRef=experiment_uri,
+            createdAt=_NOW,
+        ),
+    )
+
+    def fake_load(
+        _uri: str,
+        *,
+        source: str = "auto",
+        pds_client: PdsClient | None = None,
+        follow_refs: bool = True,
+    ) -> JudgmentStudy:
+        assert source == "pds"
+        assert pds_client is not None
+        assert follow_refs is True
+        return study
+
+    monkeypatch.setattr("lairs.data.load_judgment_study", fake_load)
+    out = tmp_path / "views"
+    code = cli.main(
+        [
+            "judgments",
+            experiment_uri,
+            "--endpoint",
+            "https://pds.example",
+            "--out",
+            str(out),
+        ],
+    )
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "wrote 3 view(s)" in captured.out
+    assert (out / "judgments.parquet").exists()
+    assert (out / "items.parquet").exists()
+    assert (out / "participants.parquet").exists()
+
+
 # nsid helper ----------------------------------------------------------------
 
 

@@ -144,6 +144,12 @@ reference; pass `--no-follow-refs` to skip that and read only the study's own
 records (item text is then left unresolved). `--limit` caps the items and
 participants shown, and `--json` prints the whole study as JSON.
 
+Pass `--out <dir>` to materialize the study to Parquet instead of printing: it
+writes `judgments.parquet` (the long-format participant-by-item matrix),
+`items.parquet` (per-item distributions), and `participants.parquet`, so the
+study is queryable with DuckDB or the explorer's Query tab (`lairs tui --data
+<dir>`).
+
 ## `datasets`
 
 Resolve a handle or DID and list its datasets, one row per corpus.
