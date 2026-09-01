@@ -36,6 +36,9 @@ __all__ = [
 ]
 
 _MAX_RELATED = 200
+
+# the widest response-histogram bar, in block characters.
+_HISTOGRAM_WIDTH = 20
 _TEXT_PREVIEW = 600
 
 _TYPEDEF_NSID = "pub.layers.ontology.typeDef"
@@ -211,6 +214,9 @@ def _render_experiment(
     )
     if materials:
         lines += ["", "## Materials", "", *materials]
+    guidelines = _str(data.get("guidelines"))
+    if guidelines:
+        lines += ["", "## Guidelines", "", guidelines]
     sets = browser.related_raw(_JUDGMENT_SET_NSID, "experimentRef", uri)
     reports = browser.related_raw(_AGREEMENT_NSID, "experimentRef", uri)
     lines += ["", f"## Responses ({len(sets)} judgment sets)", ""]
@@ -244,17 +250,61 @@ def _render_judgment_set(
             ("created", _str(data.get("createdAt"))),
         ]
     )
-    counts: dict[str, int] = {}
+    scalars: list[int] = []
+    labels: dict[str, int] = {}
     for judgment in judgments:
-        value = _obj(judgment).get("categoricalValue")
-        if value:
-            counts[_str(value)] = counts.get(_str(value), 0) + 1
-    if counts:
-        lines += ["", "## Response distribution", ""]
-        lines += [
-            f"- `{v}`: {counts[v]}" for v in sorted(counts, key=lambda k: -counts[k])
-        ]
+        obj = _obj(judgment)
+        scalar = obj.get("scalarValue")
+        if isinstance(scalar, int):
+            scalars.append(scalar)
+        categorical = obj.get("categoricalValue")
+        if categorical:
+            labels[_str(categorical)] = labels.get(_str(categorical), 0) + 1
+    lines += _distribution_section(scalars, labels)
     return "\n".join(lines + _footer(uri))
+
+
+def _distribution_section(
+    scalars: list[int],
+    labels: dict[str, int],
+) -> list[str]:
+    """Render a response distribution: a scalar histogram, or categorical counts.
+
+    Scalar responses get a mean, a range, and a per-value bar histogram;
+    categorical responses get per-label counts, most frequent first. A set with
+    neither yields no section.
+    """
+    if scalars:
+        n = len(scalars)
+        mean = sum(scalars) / n
+        low, high = min(scalars), max(scalars)
+        counts: dict[int, int] = {}
+        for value in scalars:
+            counts[value] = counts.get(value, 0) + 1
+        peak = max(counts.values())
+        lines = [
+            "",
+            "## Response distribution",
+            "",
+            f"{n} scalar responses, mean {mean:.2f}, range {low}..{high}",
+            "",
+        ]
+        for value in range(low, high + 1):
+            count = counts.get(value, 0)
+            bar = "▇" * round(_HISTOGRAM_WIDTH * count / peak)
+            lines.append(f"- {value}: {bar} {count}")
+        return lines
+    if labels:
+        return [
+            "",
+            "## Response distribution",
+            "",
+            *(
+                f"- `{label}`: {labels[label]}"
+                for label in sorted(labels, key=lambda k: -labels[k])
+            ),
+        ]
+    return []
 
 
 def _render_graph_edge_set(

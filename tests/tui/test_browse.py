@@ -33,7 +33,9 @@ from lairs.tui.screens.browse import BrowsePane
 from lairs.tui.views import (
     _ITEM_INDEX,
     _item_index,
+    _render_experiment,
     _render_generic,
+    _render_judgment_set,
     _span_text,
     columns_for,
     record_views,
@@ -172,6 +174,54 @@ def test_judgment_set_renders_responses(repo_dir: Path) -> None:
     assert "annotator A" in md
     assert "The quick brown fox jumps." in md
     assert "yes" in md
+
+
+def test_judgment_set_renders_scalar_histogram() -> None:
+    """A scalar judgment set renders a mean, a range, and a per-value histogram."""
+    data = {
+        "agent": {"id": "m1", "name": "Worker 1"},
+        "experimentRef": "at://did:plc:s/pub.layers.judgment.experimentDef/x",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "judgments": [
+            {"item": {"recordRef": "at://x/e/i1"}, "scalarValue": value}
+            for value in (7, 6, 7, 5, 2)
+        ],
+    }
+    uri = "at://did:plc:s/pub.layers.judgment.judgmentSet/a"
+    md = _render_judgment_set(None, uri, data)  # ty: ignore[invalid-argument-type]
+    assert "5 scalar responses, mean 5.40, range 2..7" in md
+    assert "▇" in md
+    # every value in the range gets a row, including zero-count values.
+    assert "- 3:  0" in md
+    assert "- 7:" in md
+
+
+def test_experiment_renders_guidelines() -> None:
+    """The experiment view surfaces the study guidelines."""
+
+    class _NoRelated:
+        def related_raw(
+            self, nsid: str, field: str, uri: str
+        ) -> list[tuple[str, Mapping[str, JsonValue]]]:
+            _ = (nsid, field, uri)
+            return []
+
+    data = {
+        "name": "MegaAcceptability",
+        "taskType": "ordinal-scale",
+        "scaleMin": 1,
+        "scaleMax": 7,
+        "guidelines": "Rate how acceptable each sentence is.",
+        "createdAt": "2026-01-01T00:00:00Z",
+    }
+    md = _render_experiment(
+        _NoRelated(),  # ty: ignore[invalid-argument-type]
+        "at://did:plc:s/pub.layers.judgment.experimentDef/x",
+        data,
+    )
+    assert "## Guidelines" in md
+    assert "Rate how acceptable each sentence is." in md
+    assert "1..7" in md
 
 
 def test_graph_edge_set_renders_edges(repo_dir: Path) -> None:
