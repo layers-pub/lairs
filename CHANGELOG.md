@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Federated project domains.** `repo.decomp.io` (Universal Decompositional
+  Semantics) and `repo.megaattitude.io` (MegaAttitude) are live PDS endpoints and
+  ship as built-in discovery sources alongside `repo.layers.pub`, so all three
+  project domains are browsable out of the box. `lairs sources list` shows all
+  three; the index dedups by dataset URI, so crawling every source stays
+  idempotent while they share a PDS.
+- **Catalogue-collection datasets in the global browse.** `lairs index search`
+  and the TUI Explore pane surface catalogue-collection datasets (UniMorph,
+  VerbNet, WordNet, MegaAttitude), not only corpora, through a new
+  `search_collections` and `CollectionHit`. Corpus-only facets (expression
+  bounds, quality metric, annotation rounds) match no collection.
+- **Collection datasets in the Discover tab.** The TUI Discover crawl lists
+  collection-shaped datasets alongside corpora, tags each row with its type
+  (`corpus` or the collection's kind), and indexes or mutes either card type;
+  `DiscoveryIndex.mute` accepts a collection card, keyed by URI as before.
+
+### Changed
+
+- **Documentation.** Clarified the guides, concepts, reference, and tutorials, and
+  fixed the README quickstart to pass a `PdsClient` so it runs as written.
+
 ## [0.6.0] - 2026-08-20
 
 ### Added
