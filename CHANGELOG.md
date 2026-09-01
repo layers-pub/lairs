@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   collection-shaped datasets alongside corpora, tags each row with its type
   (`corpus` or the collection's kind), and indexes or mutes either card type;
   `DiscoveryIndex.mute` accepts a collection card, keyed by URI as before.
+- **Judgment-study browsing.** `lairs.data.JudgmentStudy` and
+  `load_judgment_study` load an experiment definition and its judgment sets and
+  expose the study the way it is explored: its response scale, its participants,
+  its items (with resolved text), the raw participant-by-item judgments, and
+  per-item and per-participant distributions. `lairs judgments <uri>` prints the
+  scale, each item's response distribution, and the participants. Item text
+  resolves by bulk-loading the stimulus expression accounts the judgments
+  reference rather than one fetch per item.
 
 ### Changed
 
