@@ -48,6 +48,11 @@ _COLLECTION_MEMBERSHIP_NSID = "pub.layers.resource.collectionMembership"
 _CORPUS_MEMBERSHIP_NSID = "pub.layers.corpus.membership"
 _EXPRESSION_NSID = "pub.layers.expression.expression"
 _LAYER_NSID = "pub.layers.annotation.annotationLayer"
+_MEDIA_NSID = "pub.layers.media.media"
+
+# the milli- and nano-units the signal block stores frequencies and durations in.
+_MILLI = 1000
+_NANOS_PER_SECOND = 1_000_000_000
 
 
 # ---- small accessors over raw JSON ----------------------------------------
@@ -498,6 +503,64 @@ def _render_media(
     return "\n".join(lines + _footer(uri))
 
 
+def _hz(milli_hz: JsonValue) -> str:
+    """Render a milli-hertz frequency as hertz, or empty when unset."""
+    if isinstance(milli_hz, int):
+        return f"{milli_hz / _MILLI:g}"
+    return ""
+
+
+def _seconds(nanos: JsonValue) -> str:
+    """Render a nanosecond duration as seconds, or empty when unset."""
+    if isinstance(nanos, int):
+        return f"{nanos / _NANOS_PER_SECOND:g}"
+    return ""
+
+
+def _signal_view(uri: str, data: Mapping[str, JsonValue]) -> str:
+    """Render a media record's signal block: recording params and channel layout.
+
+    The sampled waveform lives in the media carrier blob, which the index never
+    stores, so this shows the recording's parameters and the channel and sensor
+    layout the record carries rather than the samples themselves.
+    """
+    signal = _obj(data.get("signal"))
+    title = _str(data.get("title")) or _str(data.get("kind")) or "signal"
+    lines = [f"# {title} signal", ""]
+    lines += _kv(
+        [
+            ("modality", _str(signal.get("modality"))),
+            ("device", _str(signal.get("device"))),
+            ("channels", _str(signal.get("channelCount"))),
+            ("sampling Hz", _hz(signal.get("samplingFrequencyMilliHz"))),
+            ("duration s", _seconds(signal.get("recordingDurationNanos"))),
+            ("samples", _str(signal.get("numberOfSamples"))),
+            ("reference", _str(signal.get("referenceScheme"))),
+            ("placement", _str(signal.get("placementScheme"))),
+            ("line freq Hz", _hz(signal.get("powerLineFrequencyMilliHz"))),
+        ]
+    )
+    channels = _items(signal.get("channels"))
+    if channels:
+        lines += [
+            "",
+            f"## Channels ({len(channels)})",
+            "",
+            "| name | type | unit | status |",
+            "| --- | --- | --- | --- |",
+        ]
+        for raw in channels[:_MAX_RELATED]:
+            channel = _obj(raw)
+            lines.append(
+                f"| {_str(channel.get('name'))} | {_str(channel.get('type'))} "
+                f"| {_str(channel.get('unit'))} | {_str(channel.get('status'))} |",
+            )
+    sensors = _items(signal.get("sensors"))
+    if sensors:
+        lines += ["", f"## Sensors: {len(sensors)}"]
+    return "\n".join(lines + _footer(uri))
+
+
 def _render_persona(
     _browser: RepoBrowser, uri: str, data: Mapping[str, JsonValue]
 ) -> str:
@@ -866,6 +929,13 @@ def record_views(  # noqa: PLR0911 - one branch per record family
                 ("Detail", lambda: _render_generic(uri, data)),
             ]
         )
+    if nsid == _MEDIA_NSID:
+        media_views: list[tuple[str, Callable[[], str]]] = []
+        if isinstance(data.get("signal"), dict):
+            media_views.append(("Signal", lambda: _signal_view(uri, data)))
+        media_views.append(("Media", lambda: _render_media(browser, uri, data)))
+        media_views.append(("Detail", lambda: _render_generic(uri, data)))
+        return _thunks(media_views)
     overview = _RENDERERS.get(nsid)
     views: list[tuple[str, Callable[[], str]]] = []
     if overview is not None:

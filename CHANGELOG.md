@@ -44,6 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   range for scalar tasks (in addition to the per-label counts for categorical
   tasks) plus the median reading/response time, and an experiment definition
   shows its scale and guidelines.
+- **Signal (neural recording) view in the Browse tab.** A media record carrying
+  a signal block gains a Signal view with the recording's parameters (modality,
+  device, sampling frequency, duration, channel count, reference and placement
+  schemes) and its channel and sensor layout. The sampled waveform lives in the
+  carrier blob, which the index never stores, so the view shows the layout, not
+  the samples.
 
 ### Changed
 

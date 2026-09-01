@@ -242,6 +242,45 @@ def test_experiment_renders_guidelines() -> None:
     assert "1..7" in md
 
 
+def test_media_signal_view_renders_channels() -> None:
+    """A signal medium offers a Signal view with its params and channel layout."""
+    data: Mapping[str, JsonValue] = {
+        "kind": "signal",
+        "title": "subj01 EEG",
+        "signal": {
+            "modality": "eeg",
+            "device": "BioSemi ActiveTwo",
+            "channelCount": 3,
+            "samplingFrequencyMilliHz": 1_024_000,
+            "recordingDurationNanos": 600_000_000_000,
+            "channels": [
+                {"name": "Fz", "type": "EEG", "unit": "uV", "status": "good"},
+                {"name": "Pz", "type": "EEG", "unit": "uV", "status": "bad"},
+            ],
+            "sensors": [{"uuid": "s1"}, {"uuid": "s2"}],
+        },
+    }
+    uri = "at://did:plc:m/pub.layers.media.media/x"
+    modes = view_modes(None, _MEDIA, uri, data)  # ty: ignore[invalid-argument-type]
+    assert "Signal" in modes
+    md = render_view(None, _MEDIA, uri, data, "Signal")  # ty: ignore[invalid-argument-type]
+    assert "modality | eeg" in md
+    assert "sampling Hz | 1024" in md
+    assert "duration s | 600" in md
+    assert "Channels (2)" in md
+    assert "| Fz | EEG | uV | good |" in md
+    assert "Sensors: 2" in md
+
+
+def test_media_without_signal_has_no_signal_view() -> None:
+    """A non-signal medium offers no Signal view, only its metadata and detail."""
+    data: Mapping[str, JsonValue] = {"kind": "audio", "title": "clip"}
+    uri = "at://did:plc:m/pub.layers.media.media/y"
+    modes = view_modes(None, _MEDIA, uri, data)  # ty: ignore[invalid-argument-type]
+    assert "Signal" not in modes
+    assert "Media" in modes
+
+
 def test_graph_edge_set_renders_edges(repo_dir: Path) -> None:
     """The edge-set Graph view renders source -> type -> target adjacency."""
     browser = RepoBrowser.open(repo_dir)
