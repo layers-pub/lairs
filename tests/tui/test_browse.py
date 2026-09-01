@@ -35,7 +35,6 @@ from lairs.tui.views import (
     _item_index,
     _render_experiment,
     _render_generic,
-    _render_judgment_set,
     _span_text,
     columns_for,
     record_views,
@@ -176,9 +175,14 @@ def test_judgment_set_renders_responses(repo_dir: Path) -> None:
     assert "yes" in md
 
 
-def test_judgment_set_renders_scalar_histogram() -> None:
-    """A scalar judgment set renders a mean, a range, and a per-value histogram."""
-    data = {
+def test_judgment_set_distribution_view_renders_scalar_histogram() -> None:
+    """The Browse pane's Distribution view renders a scalar histogram.
+
+    Goes through the same ``view_modes`` / ``render_view`` path the Browse pane
+    uses, so it fails if the Distribution view is not actually wired in, not only
+    if the renderer is wrong.
+    """
+    data: Mapping[str, JsonValue] = {
         "agent": {"id": "m1", "name": "Worker 1"},
         "experimentRef": "at://did:plc:s/pub.layers.judgment.experimentDef/x",
         "createdAt": "2026-01-01T00:00:00Z",
@@ -188,7 +192,9 @@ def test_judgment_set_renders_scalar_histogram() -> None:
         ],
     }
     uri = "at://did:plc:s/pub.layers.judgment.judgmentSet/a"
-    md = _render_judgment_set(None, uri, data)  # ty: ignore[invalid-argument-type]
+    modes = view_modes(None, _JUDGMENT_SET, uri, data)  # ty: ignore[invalid-argument-type]
+    assert "Distribution" in modes
+    md = render_view(None, _JUDGMENT_SET, uri, data, "Distribution")  # ty: ignore[invalid-argument-type]
     assert "5 scalar responses, mean 5.40, range 2..7" in md
     assert "▇" in md
     # every value in the range gets a row, including zero-count values.

@@ -854,6 +854,7 @@ def record_views(  # noqa: PLR0911 - one branch per record family
         return _thunks(
             [
                 ("Responses", lambda: _judgmentset_view(browser, data)),
+                ("Distribution", lambda: _render_judgment_set(browser, uri, data)),
                 ("Detail", lambda: _render_generic(uri, data)),
             ]
         )
