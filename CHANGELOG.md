@@ -33,14 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolves by bulk-loading the stimulus expression accounts the judgments
   reference rather than one fetch per item.
 - **Judgment materialization.** `JudgmentStudy.to_arrow` and `.materialize`
-  write the judgments as a long-format participant-by-item table plus per-item
-  and per-participant views, and `lairs judgments <uri> --out <dir>` writes
+  write the judgments as a long-format participant-by-item table (each row
+  carrying the scalar or categorical response, confidence, and reading/response
+  time) plus per-item and per-participant views, and `lairs judgments <uri>
+  --out <dir>` writes
   `judgments.parquet`, `items.parquet`, and `participants.parquet`, so a study is
   queryable with DuckDB and the explorer's Query tab.
 - **Judgment views in the explorer's Browse tab.** A judgment set renders its
   participant's response distribution as a per-value histogram with the mean and
   range for scalar tasks (in addition to the per-label counts for categorical
-  tasks), and an experiment definition shows its scale and guidelines.
+  tasks) plus the median reading/response time, and an experiment definition
+  shows its scale and guidelines.
 
 ### Changed
 

@@ -252,6 +252,7 @@ def _render_judgment_set(
     )
     scalars: list[int] = []
     labels: dict[str, int] = {}
+    response_times: list[int] = []
     for judgment in judgments:
         obj = _obj(judgment)
         scalar = obj.get("scalarValue")
@@ -260,7 +261,14 @@ def _render_judgment_set(
         categorical = obj.get("categoricalValue")
         if categorical:
             labels[_str(categorical)] = labels.get(_str(categorical), 0) + 1
+        response_time = obj.get("responseTimeMs")
+        if isinstance(response_time, int):
+            response_times.append(response_time)
     lines += _distribution_section(scalars, labels)
+    if response_times:
+        response_times.sort()
+        median = response_times[len(response_times) // 2]
+        lines += ["", f"Median response time: {median} ms"]
     return "\n".join(lines + _footer(uri))
 
 

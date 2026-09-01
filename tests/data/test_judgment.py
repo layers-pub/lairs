@@ -185,6 +185,7 @@ def test_to_arrow_is_long_format() -> None:
         "scalar_value",
         "categorical_value",
         "confidence",
+        "response_time_ms",
     ]
     assert table.num_rows == 4
     assert set(table.column("item_text").to_pylist()) == {
@@ -211,6 +212,28 @@ def test_materialize_writes_queryable_views(tmp_path: Path) -> None:
     }
     participants = pq.read_table(tmp_path / "participants.parquet")
     assert participants.num_rows == 2
+
+
+def test_judgments_carry_response_time() -> None:
+    study = JudgmentStudy.new()
+    study.add_record(_EXPERIMENT, _experiment())
+    study.add_record(
+        _SET_A,
+        JudgmentSet(
+            agent=AgentRef(id="m1"),
+            judgments=(
+                Judgment(
+                    item=ObjectRef(recordRef=_ITEM_1),
+                    scalarValue=6,
+                    responseTimeMs=1234,
+                ),
+            ),
+            experimentRef=_EXPERIMENT,
+            createdAt=_NOW,
+        ),
+    )
+    rows = list(study.judgments())
+    assert rows[0].response_time_ms == 1234
 
 
 def test_load_judgment_study_rejects_unknown_source() -> None:

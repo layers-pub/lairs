@@ -187,8 +187,18 @@ def test_judgment_set_distribution_view_renders_scalar_histogram() -> None:
         "experimentRef": "at://did:plc:s/pub.layers.judgment.experimentDef/x",
         "createdAt": "2026-01-01T00:00:00Z",
         "judgments": [
-            {"item": {"recordRef": "at://x/e/i1"}, "scalarValue": value}
-            for value in (7, 6, 7, 5, 2)
+            {
+                "item": {"recordRef": "at://x/e/i1"},
+                "scalarValue": value,
+                "responseTimeMs": response_time,
+            }
+            for value, response_time in [
+                (7, 1200),
+                (6, 900),
+                (7, 1500),
+                (5, 1100),
+                (2, 3000),
+            ]
         ],
     }
     uri = "at://did:plc:s/pub.layers.judgment.judgmentSet/a"
@@ -200,6 +210,8 @@ def test_judgment_set_distribution_view_renders_scalar_histogram() -> None:
     # every value in the range gets a row, including zero-count values.
     assert "- 3:  0" in md
     assert "- 7:" in md
+    # the reading/response time is surfaced as a median.
+    assert "Median response time: 1200 ms" in md
 
 
 def test_experiment_renders_guidelines() -> None:

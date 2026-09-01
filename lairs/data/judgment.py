@@ -86,6 +86,7 @@ _JUDGMENTS_SCHEMA = pa.schema(
         ("scalar_value", pa.int64()),
         ("categorical_value", pa.string()),
         ("confidence", pa.int64()),
+        ("response_time_ms", pa.int64()),
     ],
 )
 _ITEMS_SCHEMA = pa.schema(
@@ -158,6 +159,9 @@ class JudgmentRow(dx.Model):
         The categorical label, when the task collects a categorical choice.
     confidence : int or None
         The participant's stated confidence, scaled 0-1000.
+    response_time_ms : int or None
+        The participant's response time for this item, in milliseconds (the
+        reading/response latency, when the study records it).
     """
 
     participant_id: str = dx.field(description="the judging participant's id")
@@ -177,6 +181,10 @@ class JudgmentRow(dx.Model):
     confidence: int | None = dx.field(
         default=None,
         description="stated confidence, scaled 0-1000",
+    )
+    response_time_ms: int | None = dx.field(
+        default=None,
+        description="response time for this item, in milliseconds",
     )
 
 
@@ -399,6 +407,7 @@ class JudgmentStudy:
                         scalar_value=judgment.scalarValue,
                         categorical_value=judgment.categoricalValue,
                         confidence=judgment.confidence,
+                        response_time_ms=judgment.responseTimeMs,
                     ),
                 )
         return Dataset(rows, model=JudgmentRow)
@@ -502,6 +511,7 @@ class JudgmentStudy:
                 "scalar_value": row.scalar_value,
                 "categorical_value": row.categorical_value,
                 "confidence": row.confidence,
+                "response_time_ms": row.response_time_ms,
             }
             for row in self.judgments()
         ]
