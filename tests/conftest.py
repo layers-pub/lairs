@@ -24,7 +24,9 @@ from urllib.parse import parse_qs, urlsplit
 
 import didactic.api as dx
 import httpx
+import libipld
 import pytest
+from multiformats import CID, multihash
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Sequence
@@ -404,3 +406,74 @@ def route_server() -> Callable[[RouteHandler], AbstractContextManager[str]]:
         base URL of a running loopback server.
     """
     return _serve_routes
+
+
+def _car_cid(value: object) -> bytes:
+    """Compute the raw CIDv1 dag-cbor bytes for a block value."""
+    raw = libipld.encode_dag_cbor(value)
+    return bytes(CID("base32", 1, "dag-cbor", multihash.digest(raw, "sha2-256")))
+
+
+def _car_varint(number: int) -> bytes:
+    """Encode an unsigned integer as an LEB128 varint for CAR framing."""
+    out = bytearray()
+    while True:
+        chunk = number & 0x7F
+        number >>= 7
+        out.append(chunk | 0x80 if number else chunk)
+        if not number:
+            return bytes(out)
+
+
+def _car_mst_entry(previous: bytes, key: bytes, value_cid: bytes) -> dict[str, object]:
+    """Build a prefix-compressed MST entry relative to the previous key."""
+    shared = 0
+    for left, current in zip(previous, key, strict=False):
+        if left != current:
+            break
+        shared += 1
+    return {"p": shared, "k": key[shared:], "v": value_cid, "t": None}
+
+
+def _build_repo_car(did: str, keys: Sequence[str]) -> bytes:
+    """Build a minimal repository CAR from a repo DID and sorted MST keys.
+
+    Returns ``com.atproto.sync.getRepo`` CAR bytes: a signed commit pointing at
+    a single MST node whose entries carry the given ``collection/rkey`` keys.
+    Record value blocks are deliberately omitted, since the counting path walks
+    the tree without resolving them.
+    """
+    previous = b""
+    entries: list[object] = []
+    for key in keys:
+        key_bytes = key.encode()
+        entries.append(_car_mst_entry(previous, key_bytes, _car_cid({"rk": key})))
+        previous = key_bytes
+    node = {"l": None, "e": entries}
+    node_cid = _car_cid(node)
+    commit = {
+        "version": 3,
+        "did": did,
+        "data": node_cid,
+        "rev": "aaaaaaaaaaaaa",
+        "prev": None,
+    }
+    commit_cid = _car_cid(commit)
+    header = libipld.encode_dag_cbor({"roots": [commit_cid], "version": 1})
+    car = bytearray(_car_varint(len(header)) + header)
+    for cid, value in ((commit_cid, commit), (node_cid, node)):
+        block = cid + libipld.encode_dag_cbor(value)
+        car += _car_varint(len(block)) + block
+    return bytes(car)
+
+
+@pytest.fixture
+def make_repo_car() -> Callable[[str, Sequence[str]], bytes]:
+    """Return a builder for a minimal repository CAR from full MST keys.
+
+    Returns
+    -------
+    collections.abc.Callable
+        A function ``(did, keys) -> bytes``; see :func:`_build_repo_car`.
+    """
+    return _build_repo_car
