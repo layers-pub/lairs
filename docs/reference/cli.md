@@ -24,6 +24,9 @@ CLI](../guide/cli.md).
   account's DID.
 - ``lairs inspect <uri> --endpoint <pds>``: print a per-record-type
   count summary.
+- ``lairs judgments <uri> --endpoint <pds> [--limit <n>]``: load a
+  judgment study and print its response scale, its items with their
+  response distributions, and its participants.
 - ``lairs datasets <actor>``: resolve a handle or DID and list its
   datasets, one row per corpus.
 - ``lairs toc <actor>``: resolve a handle or DID and print its

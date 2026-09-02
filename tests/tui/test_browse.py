@@ -33,6 +33,7 @@ from lairs.tui.screens.browse import BrowsePane
 from lairs.tui.views import (
     _ITEM_INDEX,
     _item_index,
+    _render_experiment,
     _render_generic,
     _span_text,
     columns_for,
@@ -172,6 +173,133 @@ def test_judgment_set_renders_responses(repo_dir: Path) -> None:
     assert "annotator A" in md
     assert "The quick brown fox jumps." in md
     assert "yes" in md
+
+
+def test_judgment_set_distribution_view_renders_scalar_histogram() -> None:
+    """The Browse pane's Distribution view renders a scalar histogram.
+
+    Goes through the same ``view_modes`` / ``render_view`` path the Browse pane
+    uses, so it fails if the Distribution view is not actually wired in, not only
+    if the renderer is wrong.
+    """
+    data: Mapping[str, JsonValue] = {
+        "agent": {"id": "m1", "name": "Worker 1"},
+        "experimentRef": "at://did:plc:s/pub.layers.judgment.experimentDef/x",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "judgments": [
+            {
+                "item": {"recordRef": "at://x/e/i1"},
+                "scalarValue": value,
+                "responseTimeMs": response_time,
+            }
+            for value, response_time in [
+                (7, 1200),
+                (6, 900),
+                (7, 1500),
+                (5, 1100),
+                (2, 3000),
+            ]
+        ],
+    }
+    uri = "at://did:plc:s/pub.layers.judgment.judgmentSet/a"
+    modes = view_modes(None, _JUDGMENT_SET, uri, data)  # ty: ignore[invalid-argument-type]
+    assert "Distribution" in modes
+    md = render_view(None, _JUDGMENT_SET, uri, data, "Distribution")  # ty: ignore[invalid-argument-type]
+    assert "5 scalar responses, mean 5.40, range 2..7" in md
+    assert "▇" in md
+    # every value in the range gets a row, including zero-count values.
+    assert "- 3:  0" in md
+    assert "- 7:" in md
+    # the reading/response time is surfaced as a median.
+    assert "Median response time: 1200 ms" in md
+
+
+def test_judgment_set_distribution_shows_region_reading_times() -> None:
+    """The Distribution view summarizes per-region reading times when present."""
+    data: Mapping[str, JsonValue] = {
+        "agent": {"id": "m1"},
+        "experimentRef": "at://did:plc:s/pub.layers.judgment.experimentDef/x",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "judgments": [
+            {
+                "item": {"recordRef": "at://x/e/i1"},
+                "regionResponses": [
+                    {"region": {"recordRef": "at://x/e/i1"}, "readingTimeMs": 300},
+                    {"region": {"recordRef": "at://x/e/i1"}, "readingTimeMs": 500},
+                ],
+            },
+        ],
+    }
+    uri = "at://did:plc:s/pub.layers.judgment.judgmentSet/a"
+    md = render_view(None, _JUDGMENT_SET, uri, data, "Distribution")  # ty: ignore[invalid-argument-type]
+    assert "Region reading times: 2 regions, median 500 ms" in md
+
+
+def test_experiment_renders_guidelines() -> None:
+    """The experiment view surfaces the study guidelines."""
+
+    class _NoRelated:
+        def related_raw(
+            self, nsid: str, field: str, uri: str
+        ) -> list[tuple[str, Mapping[str, JsonValue]]]:
+            _ = (nsid, field, uri)
+            return []
+
+    data = {
+        "name": "MegaAcceptability",
+        "taskType": "ordinal-scale",
+        "scaleMin": 1,
+        "scaleMax": 7,
+        "guidelines": "Rate how acceptable each sentence is.",
+        "createdAt": "2026-01-01T00:00:00Z",
+    }
+    md = _render_experiment(
+        _NoRelated(),  # ty: ignore[invalid-argument-type]
+        "at://did:plc:s/pub.layers.judgment.experimentDef/x",
+        data,
+    )
+    assert "## Guidelines" in md
+    assert "Rate how acceptable each sentence is." in md
+    assert "1..7" in md
+
+
+def test_media_signal_view_renders_channels() -> None:
+    """A signal medium offers a Signal view with its params and channel layout."""
+    data: Mapping[str, JsonValue] = {
+        "kind": "signal",
+        "title": "subj01 EEG",
+        "signal": {
+            "modality": "eeg",
+            "device": "BioSemi ActiveTwo",
+            "channelCount": 3,
+            "samplingFrequencyMilliHz": 1_024_000,
+            "recordingDurationNanos": 600_000_000_000,
+            "channels": [
+                {"name": "Fz", "type": "EEG", "unit": "uV", "status": "good"},
+                {"name": "Pz", "type": "EEG", "unit": "uV", "status": "bad"},
+            ],
+            "sensors": [{"uuid": "s1"}, {"uuid": "s2"}],
+        },
+    }
+    uri = "at://did:plc:m/pub.layers.media.media/x"
+    modes = view_modes(None, _MEDIA, uri, data)  # ty: ignore[invalid-argument-type]
+    assert "Signal" in modes
+    md = render_view(None, _MEDIA, uri, data, "Signal")  # ty: ignore[invalid-argument-type]
+    assert "modality | eeg" in md
+    assert "sampling Hz | 1024" in md
+    assert "duration s | 600" in md
+    assert "Channels (2)" in md
+    assert "| Fz | EEG | uV | good |" in md
+    assert "Sensors: 2" in md
+
+
+def test_media_without_signal_has_no_signal_view() -> None:
+    """A non-signal medium offers no Signal view, only its metadata and detail."""
+    data: Mapping[str, JsonValue] = {"kind": "audio", "title": "clip"}
+    uri = "at://did:plc:m/pub.layers.media.media/y"
+    modes = view_modes(None, _MEDIA, uri, data)  # ty: ignore[invalid-argument-type]
+    assert "Signal" not in modes
+    assert "Media" in modes
 
 
 def test_graph_edge_set_renders_edges(repo_dir: Path) -> None:

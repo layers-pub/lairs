@@ -36,6 +36,9 @@ __all__ = [
 ]
 
 _MAX_RELATED = 200
+
+# the widest response-histogram bar, in block characters.
+_HISTOGRAM_WIDTH = 20
 _TEXT_PREVIEW = 600
 
 _TYPEDEF_NSID = "pub.layers.ontology.typeDef"
@@ -45,6 +48,11 @@ _COLLECTION_MEMBERSHIP_NSID = "pub.layers.resource.collectionMembership"
 _CORPUS_MEMBERSHIP_NSID = "pub.layers.corpus.membership"
 _EXPRESSION_NSID = "pub.layers.expression.expression"
 _LAYER_NSID = "pub.layers.annotation.annotationLayer"
+_MEDIA_NSID = "pub.layers.media.media"
+
+# the milli- and nano-units the signal block stores frequencies and durations in.
+_MILLI = 1000
+_NANOS_PER_SECOND = 1_000_000_000
 
 
 # ---- small accessors over raw JSON ----------------------------------------
@@ -211,6 +219,9 @@ def _render_experiment(
     )
     if materials:
         lines += ["", "## Materials", "", *materials]
+    guidelines = _str(data.get("guidelines"))
+    if guidelines:
+        lines += ["", "## Guidelines", "", guidelines]
     sets = browser.related_raw(_JUDGMENT_SET_NSID, "experimentRef", uri)
     reports = browser.related_raw(_AGREEMENT_NSID, "experimentRef", uri)
     lines += ["", f"## Responses ({len(sets)} judgment sets)", ""]
@@ -244,17 +255,82 @@ def _render_judgment_set(
             ("created", _str(data.get("createdAt"))),
         ]
     )
-    counts: dict[str, int] = {}
+    scalars: list[int] = []
+    labels: dict[str, int] = {}
+    response_times: list[int] = []
+    region_reading_times: list[int] = []
     for judgment in judgments:
-        value = _obj(judgment).get("categoricalValue")
-        if value:
-            counts[_str(value)] = counts.get(_str(value), 0) + 1
-    if counts:
-        lines += ["", "## Response distribution", ""]
+        obj = _obj(judgment)
+        scalar = obj.get("scalarValue")
+        if isinstance(scalar, int):
+            scalars.append(scalar)
+        categorical = obj.get("categoricalValue")
+        if categorical:
+            labels[_str(categorical)] = labels.get(_str(categorical), 0) + 1
+        response_time = obj.get("responseTimeMs")
+        if isinstance(response_time, int):
+            response_times.append(response_time)
+        for region in _items(obj.get("regionResponses")):
+            reading = _obj(region).get("readingTimeMs")
+            if isinstance(reading, int):
+                region_reading_times.append(reading)
+    lines += _distribution_section(scalars, labels)
+    if response_times:
+        response_times.sort()
+        median = response_times[len(response_times) // 2]
+        lines += ["", f"Median response time: {median} ms"]
+    if region_reading_times:
+        region_reading_times.sort()
+        median_region = region_reading_times[len(region_reading_times) // 2]
         lines += [
-            f"- `{v}`: {counts[v]}" for v in sorted(counts, key=lambda k: -counts[k])
+            "",
+            f"Region reading times: {len(region_reading_times)} regions, "
+            f"median {median_region} ms",
         ]
     return "\n".join(lines + _footer(uri))
+
+
+def _distribution_section(
+    scalars: list[int],
+    labels: dict[str, int],
+) -> list[str]:
+    """Render a response distribution: a scalar histogram, or categorical counts.
+
+    Scalar responses get a mean, a range, and a per-value bar histogram;
+    categorical responses get per-label counts, most frequent first. A set with
+    neither yields no section.
+    """
+    if scalars:
+        n = len(scalars)
+        mean = sum(scalars) / n
+        low, high = min(scalars), max(scalars)
+        counts: dict[int, int] = {}
+        for value in scalars:
+            counts[value] = counts.get(value, 0) + 1
+        peak = max(counts.values())
+        lines = [
+            "",
+            "## Response distribution",
+            "",
+            f"{n} scalar responses, mean {mean:.2f}, range {low}..{high}",
+            "",
+        ]
+        for value in range(low, high + 1):
+            count = counts.get(value, 0)
+            bar = "▇" * round(_HISTOGRAM_WIDTH * count / peak)
+            lines.append(f"- {value}: {bar} {count}")
+        return lines
+    if labels:
+        return [
+            "",
+            "## Response distribution",
+            "",
+            *(
+                f"- `{label}`: {labels[label]}"
+                for label in sorted(labels, key=lambda k: -labels[k])
+            ),
+        ]
+    return []
 
 
 def _render_graph_edge_set(
@@ -437,6 +513,64 @@ def _render_media(
             ("licensing", _license(data.get("licensing"))),
         ]
     )
+    return "\n".join(lines + _footer(uri))
+
+
+def _hz(milli_hz: JsonValue) -> str:
+    """Render a milli-hertz frequency as hertz, or empty when unset."""
+    if isinstance(milli_hz, int):
+        return f"{milli_hz / _MILLI:g}"
+    return ""
+
+
+def _seconds(nanos: JsonValue) -> str:
+    """Render a nanosecond duration as seconds, or empty when unset."""
+    if isinstance(nanos, int):
+        return f"{nanos / _NANOS_PER_SECOND:g}"
+    return ""
+
+
+def _signal_view(uri: str, data: Mapping[str, JsonValue]) -> str:
+    """Render a media record's signal block: recording params and channel layout.
+
+    The sampled waveform lives in the media carrier blob, which the index never
+    stores, so this shows the recording's parameters and the channel and sensor
+    layout the record carries rather than the samples themselves.
+    """
+    signal = _obj(data.get("signal"))
+    title = _str(data.get("title")) or _str(data.get("kind")) or "signal"
+    lines = [f"# {title} signal", ""]
+    lines += _kv(
+        [
+            ("modality", _str(signal.get("modality"))),
+            ("device", _str(signal.get("device"))),
+            ("channels", _str(signal.get("channelCount"))),
+            ("sampling Hz", _hz(signal.get("samplingFrequencyMilliHz"))),
+            ("duration s", _seconds(signal.get("recordingDurationNanos"))),
+            ("samples", _str(signal.get("numberOfSamples"))),
+            ("reference", _str(signal.get("referenceScheme"))),
+            ("placement", _str(signal.get("placementScheme"))),
+            ("line freq Hz", _hz(signal.get("powerLineFrequencyMilliHz"))),
+        ]
+    )
+    channels = _items(signal.get("channels"))
+    if channels:
+        lines += [
+            "",
+            f"## Channels ({len(channels)})",
+            "",
+            "| name | type | unit | status |",
+            "| --- | --- | --- | --- |",
+        ]
+        for raw in channels[:_MAX_RELATED]:
+            channel = _obj(raw)
+            lines.append(
+                f"| {_str(channel.get('name'))} | {_str(channel.get('type'))} "
+                f"| {_str(channel.get('unit'))} | {_str(channel.get('status'))} |",
+            )
+    sensors = _items(signal.get("sensors"))
+    if sensors:
+        lines += ["", f"## Sensors: {len(sensors)}"]
     return "\n".join(lines + _footer(uri))
 
 
@@ -804,9 +938,17 @@ def record_views(  # noqa: PLR0911 - one branch per record family
         return _thunks(
             [
                 ("Responses", lambda: _judgmentset_view(browser, data)),
+                ("Distribution", lambda: _render_judgment_set(browser, uri, data)),
                 ("Detail", lambda: _render_generic(uri, data)),
             ]
         )
+    if nsid == _MEDIA_NSID:
+        media_views: list[tuple[str, Callable[[], str]]] = []
+        if isinstance(data.get("signal"), dict):
+            media_views.append(("Signal", lambda: _signal_view(uri, data)))
+        media_views.append(("Media", lambda: _render_media(browser, uri, data)))
+        media_views.append(("Detail", lambda: _render_generic(uri, data)))
+        return _thunks(media_views)
     overview = _RENDERERS.get(nsid)
     views: list[tuple[str, Callable[[], str]]] = []
     if overview is not None:

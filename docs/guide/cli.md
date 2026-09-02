@@ -8,6 +8,7 @@ The subcommands fall into four families:
 
 - maintenance: `vendor`, `gen` (and `gen --check`)
 - corpora: `pull`, `materialize`, `publish`, `inspect`
+- judgment studies: `judgments`
 - discovery: `datasets`, `toc`, `search`, `index` (with `build`, `update`,
   `search`, `diff`)
 - authentication: `login`, `logout`, `whoami`
@@ -123,6 +124,32 @@ lairs inspect at://did:plc:author/pub.layers.corpus.corpus/abc \
 
 The corpus AT-URI is positional and `--endpoint` is required. The output is the
 total record count and a count per collection NSID.
+
+## `judgments`
+
+Load a judgment study (a `pub.layers.judgment.experimentDef` and its judgment
+sets) and print it the way a study is explored: its response scale, its items
+with their response distributions, and its participants.
+
+```bash
+lairs judgments at://did:plc:author/pub.layers.judgment.experimentDef/abc \
+  --endpoint https://pds.example --limit 20
+```
+
+The experiment (or study-account) AT-URI is positional and `--endpoint` is
+required. Each item row shows how many judgments it drew and, for a scalar task,
+the mean and range; for a categorical task, the per-label counts. Item text is
+resolved by bulk-loading the stimulus expression accounts the judgments
+reference; pass `--no-follow-refs` to skip that and read only the study's own
+records (item text is then left unresolved). `--limit` caps the items and
+participants shown, and `--json` prints the whole study as JSON.
+
+Pass `--out <dir>` to materialize the study to Parquet instead of printing: it
+writes `judgments.parquet` (the long-format participant-by-item matrix),
+`items.parquet` (per-item distributions), `participants.parquet`, and
+`region_responses.parquet` (per-region reading times, eye-movement measures,
+and per-region responses, empty for studies without them), so the study is
+queryable with DuckDB or the explorer's Query tab (`lairs tui --data <dir>`).
 
 ## `datasets`
 

@@ -20,6 +20,7 @@ from lairs.author.publish import PublishPlan
 from lairs.data.acquisition import Acquisition
 from lairs.data.collection import Collection
 from lairs.data.corpus import Corpus
+from lairs.data.judgment import JudgmentStudy
 from lairs.discovery import CardDiff, CrawlReport, SearchHit, SearchQuery
 from lairs.discovery.cards import (
     CardFreshness,
@@ -37,9 +38,10 @@ from lairs.discovery.models import (
 from lairs.records._generated import acquisition as acquisition_records
 from lairs.records._generated import catalog as catalog_records
 from lairs.records._generated import expression as expression_records
+from lairs.records._generated import judgment as judgment_records
 from lairs.records._generated import media as media_records
 from lairs.records._generated import persona as persona_records
-from lairs.records._generated.defs import Uuid
+from lairs.records._generated.defs import AgentRef, ObjectRef, Uuid
 from lairs.store.repository import Repository
 
 if TYPE_CHECKING:
@@ -78,6 +80,7 @@ def test_help_lists_every_subcommand(capsys: pytest.CaptureFixture[str]) -> None
         "materialize",
         "publish",
         "inspect",
+        "judgments",
         "datasets",
         "toc",
         "search",
@@ -428,6 +431,134 @@ def test_inspect_prints_per_type_counts(
     assert "2 record(s)" in captured.out
     assert "pub.layers.expression.expression: 1" in captured.out
     assert "pub.layers.media.media: 1" in captured.out
+
+
+def test_judgments_command_prints_study(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    experiment_uri = "at://did:plc:s/pub.layers.judgment.experimentDef/x"
+    item_uri = "at://did:plc:i/pub.layers.expression.expression/i1"
+    study = JudgmentStudy.new()
+    study.add_record(
+        experiment_uri,
+        judgment_records.ExperimentDef(
+            name="Demo",
+            taskType="ordinal-scale",
+            scaleMin=1,
+            scaleMax=7,
+            createdAt=_NOW,
+        ),
+    )
+    study.add_record(
+        item_uri,
+        expression_records.Expression(
+            createdAt=_NOW, id="i1", kind="sentence", text="The cat sat."
+        ),
+    )
+    study.add_record(
+        "at://did:plc:s/pub.layers.judgment.judgmentSet/a",
+        judgment_records.JudgmentSet(
+            agent=AgentRef(id="mturk/1", name="Worker 1"),
+            judgments=(
+                judgment_records.Judgment(
+                    item=ObjectRef(recordRef=item_uri), scalarValue=6
+                ),
+            ),
+            experimentRef=experiment_uri,
+            createdAt=_NOW,
+        ),
+    )
+
+    def fake_load(
+        _uri: str,
+        *,
+        source: str = "auto",
+        pds_client: PdsClient | None = None,
+        follow_refs: bool = True,
+    ) -> JudgmentStudy:
+        assert source == "pds"
+        assert pds_client is not None
+        assert follow_refs is True
+        return study
+
+    monkeypatch.setattr("lairs.data.load_judgment_study", fake_load)
+    code = cli.main(
+        ["judgments", experiment_uri, "--endpoint", "https://pds.example"],
+    )
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "name: Demo" in captured.out
+    assert "scale: 1..7" in captured.out
+    assert "The cat sat." in captured.out
+    assert "mturk/1" in captured.out
+
+
+def test_judgments_command_materializes_with_out(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    experiment_uri = "at://did:plc:s/pub.layers.judgment.experimentDef/x"
+    item_uri = "at://did:plc:i/pub.layers.expression.expression/i1"
+    study = JudgmentStudy.new()
+    study.add_record(
+        experiment_uri,
+        judgment_records.ExperimentDef(
+            name="Demo", scaleMin=1, scaleMax=7, createdAt=_NOW
+        ),
+    )
+    study.add_record(
+        item_uri,
+        expression_records.Expression(
+            createdAt=_NOW, id="i1", kind="sentence", text="The cat sat."
+        ),
+    )
+    study.add_record(
+        "at://did:plc:s/pub.layers.judgment.judgmentSet/a",
+        judgment_records.JudgmentSet(
+            agent=AgentRef(id="mturk/1"),
+            judgments=(
+                judgment_records.Judgment(
+                    item=ObjectRef(recordRef=item_uri), scalarValue=6
+                ),
+            ),
+            experimentRef=experiment_uri,
+            createdAt=_NOW,
+        ),
+    )
+
+    def fake_load(
+        _uri: str,
+        *,
+        source: str = "auto",
+        pds_client: PdsClient | None = None,
+        follow_refs: bool = True,
+    ) -> JudgmentStudy:
+        assert source == "pds"
+        assert pds_client is not None
+        assert follow_refs is True
+        return study
+
+    monkeypatch.setattr("lairs.data.load_judgment_study", fake_load)
+    out = tmp_path / "views"
+    code = cli.main(
+        [
+            "judgments",
+            experiment_uri,
+            "--endpoint",
+            "https://pds.example",
+            "--out",
+            str(out),
+        ],
+    )
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "wrote 4 view(s)" in captured.out
+    assert (out / "judgments.parquet").exists()
+    assert (out / "items.parquet").exists()
+    assert (out / "participants.parquet").exists()
+    assert (out / "region_responses.parquet").exists()
 
 
 # nsid helper ----------------------------------------------------------------

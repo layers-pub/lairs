@@ -79,9 +79,11 @@ from lairs.tui import run_tui
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
+    from lairs._types import JsonValue
     from lairs.author.publish import PublishPlan
     from lairs.data.acquisition import Acquisition
     from lairs.data.collection import Collection
+    from lairs.data.judgment import JudgmentStudy
     from lairs.discovery import (
         CardDiff,
         CollectionHit,
@@ -194,6 +196,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_materialize(subparsers)
     _add_publish(subparsers)
     _add_inspect(subparsers)
+    _add_judgments(subparsers)
     _add_datasets(subparsers)
     _add_collections(subparsers)
     _add_collection(subparsers)
@@ -401,6 +404,55 @@ def _add_inspect(subparsers: _Subparsers) -> None:
         ),
     )
     sub.set_defaults(handler=_run_inspect)
+
+
+def _add_judgments(subparsers: _Subparsers) -> None:
+    """Register the ``judgments`` subcommand."""
+    sub = subparsers.add_parser(
+        "judgments",
+        help="explore a judgment study loaded from a PDS",
+        description=(
+            "Load a judgment study from a PDS and show its response scale, its "
+            "items with their response distributions, and its participants."
+        ),
+    )
+    sub.add_argument("uri", help="the experiment-definition or study AT-URI")
+    sub.add_argument(
+        "--endpoint",
+        required=True,
+        help="the base URL of the PDS to load from",
+    )
+    sub.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help=(
+            "materialize the study to Parquet views (judgments, items, "
+            "participants) in this directory instead of printing"
+        ),
+    )
+    sub.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="show at most this many items and participants",
+    )
+    sub.add_argument(
+        "--follow-refs",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "follow AT-URI references across accounts (default: enabled; "
+            "--no-follow-refs reads only the study's own account and leaves item "
+            "text unresolved)"
+        ),
+    )
+    sub.add_argument(
+        "--json",
+        action="store_true",
+        help="print JSON instead of tables",
+    )
+    sub.set_defaults(handler=_run_judgments)
 
 
 def _run_vendor(args: argparse.Namespace) -> int:
@@ -802,6 +854,125 @@ def _run_inspect(args: argparse.Namespace) -> int:
     for nsid in sorted(counts):
         print(f"  {nsid}: {counts[nsid]}")
     return 0
+
+
+def _run_judgments(args: argparse.Namespace) -> int:
+    """Handle ``lairs judgments``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments.
+
+    Returns
+    -------
+    int
+        ``0`` on success, ``1`` on a resolution, transport, or validation
+        failure.
+    """
+    try:
+        with PdsClient(args.endpoint) as client:
+            study = data.load_judgment_study(
+                args.uri,
+                source="pds",
+                pds_client=client,
+                follow_refs=args.follow_refs,
+            )
+    except (httpx.HTTPError, IdentityError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if args.out is not None:
+        written = study.materialize(args.out)
+        print(f"wrote {len(written)} view(s) to {args.out}")
+        for path in written:
+            print(f"  {path.name}")
+        return 0
+    _print_judgment_study(study, args.uri, limit=args.limit, as_json=args.json)
+    return 0
+
+
+def _truncate(text: str, width: int) -> str:
+    """Return ``text`` clipped to ``width`` with an ellipsis when it is longer."""
+    if len(text) <= width:
+        return text
+    return text[: width - 1] + "…"
+
+
+def _print_judgment_study(
+    study: JudgmentStudy,
+    uri: str,
+    *,
+    limit: int | None,
+    as_json: bool,
+) -> None:
+    """Print a judgment study's scale, item distributions, and participants."""
+    experiment = study.experiment
+    name = experiment.name if experiment is not None else "(unknown)"
+    task = experiment.taskType if experiment is not None else None
+    scale_min, scale_max = study.scale
+    items = list(study.item_distributions())
+    participants = list(study.participant_summaries())
+    shown_items = items[:limit] if limit is not None else items
+    shown_participants = participants[:limit] if limit is not None else participants
+    if as_json:
+        payload: JsonValue = {
+            "uri": uri,
+            "name": name,
+            "taskType": task,
+            "scale": {"min": scale_min, "max": scale_max},
+            "items": [
+                {
+                    "itemRef": item.item_ref,
+                    "itemText": item.item_text,
+                    "count": item.count,
+                    "mean": item.mean,
+                    "min": item.minimum,
+                    "max": item.maximum,
+                    "labelCounts": {lc.label: lc.count for lc in item.label_counts},
+                }
+                for item in shown_items
+            ],
+            "participants": [
+                {
+                    "id": summary.participant_id,
+                    "name": summary.name,
+                    "judgmentCount": summary.judgment_count,
+                }
+                for summary in shown_participants
+            ],
+        }
+        print(json.dumps(payload, indent=2))
+        return
+    judgment_total = sum(item.count for item in items)
+    print(f"judgment study {uri}")
+    print(f"  name: {name}")
+    if task:
+        print(f"  task: {task}")
+    if scale_min is not None or scale_max is not None:
+        print(f"  scale: {scale_min}..{scale_max}")
+    print(
+        f"  items: {len(items)}  participants: {len(participants)}  "
+        f"judgments: {judgment_total}",
+    )
+    print("\nitems (response distribution):")
+    for item in shown_items:
+        label = _truncate(item.item_text or item.item_ref, 60)
+        if item.mean is not None:
+            print(
+                f"  n={item.count:<4d} mean={item.mean:5.2f} "
+                f"[{item.minimum}..{item.maximum}]  {label}",
+            )
+        elif item.label_counts:
+            counts = ", ".join(f"{lc.label}:{lc.count}" for lc in item.label_counts)
+            print(f"  n={item.count:<4d} {counts}  {label}")
+        else:
+            print(f"  n={item.count:<4d} {label}")
+    print("\nparticipants:")
+    for summary in shown_participants:
+        who = summary.name or summary.participant_id
+        print(
+            f"  {summary.judgment_count:<5d} judgments  {summary.participant_id}  {who}"
+        )
 
 
 def _add_filter_args(sub: argparse.ArgumentParser) -> None:

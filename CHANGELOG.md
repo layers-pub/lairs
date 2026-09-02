@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-02
+
+### Added
+
+- **Federated project domains.** `repo.decomp.io` (Universal Decompositional
+  Semantics) and `repo.megaattitude.io` (MegaAttitude) are live PDS endpoints and
+  ship as built-in discovery sources alongside `repo.layers.pub`, so all three
+  project domains are browsable out of the box. `lairs sources list` shows all
+  three; the index dedups by dataset URI, so crawling every source stays
+  idempotent while they share a PDS.
+- **Catalogue-collection datasets in the global browse.** `lairs index search`
+  and the TUI Explore pane surface catalogue-collection datasets (UniMorph,
+  VerbNet, WordNet, MegaAttitude), not only corpora, through a new
+  `search_collections` and `CollectionHit`. Corpus-only facets (expression
+  bounds, quality metric, annotation rounds) match no collection.
+- **Collection datasets in the Discover tab.** The TUI Discover crawl lists
+  collection-shaped datasets alongside corpora, tags each row with its type
+  (`corpus` or the collection's kind), and indexes or mutes either card type;
+  `DiscoveryIndex.mute` accepts a collection card, keyed by URI as before.
+- **Judgment-study browsing.** `lairs.data.JudgmentStudy` and
+  `load_judgment_study` load an experiment definition and its judgment sets and
+  expose the study the way it is explored: its response scale, its participants,
+  its items (with resolved text), the raw participant-by-item judgments, and
+  per-item and per-participant distributions. `lairs judgments <uri>` prints the
+  scale, each item's response distribution, and the participants. Item text
+  resolves by bulk-loading the stimulus expression accounts the judgments
+  reference rather than one fetch per item.
+- **Judgment materialization.** `JudgmentStudy.to_arrow` and `.materialize`
+  write the judgments as a long-format participant-by-item table (each row
+  carrying the scalar or categorical response, confidence, and reading/response
+  time) plus per-item and per-participant views, and `lairs judgments <uri>
+  --out <dir>` writes
+  `judgments.parquet`, `items.parquet`, and `participants.parquet`, so a study is
+  queryable with DuckDB and the explorer's Query tab.
+- **Judgment views in the explorer's Browse tab.** A judgment set renders its
+  participant's response distribution as a per-value histogram with the mean and
+  range for scalar tasks (in addition to the per-label counts for categorical
+  tasks) plus the median reading/response time, and an experiment definition
+  shows its scale and guidelines.
+- **Signal (neural recording) view in the Browse tab.** A media record carrying
+  a signal block gains a Signal view with the recording's parameters (modality,
+  device, sampling frequency, duration, channel count, reference and placement
+  schemes) and its channel and sensor layout. The sampled waveform lives in the
+  carrier blob, which the index never stores, so the view shows the layout, not
+  the samples.
+- **Region reading times.** `JudgmentStudy.region_responses` flattens every
+  per-region measure a judgment carries: the region's analysis role
+  (`region_role`), the reading and eye-movement measures (`reading_time_ms`,
+  `first_fixation_ms`, `gaze_duration_ms`, `go_past_ms`, `total_time_ms`,
+  `regressions_out`, `regressions_in`, `fixation_count`), and any per-region
+  response (`response_time_ms`, `scalar_value`, `categorical_value`).
+  `materialize` writes them as `region_responses.parquet`, and the Browse
+  judgment Distribution view summarizes them as a region count and median
+  reading time. Requires Layers lexicon 0.10.0 (see below).
+
+### Changed
+
+- **Vendored Layers lexicon 0.10.0**, which adds an optional `regionResponses`
+  array to `pub.layers.judgment.defs#judgment` so region-level reading and
+  eye-tracking measurements have a home. Additive and backward compatible.
+- **Documentation.** Clarified the guides, concepts, reference, and tutorials, and
+  fixed the README quickstart to pass a `PdsClient` so it runs as written.
+
 ## [0.6.0] - 2026-08-20
 
 ### Added
@@ -227,7 +290,8 @@ didactic model.
   repositories, discovering datasets, building and searching the index, managing
   sessions, and launching the explorer.
 
-[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/layers-pub/lairs/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/layers-pub/lairs/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/layers-pub/lairs/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/layers-pub/lairs/compare/v0.4.0...v0.4.1

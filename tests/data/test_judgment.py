@@ -1,0 +1,342 @@
+"""Unit tests for lairs.data.judgment."""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+import pyarrow.parquet as pq
+import pytest
+
+from lairs.atproto.pds import RecordEnvelope
+from lairs.data import judgment as judgment_mod
+from lairs.data.judgment import JudgmentStudy, load_judgment_study
+from lairs.records._generated.defs import AgentRef, ObjectRef
+from lairs.records._generated.expression import Expression
+from lairs.records._generated.judgment import (
+    ExperimentDef,
+    Judgment,
+    JudgmentSet,
+    RegionResponse,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
+
+    import didactic.api as dx
+
+_NOW = datetime(2026, 1, 1, tzinfo=UTC)
+
+_STUDY = "did:plc:study"
+_ITEMS = "did:plc:items"
+_EXPERIMENT = f"at://{_STUDY}/pub.layers.judgment.experimentDef/x"
+_SET_A = f"at://{_STUDY}/pub.layers.judgment.judgmentSet/a"
+_SET_B = f"at://{_STUDY}/pub.layers.judgment.judgmentSet/b"
+_ITEM_1 = f"at://{_ITEMS}/pub.layers.expression.expression/i1"
+_ITEM_2 = f"at://{_ITEMS}/pub.layers.expression.expression/i2"
+
+_EXPERIMENT_DEF_NSID = "pub.layers.judgment.experimentDef"
+_JUDGMENT_SET_NSID = "pub.layers.judgment.judgmentSet"
+_EXPRESSION_NSID = "pub.layers.expression.expression"
+
+
+def _experiment() -> ExperimentDef:
+    return ExperimentDef(
+        name="Demo", taskType="ordinal-scale", scaleMin=1, scaleMax=7, createdAt=_NOW
+    )
+
+
+def _item(ref: str, value: int) -> Judgment:
+    return Judgment(item=ObjectRef(recordRef=ref), scalarValue=value)
+
+
+def _set_a() -> JudgmentSet:
+    return JudgmentSet(
+        agent=AgentRef(id="mturk/1", name="Worker 1"),
+        judgments=(_item(_ITEM_1, 6), _item(_ITEM_2, 2)),
+        experimentRef=_EXPERIMENT,
+        createdAt=_NOW,
+    )
+
+
+def _set_b() -> JudgmentSet:
+    return JudgmentSet(
+        agent=AgentRef(id="mturk/2", name="Worker 2"),
+        judgments=(_item(_ITEM_1, 7), _item(_ITEM_2, 3)),
+        experimentRef=_EXPERIMENT,
+        createdAt=_NOW,
+    )
+
+
+def _expression(text: str) -> Expression:
+    return Expression(id=text, kind="sentence", createdAt=_NOW, text=text)
+
+
+def _envelope(uri: str, model: dx.Model) -> RecordEnvelope:
+    value = json.loads(model.model_dump_json())
+    value["$type"] = uri.split("/")[-2]
+    return RecordEnvelope(uri=uri, cid="cid", value=value)
+
+
+class _FakePds:
+    """A fake PDS returning canned envelopes by collection."""
+
+    def __init__(self, by_collection: dict[str, list[RecordEnvelope]]) -> None:
+        self._by = by_collection
+
+    def list_records(
+        self,
+        repo: str,
+        collection: str,
+        *,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> Iterator[RecordEnvelope]:
+        _ = (repo, limit, cursor)
+        yield from self._by.get(collection, [])
+
+
+def _study_fake() -> _FakePds:
+    return _FakePds(
+        {
+            _EXPERIMENT_DEF_NSID: [_envelope(_EXPERIMENT, _experiment())],
+            _JUDGMENT_SET_NSID: [
+                _envelope(_SET_A, _set_a()),
+                _envelope(_SET_B, _set_b()),
+            ],
+            _EXPRESSION_NSID: [
+                _envelope(_ITEM_1, _expression("The cat sat.")),
+                _envelope(_ITEM_2, _expression("Sat cat the on mat.")),
+            ],
+        },
+    )
+
+
+def test_load_judgment_study_surfaces_scale_participants_and_items() -> None:
+    fake = _study_fake()
+    study = load_judgment_study(_EXPERIMENT, source="pds", pds_client=fake)  # ty: ignore[invalid-argument-type]
+    assert study.scale == (1, 7)
+    assert study.experiment is not None
+    assert study.experiment.name == "Demo"
+    assert [p.id for p in study.participants()] == ["mturk/1", "mturk/2"]
+    summaries = {
+        s.participant_id: s.judgment_count for s in study.participant_summaries()
+    }
+    assert summaries == {"mturk/1": 2, "mturk/2": 2}
+    assert len(list(study.judgments())) == 4
+
+
+def test_load_judgment_study_resolves_item_text_and_distributions() -> None:
+    fake = _study_fake()
+    study = load_judgment_study(_EXPERIMENT, source="pds", pds_client=fake)  # ty: ignore[invalid-argument-type]
+    by_text = {d.item_text: d for d in study.item_distributions()}
+    assert set(by_text) == {"The cat sat.", "Sat cat the on mat."}
+    first = by_text["The cat sat."]
+    assert first.count == 2
+    assert first.mean == pytest.approx(6.5)
+    assert (first.minimum, first.maximum) == (6, 7)
+
+
+def test_load_judgment_study_no_follow_refs_leaves_item_text_unresolved() -> None:
+    fake = _study_fake()
+    study = load_judgment_study(
+        _EXPERIMENT,
+        source="pds",
+        pds_client=fake,  # ty: ignore[invalid-argument-type]
+        follow_refs=False,
+    )
+    texts = {d.item_text for d in study.item_distributions()}
+    assert texts == {None}
+    # the raw judgments and distributions are still complete, keyed by ref.
+    assert {d.item_ref for d in study.item_distributions()} == {_ITEM_1, _ITEM_2}
+
+
+def test_categorical_distribution_reports_label_counts() -> None:
+    study = JudgmentStudy.new()
+    study.add_record(_EXPERIMENT, _experiment())
+    judgments = (
+        Judgment(item=ObjectRef(recordRef=_ITEM_1), categoricalValue="yes"),
+        Judgment(item=ObjectRef(recordRef=_ITEM_1), categoricalValue="no"),
+        Judgment(item=ObjectRef(recordRef=_ITEM_1), categoricalValue="yes"),
+    )
+    study.add_record(
+        _SET_A,
+        JudgmentSet(
+            agent=AgentRef(id="mturk/1"),
+            judgments=judgments,
+            experimentRef=_EXPERIMENT,
+            createdAt=_NOW,
+        ),
+    )
+    distribution = next(iter(study.item_distributions()))
+    assert distribution.count == 3
+    assert distribution.mean is None
+    assert {lc.label: lc.count for lc in distribution.label_counts} == {
+        "yes": 2,
+        "no": 1,
+    }
+
+
+def test_to_arrow_is_long_format() -> None:
+    fake = _study_fake()
+    study = load_judgment_study(_EXPERIMENT, source="pds", pds_client=fake)  # ty: ignore[invalid-argument-type]
+    table = study.to_arrow()
+    assert table.column_names == [
+        "participant_id",
+        "item_ref",
+        "item_text",
+        "scalar_value",
+        "categorical_value",
+        "confidence",
+        "response_time_ms",
+    ]
+    assert table.num_rows == 4
+    assert set(table.column("item_text").to_pylist()) == {
+        "The cat sat.",
+        "Sat cat the on mat.",
+    }
+
+
+def test_materialize_writes_queryable_views(tmp_path: Path) -> None:
+    fake = _study_fake()
+    study = load_judgment_study(_EXPERIMENT, source="pds", pds_client=fake)  # ty: ignore[invalid-argument-type]
+    written = study.materialize(tmp_path)
+    assert {path.name for path in written} == {
+        "judgments.parquet",
+        "items.parquet",
+        "participants.parquet",
+        "region_responses.parquet",
+    }
+    judgments = pq.read_table(tmp_path / "judgments.parquet")
+    assert judgments.num_rows == 4
+    items = pq.read_table(tmp_path / "items.parquet")
+    assert set(items.column("item_text").to_pylist()) == {
+        "The cat sat.",
+        "Sat cat the on mat.",
+    }
+    participants = pq.read_table(tmp_path / "participants.parquet")
+    assert participants.num_rows == 2
+
+
+def test_region_responses_surface_and_materialize(tmp_path: Path) -> None:
+    study = JudgmentStudy.new()
+    study.add_record(_EXPERIMENT, _experiment())
+    study.add_record(_ITEM_1, _expression("The reader paused here."))
+    judgment = Judgment(
+        item=ObjectRef(recordRef=_ITEM_1),
+        regionResponses=(
+            RegionResponse(
+                region=ObjectRef(recordRef=_ITEM_1), regionIndex=0, readingTimeMs=320
+            ),
+            RegionResponse(
+                region=ObjectRef(recordRef=_ITEM_1),
+                regionIndex=1,
+                regionRole="critical",
+                readingTimeMs=480,
+                firstFixationMs=210,
+                gazeDurationMs=410,
+                goPastMs=620,
+                totalTimeMs=700,
+                regressionsOut=1,
+                regressionsIn=2,
+                fixationCount=3,
+                responseTimeMs=540,
+                scalarValue=5,
+                categoricalValue="yes",
+            ),
+        ),
+    )
+    study.add_record(
+        _SET_A,
+        JudgmentSet(
+            agent=AgentRef(id="m1"),
+            judgments=(judgment,),
+            experimentRef=_EXPERIMENT,
+            createdAt=_NOW,
+        ),
+    )
+    rows = list(study.region_responses())
+    assert len(rows) == 2
+    assert [row.region_index for row in rows] == [0, 1]
+    assert [row.reading_time_ms for row in rows] == [320, 480]
+    assert rows[0].participant_id == "m1"
+    # every regionResponse measure surfaces, not just reading time.
+    critical = rows[1]
+    assert critical.region_role == "critical"
+    assert critical.first_fixation_ms == 210
+    assert critical.gaze_duration_ms == 410
+    assert critical.go_past_ms == 620
+    assert critical.total_time_ms == 700
+    assert critical.regressions_out == 1
+    assert critical.regressions_in == 2
+    assert critical.fixation_count == 3
+    assert critical.response_time_ms == 540
+    assert critical.scalar_value == 5
+    assert critical.categorical_value == "yes"
+    # the region measurements materialize as their own queryable view.
+    written = study.materialize(tmp_path)
+    assert (tmp_path / "region_responses.parquet") in written
+    table = pq.read_table(tmp_path / "region_responses.parquet")
+    assert table.num_rows == 2
+    assert set(table.column("reading_time_ms").to_pylist()) == {320, 480}
+    assert set(table.column("region_role").to_pylist()) == {None, "critical"}
+    assert set(table.column("regressions_in").to_pylist()) == {None, 2}
+    assert set(table.column("categorical_value").to_pylist()) == {None, "yes"}
+
+
+def test_region_responses_empty_when_absent() -> None:
+    fake = _study_fake()
+    study = load_judgment_study(_EXPERIMENT, source="pds", pds_client=fake)  # ty: ignore[invalid-argument-type]
+    assert list(study.region_responses()) == []
+
+
+def test_judgments_carry_response_time() -> None:
+    study = JudgmentStudy.new()
+    study.add_record(_EXPERIMENT, _experiment())
+    study.add_record(
+        _SET_A,
+        JudgmentSet(
+            agent=AgentRef(id="m1"),
+            judgments=(
+                Judgment(
+                    item=ObjectRef(recordRef=_ITEM_1),
+                    scalarValue=6,
+                    responseTimeMs=1234,
+                ),
+            ),
+            experimentRef=_EXPERIMENT,
+            createdAt=_NOW,
+        ),
+    )
+    rows = list(study.judgments())
+    assert rows[0].response_time_ms == 1234
+
+
+def test_load_judgment_study_rejects_unknown_source() -> None:
+    with pytest.raises(ValueError, match="unknown judgment source"):
+        load_judgment_study(_EXPERIMENT, source="bogus")
+
+
+def test_load_judgment_study_appview_not_implemented() -> None:
+    with pytest.raises(NotImplementedError, match="appview"):
+        load_judgment_study(_EXPERIMENT, source="appview")
+
+
+def test_load_judgment_study_without_client_not_implemented() -> None:
+    with pytest.raises(NotImplementedError, match="pds_client"):
+        load_judgment_study(_EXPERIMENT, source="auto")
+
+
+def test_exports() -> None:
+    assert set(judgment_mod.__all__) == {
+        "ItemDistribution",
+        "JudgmentRow",
+        "JudgmentStudy",
+        "LabelCount",
+        "Participant",
+        "ParticipantSummary",
+        "RegionResponseRow",
+        "load_judgment_study",
+    }

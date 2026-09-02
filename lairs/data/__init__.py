@@ -26,6 +26,16 @@ from lairs.data.corpus import (
 )
 from lairs.data.dataset import Dataset
 from lairs.data.features import Features, FeatureSpec, dtype_of, features_of
+from lairs.data.judgment import (
+    ItemDistribution,
+    JudgmentRow,
+    JudgmentStudy,
+    LabelCount,
+    Participant,
+    ParticipantSummary,
+    RegionResponseRow,
+    load_judgment_study,
+)
 from lairs.data.media import media_by_kind, signal_media
 
 __all__ = [
@@ -38,6 +48,13 @@ __all__ = [
     "ExpressionWithSegmentation",
     "FeatureSpec",
     "Features",
+    "ItemDistribution",
+    "JudgmentRow",
+    "JudgmentStudy",
+    "LabelCount",
+    "Participant",
+    "ParticipantSummary",
+    "RegionResponseRow",
     "SessionWithMedia",
     "SessionWithParticipants",
     "dtype_of",
@@ -45,6 +62,7 @@ __all__ = [
     "load_acquisition",
     "load_collection",
     "load_corpus",
+    "load_judgment_study",
     "media_by_kind",
     "signal_media",
 ]
