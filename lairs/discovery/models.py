@@ -122,9 +122,14 @@ class CollectionCount(dx.Model):
     nsid : str
         The collection NSID.
     count : int or None
-        The number of records in the collection, when counted.
+        The number of records in the collection, when counted. When the count
+        was capped, this is the cap and ``capped`` is ``True``.
     is_dataset_like : bool
         Whether the collection holds dataset-shaped records.
+    capped : bool
+        Whether the count reached a requested cap and stopped early, so the
+        collection holds at least ``count`` records rather than exactly that
+        many.
     """
 
     nsid: str = dx.field(description="collection NSID")
@@ -135,6 +140,10 @@ class CollectionCount(dx.Model):
     is_dataset_like: bool = dx.field(
         default=False,
         description="whether the collection holds dataset-shaped records",
+    )
+    capped: bool = dx.field(
+        default=False,
+        description="whether the count stopped early at a requested cap",
     )
 
 

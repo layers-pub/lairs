@@ -659,6 +659,23 @@ def test_print_toc(capsys: pytest.CaptureFixture[str]) -> None:
     assert "pub.layers.corpus.corpus" in out
 
 
+def test_print_toc_marks_capped_counts(capsys: pytest.CaptureFixture[str]) -> None:
+    toc = RepoTableOfContents(
+        did="did:plc:x",
+        handle="alice.test",
+        collections=(
+            CollectionCount(nsid="pub.layers.corpus.corpus", count=1000, capped=True),
+            CollectionCount(nsid="app.bsky.feed.post", count=7, capped=False),
+        ),
+        dataset_collections=(),
+    )
+    cli._print_toc(toc, as_json=False)
+    out = capsys.readouterr().out
+    # a capped collection prints as N+; an exact one prints the plain count.
+    assert "pub.layers.corpus.corpus  1000+" in out
+    assert "app.bsky.feed.post  7\n" in out
+
+
 def test_datasets_reports_error(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1249,11 +1266,13 @@ def test_toc_prints_table(
         *,
         source: str = "auto",
         counts: bool = False,
+        count_cap: int | None = None,
         pds_client: PdsClient | None = None,
     ) -> RepoTableOfContents:
         seen["actor"] = actor
         seen["source"] = source
         seen["counts"] = counts
+        seen["count_cap"] = count_cap
         seen["pds_client_is_none"] = pds_client is None
         return RepoTableOfContents(
             did="did:plc:x",
@@ -1276,10 +1295,46 @@ def test_toc_prints_table(
         "actor": "alice.test",
         "source": "pds",
         "counts": True,
+        "count_cap": None,
         "pds_client_is_none": True,
     }
     assert "alice.test" in out
     assert "pub.layers.corpus.corpus" in out
+
+
+def test_toc_max_count_implies_counts_and_passes_cap(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_toc(
+        actor: str,
+        *,
+        source: str = "auto",
+        counts: bool = False,
+        count_cap: int | None = None,
+        pds_client: PdsClient | None = None,
+    ) -> RepoTableOfContents:
+        _ = (actor, source, pds_client)
+        seen["counts"] = counts
+        seen["count_cap"] = count_cap
+        return RepoTableOfContents(
+            did="did:plc:x",
+            handle="alice.test",
+            collections=(
+                CollectionCount(nsid="app.bsky.feed.post", count=1000, capped=True),
+            ),
+            dataset_collections=(),
+        )
+
+    monkeypatch.setattr(cli.discovery, "table_of_contents", fake_toc)
+    code = cli.main(["toc", "alice.test", "--max-count", "1000"])
+    out = capsys.readouterr().out
+    assert code == 0
+    # --max-count alone turns counting on and forwards the cap.
+    assert seen == {"counts": True, "count_cap": 1000}
+    assert "app.bsky.feed.post  1000+" in out
 
 
 def test_toc_json_branch(

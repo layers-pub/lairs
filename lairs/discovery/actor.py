@@ -8,6 +8,7 @@ collection inventory through ``describe_repo`` without dumping records.
 
 from __future__ import annotations
 
+from itertools import islice
 from typing import TYPE_CHECKING
 
 import httpx
@@ -226,22 +227,49 @@ def list_datasets(  # noqa: PLR0913  (optional source knobs plus test-injection 
     return tuple(summary for summary in summaries if matches(summary, filters))
 
 
-def table_of_contents(
+def _capped_count(
+    client: PdsClient,
+    did: str,
+    nsid: str,
+    cap: int,
+) -> tuple[int, bool]:
+    """Count a collection's records up to ``cap``, stopping early past it.
+
+    Pulls at most ``cap + 1`` records through lazy paging: when the extra one
+    exists the collection holds more than ``cap`` records, so the count is
+    reported as capped and only ``ceil((cap + 1) / page_size)`` pages are
+    transferred rather than the whole collection.
+
+    Returns
+    -------
+    tuple of (int, bool)
+        The count (the cap when capped) and whether it was capped.
+    """
+    seen = sum(1 for _ in islice(client.list_records(did, nsid), cap + 1))
+    if seen > cap:
+        return cap, True
+    return seen, False
+
+
+def table_of_contents(  # noqa: PLR0913  (an actor plus counting knobs and injection seams)
     actor: str,
     *,
     source: str = "auto",
     counts: bool = False,
+    count_cap: int | None = None,
     resolver: IdentityResolver | None = None,
     pds_client: PdsClient | None = None,
 ) -> RepoTableOfContents:
     """Read an actor's repository inventory.
 
     Uses ``describe_repo`` to list the collections present in the repo without
-    enumerating records. Counts are filled only when ``counts`` is set; they come
-    from a single ``getRepo`` pass that tallies Merkle-search-tree keys without
-    decoding record values, falling back to paged ``listRecords`` only when
-    ``getRepo`` is unavailable. This path is always PDS-backed; the ``source``
-    argument is accepted for API symmetry and validated.
+    enumerating records. Counts are filled only when ``counts`` is set. An exact
+    count comes from a single ``getRepo`` pass that tallies Merkle-search-tree
+    keys without decoding record values, falling back to paged ``listRecords``
+    only when ``getRepo`` is unavailable. Passing ``count_cap`` instead pages
+    each collection and stops at the cap, reporting a capped count so a very
+    large repository is not transferred in full. This path is always PDS-backed;
+    the ``source`` argument is accepted for API symmetry and validated.
 
     Parameters
     ----------
@@ -250,7 +278,11 @@ def table_of_contents(
     source : str, optional
         Accepted for symmetry with ``list_datasets``; the inventory is PDS-backed.
     counts : bool, optional
-        Whether to fill per-collection record counts (drains each collection).
+        Whether to fill per-collection record counts.
+    count_cap : int or None, optional
+        When set, cap each collection's count at this many records and stop
+        early, rather than counting the whole repository exactly. Bounds the
+        transfer for very large repositories. Ignored when ``counts`` is false.
     resolver : IdentityResolver or None, optional
         An injected identity resolver.
     pds_client : PdsClient or None, optional
@@ -264,10 +296,14 @@ def table_of_contents(
     Raises
     ------
     ValueError
-        If ``source`` is unknown, or no PDS endpoint or client is available.
+        If ``source`` is unknown, ``count_cap`` is not positive, or no PDS
+        endpoint or client is available.
     """
     if source not in _VALID_SOURCES:
         msg = f"unknown source: {source!r}"
+        raise ValueError(msg)
+    if count_cap is not None and count_cap < 1:
+        msg = f"count_cap must be positive: {count_cap!r}"
         raise ValueError(msg)
     did, pds_endpoint, handle = _resolve_for_pds(
         actor,
@@ -277,19 +313,23 @@ def table_of_contents(
     client, owns = _pds_for(pds_endpoint, pds_client)
     try:
         description = client.describe_repo(did)
-        # Counting drains records, so do it in one getRepo pass that tallies MST
-        # keys without decoding values, rather than paging every collection. Fall
-        # back to paged counting only when getRepo is unavailable.
+        # An exact count is one getRepo pass that tallies MST keys without
+        # decoding values (falling back to paged listRecords only when getRepo is
+        # unavailable). A capped count instead pages each collection and stops at
+        # the cap, so a huge repository is never transferred in full.
         tally: dict[str, int] | None = None
-        if counts:
+        if counts and count_cap is None:
             try:
                 tally = client.count_records(did)
             except httpx.HTTPError:
                 tally = None
         collections: list[CollectionCount] = []
         for nsid in description.collections:
+            capped = False
             if not counts:
                 count = None
+            elif count_cap is not None:
+                count, capped = _capped_count(client, did, nsid, count_cap)
             elif tally is not None:
                 count = tally.get(nsid, 0)
             else:
@@ -299,6 +339,7 @@ def table_of_contents(
                     nsid=nsid,
                     count=count,
                     is_dataset_like=nsid in _DATASET_LIKE_NSIDS,
+                    capped=capped,
                 ),
             )
         resolved_handle = description.handle or handle

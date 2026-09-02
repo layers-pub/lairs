@@ -297,6 +297,63 @@ def test_table_of_contents_counts_falls_back_to_paging() -> None:
     assert toc.collections[0].count == 2
 
 
+def _toc_page_handler(
+    records: list[dict[str, object]],
+) -> Callable[[httpx.Request], httpx.Response]:
+    """Return a handler serving describeRepo and one paged listRecords page.
+
+    ``getRepo`` fails loudly, so a capped count that reaches for it is a bug.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/xrpc/com.atproto.repo.describeRepo":
+            return httpx.Response(
+                200,
+                json={
+                    "did": _DID,
+                    "handle": "alice.test",
+                    "handleIsCorrect": True,
+                    "collections": [_CORPUS_NSID],
+                },
+            )
+        if request.url.path == "/xrpc/com.atproto.sync.getRepo":
+            msg = "a capped count must not fetch the whole repository"
+            raise AssertionError(msg)
+        return httpx.Response(200, json={"records": records})
+
+    return handler
+
+
+def test_table_of_contents_caps_counts() -> None:
+    records: list[dict[str, object]] = [
+        {"uri": f"at://{_DID}/{_CORPUS_NSID}/{i}", "cid": f"c{i}", "value": {}}
+        for i in range(5)
+    ]
+    with _pds(_toc_page_handler(records)) as client:
+        toc = table_of_contents(_DID, counts=True, count_cap=3, pds_client=client)
+    assert toc.collections[0].count == 3
+    assert toc.collections[0].capped is True
+
+
+def test_table_of_contents_exact_when_under_cap() -> None:
+    records: list[dict[str, object]] = [
+        {"uri": f"at://{_DID}/{_CORPUS_NSID}/a", "cid": "c1", "value": {}},
+        {"uri": f"at://{_DID}/{_CORPUS_NSID}/b", "cid": "c2", "value": {}},
+    ]
+    with _pds(_toc_page_handler(records)) as client:
+        toc = table_of_contents(_DID, counts=True, count_cap=5, pds_client=client)
+    assert toc.collections[0].count == 2
+    assert toc.collections[0].capped is False
+
+
+def test_table_of_contents_rejects_nonpositive_cap() -> None:
+    with (
+        _pds(_toc_page_handler([])) as client,
+        pytest.raises(ValueError, match="count_cap must be positive"),
+    ):
+        table_of_contents(_DID, counts=True, count_cap=0, pds_client=client)
+
+
 def _seed_corpus(server: PdsServer, name: str) -> None:
     """Create one corpus record on the live PDS."""
     response = httpx.post(

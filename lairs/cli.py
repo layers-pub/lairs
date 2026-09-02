@@ -1053,7 +1053,11 @@ def _print_toc(toc: RepoTableOfContents, *, as_json: bool) -> None:
     print(f"repo {label}")
     for collection in toc.collections:
         marker = "*" if collection.is_dataset_like else " "
-        count = f"  {collection.count}" if collection.count is not None else ""
+        if collection.count is None:
+            count = ""
+        else:
+            suffix = "+" if collection.capped else ""
+            count = f"  {collection.count}{suffix}"
         print(f"  [{marker}] {collection.nsid}{count}")
 
 
@@ -1884,7 +1888,19 @@ def _add_toc(subparsers: _Subparsers) -> None:
     sub.add_argument(
         "--counts",
         action="store_true",
-        help="count records per collection (drains each collection)",
+        help="count records per collection (one getRepo pass, exact)",
+    )
+    sub.add_argument(
+        "--max-count",
+        dest="max_count",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "cap each collection's count at N and stop early, so a very large "
+            "repository is not transferred in full (implies --counts; capped "
+            "collections print N+)"
+        ),
     )
     sub.add_argument(
         "--json",
@@ -1908,11 +1924,14 @@ def _run_toc(args: argparse.Namespace) -> int:
         ``0`` on success, ``1`` on a resolution or transport failure.
     """
     pds_client = PdsClient(args.endpoint) if args.endpoint else None
+    # --max-count implies counting; a cap only means anything when counts run.
+    counts = args.counts or args.max_count is not None
     try:
         toc = discovery.table_of_contents(
             args.actor,
             source=args.source_type,
-            counts=args.counts,
+            counts=counts,
+            count_cap=args.max_count,
             pds_client=pds_client,
         )
     except (httpx.HTTPError, IdentityError, ValueError) as exc:

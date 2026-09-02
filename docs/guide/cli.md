@@ -177,9 +177,12 @@ lairs toc alice.example --counts
 ```
 
 The actor is positional. `--source-type` chooses the discovery mechanism
-(`auto`, `pds`, or `appview`, default `auto`) and `--endpoint` overrides the PDS base
-URL. `--counts` counts records per collection, which drains each collection.
-`--json` prints JSON instead of a table.
+(`auto`, `pds`, or `appview`, default `auto`) and `--endpoint` overrides the PDS
+base URL. `--counts` counts records per collection from a single `getRepo` pass
+(exact, one request rather than paging every collection). `--max-count N` caps
+each collection's count at `N` and stops early, so a very large repository is
+not transferred in full; it implies `--counts`, and a collection with more than
+`N` records prints as `N+`. `--json` prints JSON instead of a table.
 
 ## `search`
 
