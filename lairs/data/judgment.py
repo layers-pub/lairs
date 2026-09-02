@@ -112,11 +112,18 @@ _REGION_RESPONSES_SCHEMA = pa.schema(
         ("participant_id", pa.string()),
         ("item_ref", pa.string()),
         ("region_index", pa.int64()),
+        ("region_role", pa.string()),
         ("reading_time_ms", pa.int64()),
         ("first_fixation_ms", pa.int64()),
         ("gaze_duration_ms", pa.int64()),
         ("go_past_ms", pa.int64()),
+        ("total_time_ms", pa.int64()),
+        ("regressions_out", pa.int64()),
+        ("regressions_in", pa.int64()),
         ("fixation_count", pa.int64()),
+        ("response_time_ms", pa.int64()),
+        ("scalar_value", pa.int64()),
+        ("categorical_value", pa.string()),
     ],
 )
 
@@ -216,16 +223,33 @@ class RegionResponseRow(dx.Model):
         The AT-URI of the judged item the region belongs to.
     region_index : int or None
         The region's position within the item.
+    region_role : str or None
+        The region's analysis role (``critical``, ``spillover``,
+        ``precritical``, ...), the axis an analysis groups on.
     reading_time_ms : int or None
         Total reading time on the region, in milliseconds.
     first_fixation_ms : int or None
         First-fixation duration, in milliseconds (eye tracking).
     gaze_duration_ms : int or None
-        Gaze duration, in milliseconds (eye tracking).
+        Gaze (first-pass) duration, in milliseconds (eye tracking).
     go_past_ms : int or None
         Go-past (regression-path) time, in milliseconds (eye tracking).
+    total_time_ms : int or None
+        Total dwell time across all fixations on the region, in
+        milliseconds (eye tracking).
+    regressions_out : int or None
+        Count of regressions launched out of the region (eye tracking).
+    regressions_in : int or None
+        Count of regressions landing in the region (eye tracking).
     fixation_count : int or None
         Number of fixations on the region (eye tracking).
+    response_time_ms : int or None
+        Response time for a per-region response task (maze,
+        grammaticality-at-region), in milliseconds.
+    scalar_value : int or None
+        Numeric per-region response value, when the region drew one.
+    categorical_value : str or None
+        Categorical per-region response label, when the region drew one.
     """
 
     participant_id: str = dx.field(description="the judging participant's id")
@@ -233,6 +257,10 @@ class RegionResponseRow(dx.Model):
     region_index: int | None = dx.field(
         default=None,
         description="the region's position within the item",
+    )
+    region_role: str | None = dx.field(
+        default=None,
+        description="the region's analysis role (critical, spillover, ...)",
     )
     reading_time_ms: int | None = dx.field(
         default=None,
@@ -244,15 +272,39 @@ class RegionResponseRow(dx.Model):
     )
     gaze_duration_ms: int | None = dx.field(
         default=None,
-        description="gaze duration, in milliseconds",
+        description="gaze (first-pass) duration, in milliseconds",
     )
     go_past_ms: int | None = dx.field(
         default=None,
         description="go-past (regression-path) time, in milliseconds",
     )
+    total_time_ms: int | None = dx.field(
+        default=None,
+        description="total dwell time across all fixations, in milliseconds",
+    )
+    regressions_out: int | None = dx.field(
+        default=None,
+        description="count of regressions launched out of the region",
+    )
+    regressions_in: int | None = dx.field(
+        default=None,
+        description="count of regressions landing in the region",
+    )
     fixation_count: int | None = dx.field(
         default=None,
         description="number of fixations on the region",
+    )
+    response_time_ms: int | None = dx.field(
+        default=None,
+        description="response time for a per-region response task",
+    )
+    scalar_value: int | None = dx.field(
+        default=None,
+        description="numeric per-region response value, when present",
+    )
+    categorical_value: str | None = dx.field(
+        default=None,
+        description="categorical per-region response label, when present",
     )
 
 
@@ -503,11 +555,18 @@ class JudgmentStudy:
                         participant_id=participant_id,
                         item_ref=item_ref,
                         region_index=region.regionIndex,
+                        region_role=region.regionRole,
                         reading_time_ms=region.readingTimeMs,
                         first_fixation_ms=region.firstFixationMs,
                         gaze_duration_ms=region.gazeDurationMs,
                         go_past_ms=region.goPastMs,
+                        total_time_ms=region.totalTimeMs,
+                        regressions_out=region.regressionsOut,
+                        regressions_in=region.regressionsIn,
                         fixation_count=region.fixationCount,
+                        response_time_ms=region.responseTimeMs,
+                        scalar_value=region.scalarValue,
+                        categorical_value=region.categoricalValue,
                     )
                     for region in judgment.regionResponses or ()
                 )
@@ -652,11 +711,18 @@ class JudgmentStudy:
                 "participant_id": row.participant_id,
                 "item_ref": row.item_ref,
                 "region_index": row.region_index,
+                "region_role": row.region_role,
                 "reading_time_ms": row.reading_time_ms,
                 "first_fixation_ms": row.first_fixation_ms,
                 "gaze_duration_ms": row.gaze_duration_ms,
                 "go_past_ms": row.go_past_ms,
+                "total_time_ms": row.total_time_ms,
+                "regressions_out": row.regressions_out,
+                "regressions_in": row.regressions_in,
                 "fixation_count": row.fixation_count,
+                "response_time_ms": row.response_time_ms,
+                "scalar_value": row.scalar_value,
+                "categorical_value": row.categorical_value,
             }
             for row in self.region_responses()
         ]

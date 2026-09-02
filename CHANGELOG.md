@@ -50,12 +50,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   schemes) and its channel and sensor layout. The sampled waveform lives in the
   carrier blob, which the index never stores, so the view shows the layout, not
   the samples.
-- **Region reading times.** `JudgmentStudy.region_responses` flattens the
-  per-region reading-time and eye-tracking measurements a judgment carries
-  (`readingTimeMs`, `firstFixationMs`, `gazeDurationMs`, `goPastMs`,
-  `fixationCount`), `materialize` writes them as `region_responses.parquet`, and
-  the Browse judgment Distribution view summarizes them as a region count and
-  median reading time. Requires Layers lexicon 0.10.0 (see below).
+- **Region reading times.** `JudgmentStudy.region_responses` flattens every
+  per-region measure a judgment carries: the region's analysis role
+  (`region_role`), the reading and eye-movement measures (`reading_time_ms`,
+  `first_fixation_ms`, `gaze_duration_ms`, `go_past_ms`, `total_time_ms`,
+  `regressions_out`, `regressions_in`, `fixation_count`), and any per-region
+  response (`response_time_ms`, `scalar_value`, `categorical_value`).
+  `materialize` writes them as `region_responses.parquet`, and the Browse
+  judgment Distribution view summarizes them as a region count and median
+  reading time. Requires Layers lexicon 0.10.0 (see below).
 
 ### Changed
 

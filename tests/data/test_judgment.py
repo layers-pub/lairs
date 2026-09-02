@@ -233,8 +233,18 @@ def test_region_responses_surface_and_materialize(tmp_path: Path) -> None:
             RegionResponse(
                 region=ObjectRef(recordRef=_ITEM_1),
                 regionIndex=1,
+                regionRole="critical",
                 readingTimeMs=480,
                 firstFixationMs=210,
+                gazeDurationMs=410,
+                goPastMs=620,
+                totalTimeMs=700,
+                regressionsOut=1,
+                regressionsIn=2,
+                fixationCount=3,
+                responseTimeMs=540,
+                scalarValue=5,
+                categoricalValue="yes",
             ),
         ),
     )
@@ -251,14 +261,29 @@ def test_region_responses_surface_and_materialize(tmp_path: Path) -> None:
     assert len(rows) == 2
     assert [row.region_index for row in rows] == [0, 1]
     assert [row.reading_time_ms for row in rows] == [320, 480]
-    assert rows[1].first_fixation_ms == 210
     assert rows[0].participant_id == "m1"
+    # every regionResponse measure surfaces, not just reading time.
+    critical = rows[1]
+    assert critical.region_role == "critical"
+    assert critical.first_fixation_ms == 210
+    assert critical.gaze_duration_ms == 410
+    assert critical.go_past_ms == 620
+    assert critical.total_time_ms == 700
+    assert critical.regressions_out == 1
+    assert critical.regressions_in == 2
+    assert critical.fixation_count == 3
+    assert critical.response_time_ms == 540
+    assert critical.scalar_value == 5
+    assert critical.categorical_value == "yes"
     # the region measurements materialize as their own queryable view.
     written = study.materialize(tmp_path)
     assert (tmp_path / "region_responses.parquet") in written
     table = pq.read_table(tmp_path / "region_responses.parquet")
     assert table.num_rows == 2
     assert set(table.column("reading_time_ms").to_pylist()) == {320, 480}
+    assert set(table.column("region_role").to_pylist()) == {None, "critical"}
+    assert set(table.column("regressions_in").to_pylist()) == {None, 2}
+    assert set(table.column("categorical_value").to_pylist()) == {None, "yes"}
 
 
 def test_region_responses_empty_when_absent() -> None:

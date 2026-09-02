@@ -147,9 +147,9 @@ participants shown, and `--json` prints the whole study as JSON.
 Pass `--out <dir>` to materialize the study to Parquet instead of printing: it
 writes `judgments.parquet` (the long-format participant-by-item matrix),
 `items.parquet` (per-item distributions), `participants.parquet`, and
-`region_responses.parquet` (per-region reading times and eye-tracking measures,
-empty for studies without them), so the study is queryable with DuckDB or the
-explorer's Query tab (`lairs tui --data <dir>`).
+`region_responses.parquet` (per-region reading times, eye-movement measures,
+and per-region responses, empty for studies without them), so the study is
+queryable with DuckDB or the explorer's Query tab (`lairs tui --data <dir>`).
 
 ## `datasets`
 

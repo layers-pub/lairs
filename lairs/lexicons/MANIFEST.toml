@@ -8,9 +8,9 @@
 # file is its serialised, reviewable form.
 
 [provenance]
-layers_git_sha = "14ed839a8da8b17939b8a9bfd258c6f9ab40efde"
+layers_git_sha = "bebc80777bec8119a00a75633783f963ce9aafe4"
 layers_version = "0.10.0"
-vendored_at = "2026-09-01"
+vendored_at = "2026-09-02"
 lexicon_tree_hash = "1d20dc0bf4cfe7daa2b7aa022fdbdd1a8d405ff126cfcc078277f090f7364067"
 
 [counts]
