@@ -240,7 +240,12 @@ def test_table_of_contents_stars_catalog_collection() -> None:
     assert catalog_col.is_dataset_like is True
 
 
-def test_table_of_contents_counts_records() -> None:
+def test_table_of_contents_counts_records(
+    make_repo_car: Callable[..., bytes],
+) -> None:
+    # counting takes one getRepo pass; a listRecords call here would be a bug.
+    car = make_repo_car(_DID, [f"{_CORPUS_NSID}/a", f"{_CORPUS_NSID}/b"])
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/xrpc/com.atproto.repo.describeRepo":
             return httpx.Response(
@@ -252,6 +257,31 @@ def test_table_of_contents_counts_records() -> None:
                     "collections": [_CORPUS_NSID],
                 },
             )
+        if request.url.path == "/xrpc/com.atproto.sync.getRepo":
+            return httpx.Response(200, content=car)
+        msg = f"unexpected request to {request.url.path}"
+        raise AssertionError(msg)
+
+    with _pds(handler) as client:
+        toc = table_of_contents(_DID, counts=True, pds_client=client)
+    assert toc.collections[0].count == 2
+
+
+def test_table_of_contents_counts_falls_back_to_paging() -> None:
+    # when getRepo is unavailable, counting falls back to paged listRecords.
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/xrpc/com.atproto.repo.describeRepo":
+            return httpx.Response(
+                200,
+                json={
+                    "did": _DID,
+                    "handle": "alice.test",
+                    "handleIsCorrect": True,
+                    "collections": [_CORPUS_NSID],
+                },
+            )
+        if request.url.path == "/xrpc/com.atproto.sync.getRepo":
+            return httpx.Response(501)
         return httpx.Response(
             200,
             json={

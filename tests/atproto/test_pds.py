@@ -19,6 +19,7 @@ from lairs.atproto.pds import (
     RepoDescription,
     _envelopes_from_blocks,
     _walk_mst,
+    count_repo_car,
     decode,
     decode_all,
     decode_repo_car,
@@ -58,6 +59,7 @@ def test_exports() -> None:
         "RecordNotFoundError",
         "RepoDescription",
         "RepoListing",
+        "count_repo_car",
         "decode",
         "decode_all",
         "decode_repo_car",
@@ -500,6 +502,47 @@ def test_envelopes_from_blocks_returns_empty_without_roots() -> None:
 
 def test_envelopes_from_blocks_returns_empty_on_non_object_header() -> None:
     assert _envelopes_from_blocks("not a header", {}) == ()
+
+
+def test_count_repo_car_tallies_by_collection(
+    make_repo_car: Callable[..., bytes],
+) -> None:
+    corpus_nsid = "pub.layers.corpus.corpus"
+    # The builder omits record value blocks, so a correct tally proves counting
+    # walks the tree without resolving values.
+    car = make_repo_car(
+        _REPO_DID,
+        [
+            f"{corpus_nsid}/aaaaa",
+            f"{_COLLECTION}/aaaaa",
+            f"{_COLLECTION}/aaaab",
+        ],
+    )
+    assert count_repo_car(car) == {corpus_nsid: 1, _COLLECTION: 2}
+
+
+def test_count_repo_car_empty_for_empty_repository(
+    make_repo_car: Callable[..., bytes],
+) -> None:
+    assert count_repo_car(make_repo_car(_REPO_DID, [])) == {}
+
+
+def test_count_records_counts_via_getrepo(
+    make_repo_car: Callable[..., bytes],
+) -> None:
+    corpus_nsid = "pub.layers.corpus.corpus"
+    car = make_repo_car(
+        _REPO_DID,
+        [f"{corpus_nsid}/aaaaa", f"{_COLLECTION}/aaaaa", f"{_COLLECTION}/aaaab"],
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/xrpc/com.atproto.sync.getRepo"
+        assert request.url.params["did"] == _REPO
+        return httpx.Response(200, content=car)
+
+    with _client(handler) as client:
+        assert client.count_records(_REPO) == {corpus_nsid: 1, _COLLECTION: 2}
 
 
 def test_module_list_records_drains_pages() -> None:

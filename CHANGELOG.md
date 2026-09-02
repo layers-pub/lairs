@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`lairs toc --counts` counts a repository in one `getRepo` pass.** Counting
+  no longer drains every collection with paged `listRecords`; it fetches the
+  repository CAR once and tallies Merkle-search-tree keys per collection without
+  decoding record values, falling back to paged counting only when `getRepo` is
+  unavailable. On a repository with hundreds of thousands of records this turns
+  thousands of sequential requests into a single download (`PdsClient.count_records`
+  and `count_repo_car` expose the same path). Counting a very large repository
+  still transfers the whole repository, since an exact count has no cheaper source
+  over ATProto, but it is now one streamed request rather than per-page latency.
+
 ## [0.7.0] - 2026-09-02
 
 ### Added

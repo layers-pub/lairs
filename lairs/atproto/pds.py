@@ -39,6 +39,7 @@ __all__ = [
     "RecordNotFoundError",
     "RepoDescription",
     "RepoListing",
+    "count_repo_car",
     "decode",
     "decode_all",
     "decode_repo_car",
@@ -411,15 +412,54 @@ def _walk_mst(
             yield from _walk_mst(blocks, right)
 
 
+def _commit_root(
+    header: IpldValue,
+    blocks: Mapping[bytes, IpldValue],
+) -> tuple[str, bytes] | None:
+    """Return the repository ``did`` and MST root CID from a decoded CAR.
+
+    The header's first root is the signed commit; the commit's ``data`` link is
+    the MST root and its ``did`` is the repository identity.
+
+    Parameters
+    ----------
+    header : IpldValue
+        The decoded CAR header, expected to carry a ``roots`` list.
+    blocks : collections.abc.Mapping of bytes to IpldValue
+        The CAR block store, keyed by raw CID bytes.
+
+    Returns
+    -------
+    tuple of (str, bytes) or None
+        The repository DID and the MST root CID bytes, or ``None`` when the
+        header or commit is malformed.
+    """
+    if not isinstance(header, dict):
+        return None
+    roots = header.get("roots")
+    if not isinstance(roots, list) or not roots:
+        return None
+    root = roots[0]
+    if not isinstance(root, bytes):
+        return None
+    commit = blocks.get(root)
+    if not isinstance(commit, dict):
+        return None
+    did = commit.get("did")
+    mst_root = commit.get("data")
+    if not isinstance(did, str) or not isinstance(mst_root, bytes):
+        return None
+    return did, mst_root
+
+
 def _envelopes_from_blocks(
     header: IpldValue,
     blocks: Mapping[bytes, IpldValue],
 ) -> tuple[RecordEnvelope, ...]:
     """Build record envelopes from a decoded CAR header and block store.
 
-    The header's first root is the signed commit; the commit's ``data`` link is
-    the MST root and its ``did`` is the repository identity. Each MST key is a
-    ``collection/rkey`` path whose value link resolves to a record block.
+    Each MST key is a ``collection/rkey`` path whose value link resolves to a
+    record block.
 
     Parameters
     ----------
@@ -433,21 +473,10 @@ def _envelopes_from_blocks(
     tuple of RecordEnvelope
         One envelope per record in the repository, in MST key order.
     """
-    if not isinstance(header, dict):
+    commit_root = _commit_root(header, blocks)
+    if commit_root is None:
         return ()
-    roots = header.get("roots")
-    if not isinstance(roots, list) or not roots:
-        return ()
-    root = roots[0]
-    if not isinstance(root, bytes):
-        return ()
-    commit = blocks.get(root)
-    if not isinstance(commit, dict):
-        return ()
-    did = commit.get("did")
-    mst_root = commit.get("data")
-    if not isinstance(did, str) or not isinstance(mst_root, bytes):
-        return ()
+    did, mst_root = commit_root
     envelopes: list[RecordEnvelope] = []
     for key, target in _walk_mst(blocks, mst_root):
         collection, _, rkey = key.decode("utf-8").partition("/")
@@ -483,6 +512,40 @@ def decode_repo_car(car: bytes) -> tuple[RecordEnvelope, ...]:
     if not isinstance(blocks, dict):
         return ()
     return _envelopes_from_blocks(header, blocks)
+
+
+def count_repo_car(car: bytes) -> dict[str, int]:
+    """Count records per collection from a CAR archive, without decoding values.
+
+    Walks the repository Merkle search tree and tallies each key's collection
+    prefix. Unlike ``decode_repo_car`` this never resolves the record value
+    blocks, so it pays only the MST traversal rather than a decode per record.
+    This is how a whole repository is counted in a single ``getRepo`` request
+    instead of draining every collection with paged ``listRecords``.
+
+    Parameters
+    ----------
+    car : bytes
+        The CAR archive bytes from ``com.atproto.sync.getRepo``.
+
+    Returns
+    -------
+    dict of str to int
+        A record count per collection NSID; empty for an empty or malformed
+        repository.
+    """
+    header, blocks = libipld.decode_car(car)
+    if not isinstance(blocks, dict):
+        return {}
+    commit_root = _commit_root(header, blocks)
+    if commit_root is None:
+        return {}
+    _, mst_root = commit_root
+    counts: dict[str, int] = {}
+    for key, _target in _walk_mst(blocks, mst_root):
+        collection = key.decode("utf-8").partition("/")[0]
+        counts[collection] = counts.get(collection, 0) + 1
+    return counts
 
 
 class PdsClient:
@@ -707,6 +770,32 @@ class PdsClient:
             If the PDS returns a non-success status.
         """
         return decode_repo_car(self.get_repo_car(repo))
+
+    def count_records(self, repo: str) -> dict[str, int]:
+        """Count records per collection in one request, via the repository CAR.
+
+        Fetches ``com.atproto.sync.getRepo`` once and tallies the Merkle search
+        tree's keys by collection, skipping record-value decoding. This counts a
+        whole repository in a single round trip, rather than draining every
+        collection with paged ``listRecords``, which is slow on repositories
+        holding hundreds of thousands of records.
+
+        Parameters
+        ----------
+        repo : str
+            The repository DID.
+
+        Returns
+        -------
+        dict of str to int
+            A record count per collection NSID.
+
+        Raises
+        ------
+        httpx.HTTPStatusError
+            If the PDS returns a non-success status.
+        """
+        return count_repo_car(self.get_repo_car(repo))
 
     def describe_repo(self, repo: str) -> RepoDescription:
         """Fetch a repository's table of contents.

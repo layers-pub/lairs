@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import httpx
+
 from lairs.atproto.appview import AppviewClient
 from lairs.atproto.identity import IdentityResolver
 from lairs.atproto.pds import PdsClient
@@ -235,9 +237,11 @@ def table_of_contents(
     """Read an actor's repository inventory.
 
     Uses ``describe_repo`` to list the collections present in the repo without
-    enumerating records. Counts are filled only when ``counts`` is set, since
-    counting drains every collection. This path is always PDS-backed; the
-    ``source`` argument is accepted for API symmetry and validated.
+    enumerating records. Counts are filled only when ``counts`` is set; they come
+    from a single ``getRepo`` pass that tallies Merkle-search-tree keys without
+    decoding record values, falling back to paged ``listRecords`` only when
+    ``getRepo`` is unavailable. This path is always PDS-backed; the ``source``
+    argument is accepted for API symmetry and validated.
 
     Parameters
     ----------
@@ -273,9 +277,23 @@ def table_of_contents(
     client, owns = _pds_for(pds_endpoint, pds_client)
     try:
         description = client.describe_repo(did)
+        # Counting drains records, so do it in one getRepo pass that tallies MST
+        # keys without decoding values, rather than paging every collection. Fall
+        # back to paged counting only when getRepo is unavailable.
+        tally: dict[str, int] | None = None
+        if counts:
+            try:
+                tally = client.count_records(did)
+            except httpx.HTTPError:
+                tally = None
         collections: list[CollectionCount] = []
         for nsid in description.collections:
-            count = sum(1 for _ in client.list_records(did, nsid)) if counts else None
+            if not counts:
+                count = None
+            elif tally is not None:
+                count = tally.get(nsid, 0)
+            else:
+                count = sum(1 for _ in client.list_records(did, nsid))
             collections.append(
                 CollectionCount(
                     nsid=nsid,
