@@ -31,31 +31,29 @@
 records from ATProto Personal Data Servers, validates them against models
 generated from the Layers lexicons, holds them in memory or in a local
 content-addressed store, and exposes them through a `datasets`-like API with
-tooling for the modalities Layers carries: audio, video, and time-series
+tooling for the modalities Layers relates: audio, video, and time-series
 signals. On the write side it constructs records, uploads media blobs, and
 publishes records in bulk to the authenticated user's own repository, with the
 local store doubling as schema-aware version control.
 
-The mental model: `datasets` and `git` for decentralised linguistic annotation.
-
 `lairs` is built on [didactic](https://github.com/panproto/didactic), which is
-built on [panproto](https://github.com/panproto/phrom). Every structured value
-in `lairs` is a `didactic` model. The project never uses dataclasses, pydantic,
-or ad-hoc classes for its data, and type hints never use `Any`.
-
-The ATProto lexicons are the single source of truth. The `pub.layers.*` models
-are not written by hand. They are generated from the vendored lexicons and
-committed to the repository. Updating to a new Layers version is a re-vendor, a
-regeneration, and a drift check (`lairs gen --check`).
+built on [panproto](https://github.com/panproto/phrom). Structured values
+in `lairs` are `didactic` models built programmatically from the `pub.layers.*`
+ATProto lexicons.
 
 ## Installation
 
-The core install carries no integration dependencies. Each integration is an
+`lairs` can be installed from pypi:
+
+```bash
+pip install lairs                 # core
+```
+
+The core install does not include integration dependencies. Each integration is an
 optional extra, discovered at runtime through entry points, so importing `lairs`
 never imports an integration's dependency.
 
 ```bash
-pip install lairs                 # core
 pip install "lairs[hf]"           # HuggingFace datasets and Hub
 pip install "lairs[torch]"        # PyTorch exporter
 pip install "lairs[audio]"        # audio decoding
@@ -75,6 +73,7 @@ with PdsClient("https://repo.layers.pub") as client:
         source="pds",
         pds_client=client,
     )
+
 print(len(corpus.expressions))
 print(corpus.expressions[0].text)
 ```
@@ -91,15 +90,16 @@ lairs publish --repo ... --revision v0.1 --to did:plc:abc   # dry-run plan by de
 
 ## Documentation
 
-The documentation follows the [Diátaxis](https://diataxis.fr/) structure: a
-tutorial, task-oriented guides, conceptual explanation, and an API reference
-rendered from the source docstrings. Build it locally with:
+The documentation is available at [layers.pub/lairs/](https://layers.pub/lairs/). 
+It can be built locally with:
 
 ```bash
 uv run --group docs mkdocs serve
 ```
 
 ## Development
+
+`lairs` uses `uv` along with `ruff`, `ty`, and `pytest` for development.
 
 ```bash
 uv sync
@@ -122,3 +122,7 @@ Notable changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 ## License
 
 `lairs` is released under the [MIT License](LICENSE).
+
+## Acknowledgments
+
+`lairs` was developed with substantial assistance from Claude Code.
