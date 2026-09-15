@@ -10,17 +10,18 @@ keyed by AT-URI and associated with that schema. lairs writes each record's
 value as JSON under ``records/``, stages it as committed data under its AT-URI,
 and stages the record type's Model schema alongside it, so one commit captures
 both. A corpus snapshot is a single commit; the values committed at a revision
-are read back through ``data_at`` under their AT-URI keys, so a tag pins an
-exact, byte-reproducible set of values, and a revision-to-revision diff compares
-the values folded over each revision's commit ancestry.
+are read back through Panproto's schema-aware ``decoded_data_at`` accessor under
+their AT-URI keys, so a tag pins an exact, reproducible set of values, and a
+revision-to-revision diff compares the values folded over each revision's commit
+ancestry.
 
 Removal is representable: ``forget`` stages a tombstone under a record's AT-URI,
 which the ancestry fold drops, so a record present at a base revision can be
 absent at a descendant head and a diff reports it in ``removed``.
 
-didactic 0.9.0 exposes tag creation (``create_tag`` and friends), the
-committed-data write (``add_data``), and the committed-data read (``data_at``)
-on the public Repository surface, all of which this wrapper uses directly.
+didactic exposes tag creation (``create_tag`` and friends) and committed-data
+writes (``add_data``). Panproto exposes schema-aware committed-data reads through
+``decoded_data_at``. This wrapper uses those public Repository APIs directly.
 """
 
 from __future__ import annotations
@@ -44,9 +45,35 @@ _RECORDS_DIR = "records"
 _INDEX_FILE = "index.json"
 # the default commit author when a caller does not supply one.
 _DEFAULT_AUTHOR = "lairs <lairs@layers.pub>"
-# the committed-data payload that marks a record as deleted at a revision, so
-# the ancestry fold in _state_at drops the key rather than carrying it forward.
-_TOMBSTONE = b'{"$tombstone":true}'
+# the source-JSON payload that marks a record as deleted at a revision. panproto
+# canonicalizes it on commit and decodes it before the ancestry fold sees it.
+_TOMBSTONE_BYTES = b'{"$tombstone":true}'
+
+
+def _is_tombstone(value: JsonValue) -> bool:
+    """Return whether ``value`` is the semantic record-removal marker."""
+    return isinstance(value, dict) and value == {"$tombstone": True}
+
+
+def _keyed_record(dataset: dict[str, JsonValue]) -> tuple[str, JsonValue] | None:
+    """Return the one keyed record in a decoded committed data set.
+
+    Lairs stages one JSON record per AT-URI key. An unkeyed data set belongs to
+    another Panproto client and is ignored; a keyed set that violates the
+    one-record invariant is a malformed Lairs repository.
+    """
+    key = dataset.get("key")
+    if key is None:
+        return None
+    if not isinstance(key, str):
+        msg = "committed data set key is not a string"
+        raise panproto.VcsError(msg)
+    records = dataset.get("records")
+    if not isinstance(records, list) or len(records) != 1:
+        count = len(records) if isinstance(records, list) else "non-list"
+        msg = f"committed data set for {key!r} contains {count} records; expected 1"
+        raise panproto.VcsError(msg)
+    return key, records[0]
 
 
 def _nsid_of(uri: str) -> str:
@@ -147,6 +174,11 @@ class Repository:
     def __init__(self, inner: dx.Repository) -> None:
         self.inner = inner
         self.path = Path(inner.working_dir)
+        # didactic's wrapper does not yet surface panproto's schema-aware
+        # committed-data read, so history reads go through a native handle on
+        # the same store. both handles read refs and objects from disk on each
+        # call, so commits made through ``inner`` are visible here.
+        self._native = panproto.Repository.open(str(self.path))
 
     @classmethod
     def init(cls, path: Path) -> Repository:
@@ -240,7 +272,7 @@ class Repository:
             if "no changes detected" not in str(exc).lower():
                 raise
         # stage the value as committed data keyed by AT-URI, so a revision pins
-        # the exact value and data_at reads it back under that key.
+        # the exact value and decoded_data_at reads it back under that key.
         self.inner.add_data(str(record_path), key=uri)
 
     def forget(self, uri: str) -> None:
@@ -275,7 +307,7 @@ class Repository:
         record_path.unlink(missing_ok=True)
         self._write_index(index)
         tombstone_path = self._records_dir() / f"{stem}.tombstone.json"
-        tombstone_path.write_bytes(_TOMBSTONE)
+        tombstone_path.write_bytes(_TOMBSTONE_BYTES)
         self.inner.add_data(str(tombstone_path), key=uri)
 
     def staged_uris(self) -> list[str]:
@@ -427,8 +459,8 @@ class Repository:
         """Diff the committed record values between two revisions.
 
         The value set committed at each revision is reconstructed from the
-        committed data read with ``data_at``, keyed by AT-URI, and the two sets
-        are compared by content.
+        schema-decoded committed data, keyed by AT-URI, and the two sets are
+        compared by content.
 
         Parameters
         ----------
@@ -460,11 +492,11 @@ class Repository:
     def content_at(self, ref: str) -> dict[str, JsonValue]:
         """Return the committed record values at a revision, keyed by AT-URI.
 
-        Each value is the JSON-decoded record content folded over the
+        Each value is the source-JSON-equivalent record content folded over the
         revision's commit ancestry, so a record removed by a tombstone at or
-        before ``ref`` is absent. This is the decoded counterpart to the raw
-        byte state behind :meth:`diff`, suitable for a field-level comparison
-        of a record across two revisions.
+        before ``ref`` is absent. Panproto decodes both historical source JSON
+        and current canonical committed data through the schema stored with the
+        data set.
 
         Parameters
         ----------
@@ -476,17 +508,14 @@ class Repository:
         dict of str to JsonValue
             The decoded record values at the revision, keyed by AT-URI.
         """
-        decoded: dict[str, JsonValue] = {}
-        for uri, raw in self._state_at(ref).items():
-            decoded[uri] = json.loads(raw)
-        return decoded
+        return self._state_at(ref)
 
-    def _state_at(self, ref: str) -> dict[str, bytes]:
+    def _state_at(self, ref: str) -> dict[str, JsonValue]:
         """Reconstruct the committed record values at a revision, keyed by AT-URI.
 
         Committed data is recorded per commit, so the value set at ``ref`` is the
-        fold of ``data_at`` over the revision's ancestry, oldest commit first,
-        with the latest value for each AT-URI winning.
+        fold of ``decoded_data_at`` over the revision's ancestry, oldest commit
+        first, with the latest value for each AT-URI winning.
 
         Parameters
         ----------
@@ -495,7 +524,7 @@ class Repository:
 
         Returns
         -------
-        dict of str to bytes
+        dict of str to JsonValue
             The committed record values at the revision, keyed by AT-URI.
         """
         target = self.resolve(ref)
@@ -520,15 +549,17 @@ class Repository:
             parents = entry.get("parents")
             if isinstance(parents, list):
                 stack.extend((str(parent), False) for parent in parents)
-        state: dict[str, bytes] = {}
+        state: dict[str, JsonValue] = {}
         for cid in order:
-            for dataset in self.inner.data_at(cid):
-                if dataset.key is None:
+            for dataset in self._native.decoded_data_at(cid):
+                keyed = _keyed_record(dataset)
+                if keyed is None:
                     continue
-                if dataset.data == _TOMBSTONE:
-                    state.pop(dataset.key, None)
+                key, record = keyed
+                if _is_tombstone(record):
+                    state.pop(key, None)
                 else:
-                    state[dataset.key] = dataset.data
+                    state[key] = record
         return state
 
     def schema_diff(
