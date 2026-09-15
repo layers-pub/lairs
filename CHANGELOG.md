@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Repository history reads work on repositories committed under panproto
+  0.73 or later.** panproto 0.73 changed the committed-data carrier from the
+  source JSON bytes to canonical MessagePack, so `Repository.content_at` could
+  no longer decode committed values and the byte-equality tombstone check never
+  matched, resurfacing forgotten records. `content_at` and `diff` now read
+  committed values through panproto's schema-aware `decoded_data_at`, which
+  decodes both the historical JSON carrier and the current canonical one, and
+  tombstones are recognized semantically after decoding. `content_at` still
+  returns plain JSON values keyed by AT-URI with tombstoned records excluded.
+  The ancestry fold also rejects malformed keyed data sets and preserves
+  non-ASCII record content. The test suite pins fixture repositories committed
+  under panproto 0.71, 0.72.1, and 0.74.3 with the same history and checks that
+  all three read back identically.
+- **Commit identifiers are stable across panproto releases.** The identifiers
+  returned by `Repository.log()` are now the stored object identifiers, the
+  same ones `head()` and `resolve()` return, rather than a re-hash of the
+  commit projected through the current commit shape. A repository committed
+  under panproto 0.71 or 0.72, whose commit objects lack fields the current
+  shape gives defaults, reports the identifiers it was written with, so
+  `log()` identifiers can be relied on for pinning. Identifiers are checked
+  against the persisted bytes on every read: a stored commit or data object
+  whose bytes no longer hash to its identifier fails `log()` and `content_at`
+  with a `VcsError`, for historical and current repositories alike.
+
+### Changed
+
+- The `panproto` floor is now `>=0.74.3`, the first release carrying
+  `decoded_data_at` and the stored-identifier log traversal, and the `didactic`
+  floor is now `>=0.15.0`. Repositories written under this floor use the
+  canonical MessagePack carrier and need lairs 0.8.0 or later to read.
+
 ## [0.7.1] - 2026-09-02
 
 ### Changed
