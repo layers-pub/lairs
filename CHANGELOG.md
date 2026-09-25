@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-25
+
+### Fixed
+
+- **CoNLL-U token spans index the text the sentence declares.** A sentence
+  that carries a `# text` comment keeps that text, but spans were still
+  computed as though the text were the forms joined by single spaces. Every
+  corpus that writes `SpaceAfter=No` therefore drifted one byte per run-on
+  token, and a reader validating spans against the text rejected the file:
+  Universal Dependencies English-EWT failed on its first sentence, whose
+  spans ran seven bytes past a 129-byte text. Spans now locate forms in the
+  declared text and retain UTF-8 byte offsets whatever the corpus's spacing.
+  Multiword range rows are preserved by both parser paths and through Layers
+  records: each component word shares the range's complete surface span, as in
+  the published Layers UD data. A form that cannot be aligned receives no span
+  rather than a fabricated or out-of-bounds one.
+
 ## [0.8.0] - 2026-09-15
 
 ### Fixed
@@ -347,7 +364,8 @@ didactic model.
   repositories, discovering datasets, building and searching the index, managing
   sessions, and launching the explorer.
 
-[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/layers-pub/lairs/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/layers-pub/lairs/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/layers-pub/lairs/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/layers-pub/lairs/compare/v0.6.0...v0.7.0
