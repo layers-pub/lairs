@@ -18,8 +18,8 @@ The CoNLL-U surface maps onto Layers as follows:
   :class:`~lairs.records.segmentation.Token`, and a sentence's tokens become a
   :class:`~lairs.records.segmentation.Tokenization` inside one
   :class:`~lairs.records.segmentation.Segmentation` record. Each token's
-  ``textSpan`` carries the true UTF-8 byte offsets of its form in the sentence
-  text (the tokens are joined with single spaces).
+  ``textSpan`` carries UTF-8 byte offsets into the sentence's declared text.
+  Component words in a multiword-token range share the range's surface span.
 - ``UPOS`` and ``XPOS`` become token-tag
   :class:`~lairs.records.annotation.AnnotationLayer` records anchored by token
   index; ``LEMMA`` becomes a token-tag lemma layer; ``FEATS`` are carried as
@@ -31,7 +31,8 @@ Only the basic ``HEAD``/``DEPREL`` dependency tree is modelled. The CoNLL-U
 ``DEPS`` column (enhanced Universal Dependencies, which may attach several
 governors to one token) is not decoded: the relation layer models exactly one
 head per token. Multiword-token range rows (``1-2``) and empty-node rows
-(``1.1``) are skipped; their surface text is recovered from the per-token forms.
+(``1.1``) do not become tokens. Multiword ranges are retained as metadata on
+their component words, while empty nodes are skipped.
 """
 
 from __future__ import annotations
@@ -60,6 +61,11 @@ if TYPE_CHECKING:
     from types import ModuleType
 
     from lairs._types import JsonValue
+
+type _LibraryTokenId = int | tuple[int, str, int]
+type _LibraryValue = (
+    _LibraryTokenId | str | dict[str, str] | dict[str, str | None] | None
+)
 
 __all__ = ["ConlluCodec", "ConlluIso"]
 
@@ -92,6 +98,11 @@ _EMPTY = "_"
 
 # the head index of the dependency root.
 _ROOT_HEAD = -1
+
+# fixed arities and bounds in the conllu multiword-token representation.
+_MULTIWORD_ID_PARTS = 3
+_MULTIWORD_ROW_COLUMNS = 2
+_MIN_MULTIWORD_COMPONENTS = 2
 
 
 def _require_conllu() -> ModuleType:
@@ -211,6 +222,24 @@ class _Feat(dx.Model):
     value: str = dx.field(description="feature value")
 
 
+class _MultiwordToken(dx.Model):
+    """A CoNLL-U multiword-token range and its surface form.
+
+    Attributes
+    ----------
+    start : int
+        The 0-based index of the first syntactic word in the range.
+    end : int
+        The 0-based index of the last syntactic word in the range, inclusive.
+    form : str
+        The surface form spanning the complete range.
+    """
+
+    start: int = dx.field(description="0-based first token index")
+    end: int = dx.field(description="0-based final token index")
+    form: str = dx.field(description="surface form of the complete range")
+
+
 class _ConlluToken(dx.Model):
     """A single parsed CoNLL-U token row.
 
@@ -232,6 +261,9 @@ class _ConlluToken(dx.Model):
         The ``HEAD`` 0-based governor index (``-1`` for the root), if present.
     deprel : str or None
         The ``DEPREL`` dependency relation label, if present.
+    multiword : _MultiwordToken or None
+        The enclosing multiword-token range, if this syntactic word belongs to
+        one.
     """
 
     index: int = dx.field(description="0-based token index")
@@ -245,6 +277,10 @@ class _ConlluToken(dx.Model):
     )
     head: int | None = dx.field(default=None, description="0-based head index")
     deprel: str | None = dx.field(default=None, description="dependency relation")
+    multiword: dx.Embed[_MultiwordToken] | None = dx.field(
+        default=None,
+        description="enclosing multiword-token range",
+    )
 
 
 class _ConlluSentence(dx.Model):
@@ -375,6 +411,7 @@ def _parse_conllu(src: str) -> _ConlluSentence:
     """
     tokens: list[_ConlluToken] = []
     declared_text: str | None = None
+    multiword: _MultiwordToken | None = None
     for raw in src.splitlines():
         line = raw.rstrip("\n")
         if not line.strip():
@@ -386,8 +423,13 @@ def _parse_conllu(src: str) -> _ConlluSentence:
             if key.strip() == "text":
                 declared_text = value.strip()
             continue
+        parsed_multiword = _parse_multiword_token_line(line)
+        if parsed_multiword is not None:
+            multiword = parsed_multiword
+            continue
         token = _parse_token_line(line)
         if token is not None:
+            token, multiword = _attach_multiword(token, multiword)
             tokens.append(token)
     text = declared_text if declared_text is not None else _join_forms(tokens)
     return _ConlluSentence(text=text, tokens=tuple(tokens))
@@ -401,21 +443,27 @@ def _parse_with_library(conllu: ModuleType, src: str) -> tuple[_ConlluSentence, 
 
 
 def _sentence_from_token_list(
-    token_list: Iterable[dict[str, object]],
+    token_list: Iterable[dict[str, _LibraryValue]],
 ) -> _ConlluSentence:
     """Convert one ``conllu`` ``TokenList`` into a :class:`_ConlluSentence`."""
     metadata = getattr(token_list, "metadata", {}) or {}
     declared_text = metadata.get("text") if isinstance(metadata, dict) else None
     tokens: list[_ConlluToken] = []
+    multiword: _MultiwordToken | None = None
     for row in token_list:
+        parsed_multiword = _multiword_from_library_row(row)
+        if parsed_multiword is not None:
+            multiword = parsed_multiword
+            continue
         token = _token_from_library_row(row)
         if token is not None:
+            token, multiword = _attach_multiword(token, multiword)
             tokens.append(token)
     text = declared_text if isinstance(declared_text, str) else _join_forms(tokens)
     return _ConlluSentence(text=text, tokens=tuple(tokens))
 
 
-def _token_from_library_row(row: dict[str, object]) -> _ConlluToken | None:
+def _token_from_library_row(row: dict[str, _LibraryValue]) -> _ConlluToken | None:
     """Convert one ``conllu`` token mapping into a :class:`_ConlluToken`.
 
     Multiword-token range rows (``id`` is a tuple) and empty-node rows are
@@ -437,14 +485,68 @@ def _token_from_library_row(row: dict[str, object]) -> _ConlluToken | None:
     )
 
 
-def _library_str(value: object) -> str | None:
+def _multiword_from_library_row(
+    row: dict[str, _LibraryValue],
+) -> _MultiwordToken | None:
+    """Return the multiword range represented by a library row, if any."""
+    token_id = row.get("id")
+    if (
+        not isinstance(token_id, tuple)
+        or len(token_id) != _MULTIWORD_ID_PARTS
+        or token_id[1] != "-"
+        or not isinstance(token_id[0], int)
+        or not isinstance(token_id[2], int)
+    ):
+        return None
+    return _MultiwordToken(
+        start=token_id[0] - 1,
+        end=token_id[2] - 1,
+        form=str(row.get("form", "")),
+    )
+
+
+def _attach_multiword(
+    token: _ConlluToken,
+    multiword: _MultiwordToken | None,
+) -> tuple[_ConlluToken, _MultiwordToken | None]:
+    """Attach an active multiword range to a component token."""
+    if multiword is None:
+        return token, None
+    if token.index < multiword.start:
+        return token, multiword
+    if token.index > multiword.end:
+        return token, None
+    attached = _token_with_multiword(token, multiword)
+    remaining = None if token.index == multiword.end else multiword
+    return attached, remaining
+
+
+def _token_with_multiword(
+    token: _ConlluToken,
+    multiword: _MultiwordToken,
+) -> _ConlluToken:
+    """Return ``token`` carrying ``multiword`` without mutating either model."""
+    return _ConlluToken(
+        index=token.index,
+        form=token.form,
+        lemma=token.lemma,
+        upos=token.upos,
+        xpos=token.xpos,
+        feats=token.feats,
+        head=token.head,
+        deprel=token.deprel,
+        multiword=multiword,
+    )
+
+
+def _library_str(value: _LibraryValue) -> str | None:
     """Return a library column value as a string, or ``None`` when absent."""
     if value is None or value == _EMPTY:
         return None
     return str(value)
 
 
-def _library_feats(value: object) -> tuple[_Feat, ...]:
+def _library_feats(value: _LibraryValue) -> tuple[_Feat, ...]:
     """Convert a library ``feats`` mapping into ordered key/value pairs."""
     if not isinstance(value, dict):
         return ()
@@ -455,7 +557,7 @@ def _library_feats(value: object) -> tuple[_Feat, ...]:
     )
 
 
-def _library_head(value: object) -> int | None:
+def _library_head(value: _LibraryValue) -> int | None:
     """Convert a library ``head`` value into a 0-based head index (``-1`` root)."""
     if not isinstance(value, int):
         return None
@@ -464,12 +566,40 @@ def _library_head(value: object) -> int | None:
 
 def _render_with_library(conllu: ModuleType, sentence: _ConlluSentence) -> str:
     """Render a parsed sentence to CoNLL-U text via the ``conllu`` library."""
-    rows = [_library_row(token) for token in sentence.tokens]
+    rows = list(_library_rows(sentence.tokens))
     token_list = conllu.TokenList(rows, metadata={"text": sentence.text})
     return token_list.serialize()
 
 
-def _library_row(token: _ConlluToken) -> dict[str, object]:
+def _library_rows(
+    tokens: tuple[_ConlluToken, ...],
+) -> Iterator[dict[str, _LibraryValue]]:
+    """Yield library rows, including each multiword range exactly once."""
+    for token in tokens:
+        if token.multiword is not None and token.index == token.multiword.start:
+            yield _library_multiword_row(token.multiword)
+        yield _library_row(token)
+
+
+def _library_multiword_row(
+    multiword: _MultiwordToken,
+) -> dict[str, _LibraryValue]:
+    """Build a ``conllu`` library row for a multiword-token range."""
+    return {
+        "id": (multiword.start + 1, "-", multiword.end + 1),
+        "form": multiword.form,
+        "lemma": None,
+        "upos": None,
+        "xpos": None,
+        "feats": None,
+        "head": None,
+        "deprel": None,
+        "deps": None,
+        "misc": None,
+    }
+
+
+def _library_row(token: _ConlluToken) -> dict[str, _LibraryValue]:
     """Build a ``conllu`` token mapping from a parsed token."""
     return {
         "id": token.index + 1,
@@ -530,6 +660,24 @@ def _parse_token_line(line: str) -> _ConlluToken | None:
     )
 
 
+def _parse_multiword_token_line(line: str) -> _MultiwordToken | None:
+    """Parse a CoNLL-U multiword-token range row, if ``line`` is one."""
+    columns = line.split("\t")
+    if len(columns) < _MULTIWORD_ROW_COLUMNS:
+        return None
+    start_text, separator, end_text = columns[0].partition("-")
+    if not separator:
+        return None
+    try:
+        start = int(start_text) - 1
+        end = int(end_text) - 1
+    except ValueError:
+        return None
+    if start < 0 or end <= start:
+        return None
+    return _MultiwordToken(start=start, end=end, form=columns[1])
+
+
 def _optional(value: str) -> str | None:
     """Return ``None`` for the CoNLL-U empty sentinel, else the value."""
     return None if value == _EMPTY else value
@@ -559,8 +707,14 @@ def _parse_head(value: str) -> int | None:
 
 
 def _join_forms(tokens: list[_ConlluToken]) -> str:
-    """Reconstruct sentence text by joining token forms with single spaces."""
-    return " ".join(token.form for token in tokens)
+    """Reconstruct text from token or enclosing multiword surface forms."""
+    forms: list[str] = []
+    for token in tokens:
+        if token.multiword is None:
+            forms.append(token.form)
+        elif token.index == token.multiword.start:
+            forms.append(token.multiword.form)
+    return " ".join(forms)
 
 
 def _records_from_sentence(
@@ -627,22 +781,39 @@ def _segmentation_json(sentence: _ConlluSentence, index: int) -> str:
 def _segmentation_tokens(sentence: _ConlluSentence) -> Iterator[Token]:
     """Yield segmentation tokens carrying each form's true byte offsets.
 
-    The byte cursor walks the sentence text the same way :func:`_join_forms`
-    builds it: forms separated by a single space. Each token's ``textSpan``
-    therefore slices the expression text back to that token's surface form.
+    Each surface form is located in the sentence text itself, searching
+    forward from the previous form. Component words of a CoNLL-U multiword
+    token share the complete range's surface span. A form that cannot be
+    aligned receives no span rather than a fabricated or out-of-bounds one.
     """
+    text = sentence.text
     cursor = 0
-    for position, token in enumerate(sentence.tokens):
-        if position > 0:
-            # account for the single space joining successive forms.
-            cursor += 1
-        byte_length = len(token.form.encode("utf-8"))
+    multiword_spans: dict[tuple[int, int], Span | None] = {}
+    for token in sentence.tokens:
+        key = None
+        surface_form = token.form
+        if token.multiword is not None:
+            key = (token.multiword.start, token.multiword.end)
+            surface_form = token.multiword.form
+        span = multiword_spans.get(key) if key is not None else None
+        if key is None or key not in multiword_spans:
+            found = text.find(surface_form, cursor)
+            if found < 0:
+                span = None
+            else:
+                start = len(text[:found].encode("utf-8"))
+                span = Span(
+                    byteStart=start,
+                    byteEnd=start + len(surface_form.encode("utf-8")),
+                )
+                cursor = found + len(surface_form)
+            if key is not None:
+                multiword_spans[key] = span
         yield Token(
             tokenIndex=token.index,
             text=token.form,
-            textSpan=Span(byteStart=cursor, byteEnd=cursor + byte_length),
+            textSpan=span,
         )
-        cursor += byte_length
 
 
 def _tag_layer_records(
@@ -812,6 +983,7 @@ def _sentence_from_records(
     """Recover a single parsed CoNLL-U sentence from one sentence's records."""
     text = ""
     forms: dict[int, str] = {}
+    spans: dict[int, tuple[int, int]] = {}
     upos: dict[int, str] = {}
     xpos: dict[int, str] = {}
     lemma: dict[int, str] = {}
@@ -827,7 +999,7 @@ def _sentence_from_records(
             if isinstance(raw_text, str):
                 text = raw_text
         elif _sentence_index_of(record.local_id, _SEGMENTATION_LOCAL_ID) is not None:
-            _collect_forms(value, forms)
+            _collect_forms(value, forms, spans)
         elif _sentence_index_of(record.local_id, _UPOS_LAYER_LOCAL_ID) is not None:
             _collect_labels(value, upos)
             _collect_feats(value, feats)
@@ -837,7 +1009,7 @@ def _sentence_from_records(
             _collect_labels(value, lemma)
         elif _sentence_index_of(record.local_id, _DEPS_LAYER_LOCAL_ID) is not None:
             _collect_dependencies(value, heads, deprels)
-    tokens = tuple(
+    plain_tokens = tuple(
         _ConlluToken(
             index=index,
             form=forms[index],
@@ -850,11 +1022,16 @@ def _sentence_from_records(
         )
         for index in sorted(forms)
     )
+    tokens = _restore_multiword_tokens(plain_tokens, spans, text)
     return _ConlluSentence(text=text, tokens=tokens)
 
 
-def _collect_forms(value: dict[str, JsonValue], forms: dict[int, str]) -> None:
-    """Collect token forms from a segmentation json mapping."""
+def _collect_forms(
+    value: dict[str, JsonValue],
+    forms: dict[int, str],
+    spans: dict[int, tuple[int, int]],
+) -> None:
+    """Collect token forms and byte spans from a segmentation json mapping."""
     tokenizations = value.get("tokenizations")
     if not isinstance(tokenizations, list):
         return
@@ -871,6 +1048,48 @@ def _collect_forms(value: dict[str, JsonValue], forms: dict[int, str]) -> None:
             form = token.get("text")
             if isinstance(index, int) and isinstance(form, str):
                 forms[index] = form
+            span = token.get("textSpan")
+            if not isinstance(index, int) or not isinstance(span, dict):
+                continue
+            start = span.get("byteStart")
+            end = span.get("byteEnd")
+            if isinstance(start, int) and isinstance(end, int):
+                spans[index] = (start, end)
+
+
+def _restore_multiword_tokens(
+    tokens: tuple[_ConlluToken, ...],
+    spans: dict[int, tuple[int, int]],
+    text: str,
+) -> tuple[_ConlluToken, ...]:
+    """Restore multiword ranges from consecutive tokens sharing one span."""
+    by_span: dict[tuple[int, int], list[int]] = {}
+    for token in tokens:
+        span = spans.get(token.index)
+        if span is not None:
+            by_span.setdefault(span, []).append(token.index)
+    ranges: dict[int, _MultiwordToken] = {}
+    encoded = text.encode("utf-8")
+    for (start_byte, end_byte), indexes in by_span.items():
+        if len(indexes) < _MIN_MULTIWORD_COMPONENTS or indexes != list(
+            range(indexes[0], indexes[-1] + 1)
+        ):
+            continue
+        if start_byte < 0 or end_byte < start_byte or end_byte > len(encoded):
+            continue
+        try:
+            form = encoded[start_byte:end_byte].decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        multiword = _MultiwordToken(start=indexes[0], end=indexes[-1], form=form)
+        for index in indexes:
+            ranges[index] = multiword
+    return tuple(
+        _token_with_multiword(token, ranges[token.index])
+        if token.index in ranges
+        else token
+        for token in tokens
+    )
 
 
 def _collect_labels(value: dict[str, JsonValue], labels: dict[int, str]) -> None:
@@ -943,9 +1162,29 @@ def _feature_pairs(features: JsonValue) -> tuple[_Feat, ...]:
 def _render_sentence(sentence: _ConlluSentence) -> str:
     """Render a parsed CoNLL-U sentence back to CoNLL-U text."""
     lines = [f"# text = {sentence.text}"]
-    lines.extend(_render_token(token) for token in sentence.tokens)
+    for token in sentence.tokens:
+        if token.multiword is not None and token.index == token.multiword.start:
+            lines.append(_render_multiword_token(token.multiword))
+        lines.append(_render_token(token))
     lines.append("")
     return "\n".join(lines)
+
+
+def _render_multiword_token(multiword: _MultiwordToken) -> str:
+    """Render one CoNLL-U multiword-token range row."""
+    columns = (
+        f"{multiword.start + 1}-{multiword.end + 1}",
+        multiword.form,
+        _EMPTY,
+        _EMPTY,
+        _EMPTY,
+        _EMPTY,
+        _EMPTY,
+        _EMPTY,
+        _EMPTY,
+        _EMPTY,
+    )
+    return "\t".join(columns)
 
 
 def _render_token(token: _ConlluToken) -> str:

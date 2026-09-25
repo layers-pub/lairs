@@ -20,8 +20,11 @@ from lairs.integrations.codecs.conllu import (
     _ConlluSentence,
     _ConlluToken,
     _Feat,
+    _MultiwordToken,
     _parse_conllu,
+    _parse_with_library,
     _render_sentence,
+    _segmentation_tokens,
 )
 from lairs.integrations.ports import Codec
 
@@ -125,6 +128,25 @@ def test_parse_conllu_skips_multiword_tokens() -> None:
     )
     sentence = _parse_conllu(src)
     assert [token.form for token in sentence.tokens] == ["do", "n't"]
+    assert sentence.tokens[0].multiword == _MultiwordToken(
+        start=0,
+        end=1,
+        form="don't",
+    )
+    assert sentence.tokens[1].multiword == sentence.tokens[0].multiword
+
+
+def test_parse_with_library_retains_multiword_range() -> None:
+    """The optional parser keeps range metadata for its component words."""
+    conllu = pytest.importorskip("conllu")
+    sentence = _parse_with_library(conllu, _CONLLU_MULTIWORD)[0]
+
+    assert sentence.tokens[1].multiword == _MultiwordToken(
+        start=1,
+        end=2,
+        form="zur",
+    )
+    assert sentence.tokens[2].multiword == sentence.tokens[1].multiword
 
 
 def test_render_sentence_round_trips_parse() -> None:
@@ -334,3 +356,98 @@ def test_codec_round_trip_live() -> None:
     assert isinstance(fragment, CorpusFragment)
     reparsed = codec.decode(codec.encode(fragment.records))
     assert reparsed == fragment
+
+
+# a sentence whose declared text runs tokens together, as UD corpora do.
+_CONLLU_NO_SPACE_AFTER = (
+    "# text = Al-Zaman : American forces\n"
+    "1\tAl\tAl\tPROPN\tNNP\t_\t0\troot\t_\tSpaceAfter=No\n"
+    "2\t-\t-\tPUNCT\tHYPH\t_\t3\tpunct\t_\tSpaceAfter=No\n"
+    "3\tZaman\tZaman\tPROPN\tNNP\t_\t1\tflat\t_\t_\n"
+    "4\t:\t:\tPUNCT\t:\t_\t6\tpunct\t_\t_\n"
+    "5\tAmerican\tAmerican\tADJ\tJJ\t_\t6\tamod\t_\t_\n"
+    "6\tforces\tforce\tNOUN\tNNS\t_\t1\tnsubj\t_\t_\n"
+)
+
+_CONLLU_MULTIWORD = (
+    "# text = Über zur Schule\n"
+    "1\tÜber\tüber\tADP\t_\t_\t4\tcase\t_\t_\n"
+    "2-3\tzur\t_\t_\t_\t_\t_\t_\t_\t_\n"
+    "2\tzu\tzu\tADP\t_\t_\t4\tcase\t_\t_\n"
+    "3\tder\tder\tDET\t_\t_\t4\tdet\t_\t_\n"
+    "4\tSchule\tSchule\tNOUN\t_\t_\t0\troot\t_\t_\n"
+)
+
+
+def test_every_token_span_slices_the_declared_text_back_to_its_form() -> None:
+    """A span indexes the text the sentence declares, not a space-joined one."""
+    sentence = _parse_conllu(_CONLLU_NO_SPACE_AFTER)
+    encoded = sentence.text.encode("utf-8")
+
+    for token in _segmentation_tokens(sentence):
+        span = token.textSpan
+
+        assert span is not None
+        assert encoded[span.byteStart : span.byteEnd].decode("utf-8") == token.text
+
+
+def test_no_token_span_runs_past_the_declared_text() -> None:
+    """Spans stay inside the text, which a space-joined cursor would not."""
+    sentence = _parse_conllu(_CONLLU_NO_SPACE_AFTER)
+    limit = len(sentence.text.encode("utf-8"))
+
+    for token in _segmentation_tokens(sentence):
+        assert token.textSpan is not None
+        assert token.textSpan.byteEnd <= limit
+
+
+def test_multiword_components_share_the_range_surface_span() -> None:
+    """Syntactic words in a multiword token point at its whole surface form."""
+    sentence = _parse_conllu(_CONLLU_MULTIWORD)
+    tokens = tuple(_segmentation_tokens(sentence))
+    spans = []
+    for token in tokens:
+        assert token.textSpan is not None
+        spans.append((token.textSpan.byteStart, token.textSpan.byteEnd))
+
+    assert spans == [
+        (0, 5),
+        (6, 9),
+        (6, 9),
+        (10, 16),
+    ]
+    assert sentence.text.encode("utf-8")[6:9].decode("utf-8") == "zur"
+
+
+def test_multiword_sentence_round_trips_through_layers_records() -> None:
+    """Shared spans preserve range rows through the Layers representation."""
+    sentence = _parse_conllu(_CONLLU_MULTIWORD)
+    iso = ConlluIso()
+
+    assert iso.backward(iso.forward(sentence)) == sentence
+
+
+def test_render_sentence_emits_multiword_range_row() -> None:
+    """Rendering restores the range row before its component words."""
+    sentence = _parse_conllu(_CONLLU_MULTIWORD)
+
+    assert "2-3\tzur\t_\t_\t_\t_\t_\t_\t_\t_\n2\tzu" in _render_sentence(sentence)
+
+
+def test_codec_round_trips_multiword_range() -> None:
+    """The optional library path preserves a multiword range on encoding."""
+    pytest.importorskip("conllu")
+    codec = ConlluCodec()
+
+    fragment = codec.decode(_CONLLU_MULTIWORD)
+    encoded = codec.encode(fragment.records)
+
+    assert "2-3\tzur\t_\t_\t_\t_\t_\t_\t_\t_\n2\tzu" in encoded
+    assert codec.decode(encoded) == fragment
+
+
+def test_unalignable_form_has_no_fabricated_span() -> None:
+    """A conflicting declared text produces an absent span, never overflow."""
+    sentence = _parse_conllu("# text = short\n1\tlonger\t_\t_\t_\t_\t_\t_\t_\t_\n")
+
+    assert next(iter(_segmentation_tokens(sentence))).textSpan is None
