@@ -6,6 +6,9 @@ import importlib.util
 import sys
 from typing import TYPE_CHECKING
 
+import didactic.api as dx
+import pytest
+
 from lairs._codegen import emit
 from lairs._codegen.emit import emit_module
 from lairs._codegen.schema_to_spec import FieldSpec, ModelSpec, VariantSpec
@@ -67,6 +70,8 @@ def test_emitted_module_is_importable_python(tmp_path: Path) -> None:
     demo = module.Demo
     instance = demo(text="hi")
     assert demo.model_validate(instance.model_dump()) == instance
+    with pytest.raises(dx.ValidationError, match="expected an integer"):
+        demo.model_validate({"text": "hi", "count": float("nan")})
 
 
 def test_emitted_field_metadata_is_preserved(tmp_path: Path) -> None:

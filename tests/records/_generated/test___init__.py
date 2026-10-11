@@ -15,9 +15,11 @@ from pathlib import Path
 
 import didactic.api as dx
 import panproto as pp
+import pytest
 
 from lairs.records import _generated
 from lairs.records._generated import defs
+from lairs.records._generated import judgment as judgment_records
 
 _LEXICON_ROOT = Path(__file__).resolve().parents[3] / "lairs" / "lexicons"
 
@@ -121,6 +123,50 @@ def test_span_round_trips() -> None:
 def test_embed_round_trips() -> None:
     anchor = defs.Anchor(textSpan=defs.Span(byteStart=1, byteEnd=2))
     assert defs.Anchor.model_validate(anchor.model_dump()) == anchor
+
+
+def test_continuous_judgment_values_round_trip_exactly() -> None:
+    item = defs.ObjectRef(
+        recordRef="at://did:plc:items/pub.layers.expression.expression/item-1"
+    )
+    for coefficient, exponent in ((0, 0), (73, -2), (1, 0), (-125, -2)):
+        continuous = judgment_records.DecimalValue(
+            coefficient=coefficient,
+            exponent=exponent,
+        )
+        judgment = judgment_records.Judgment(
+            item=item,
+            continuousValue=continuous,
+        )
+        dumped = judgment.model_dump_json()
+        assert judgment_records.Judgment.model_validate_json(dumped) == judgment
+        assert json.loads(dumped)["continuousValue"] == {
+            "coefficient": coefficient,
+            "exponent": exponent,
+        }
+
+
+def test_continuous_judgment_rejects_malformed_and_nonfinite_values() -> None:
+    invalid = (
+        {},
+        {"coefficient": "", "exponent": 0},
+        {"coefficient": "NaN", "exponent": 0},
+        {"coefficient": float("nan"), "exponent": 0},
+        {"coefficient": float("inf"), "exponent": 0},
+        {"coefficient": 73, "exponent": "-2"},
+        {"coefficient": 73, "exponent": float("inf")},
+    )
+    for value in invalid:
+        with pytest.raises(dx.ValidationError):
+            judgment_records.DecimalValue.model_validate(value)
+
+
+def test_continuous_task_type_is_documented_on_generated_model() -> None:
+    known_values = judgment_records.ExperimentDef.__field_specs__["taskType"].extras[
+        "knownValues"
+    ]
+    assert isinstance(known_values, tuple)
+    assert "continuous" in known_values
 
 
 def _union_vertices() -> list[tuple[str, str]]:

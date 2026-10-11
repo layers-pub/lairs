@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections import defaultdict
 from pathlib import Path
@@ -155,8 +156,9 @@ def _canonicalise(out_root: Path) -> None:
     out_root : pathlib.Path
         The directory holding the freshly emitted modules.
     """
-    ruff = shutil.which("ruff")
-    base: list[str] = [ruff] if ruff is not None else ["uv", "run", "ruff"]
+    environment_ruff = Path(sys.executable).with_name("ruff")
+    ruff = environment_ruff if environment_ruff.is_file() else shutil.which("ruff")
+    base = [str(ruff)] if ruff is not None else ["uv", "run", "ruff"]
     target = str(out_root)
     _run_ruff([*base, "format", target])
     _run_ruff([*base, "check", "--fix", "--quiet", target])

@@ -153,7 +153,11 @@ naming the corpus, persona, ontology, and templates it draws on, the
 measure and task types, and the response scale or labels. A
 `judgment.judgmentSet` collects the judgments a single
 annotator gave for one experiment, pointing back at it through
-`experimentRef`. A `judgment.agreementReport` summarizes inter-annotator
+`experimentRef`. Integer ordinal ratings, ranks, and integer magnitude
+estimates use `scalarValue`; continuous tasks use the exact
+`continuousValue` coefficient-and-exponent carrier, which Lairs exposes as a
+`Decimal` without passing through binary floating point. A
+`judgment.agreementReport` summarizes inter-annotator
 agreement across several judgment sets, naming the `judgmentSetRefs` it
 covers, a `metric`, and the computed `value`. Only the experiment
 definition is a produce record carrying the shared provenance fields; the

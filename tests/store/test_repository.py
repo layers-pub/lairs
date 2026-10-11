@@ -11,6 +11,8 @@ import didactic.api as dx
 import panproto
 import pytest
 
+from lairs.records._generated.defs import ObjectRef
+from lairs.records._generated.judgment import DecimalValue, Judgment
 from lairs.store import repository
 from lairs.store.repository import RecordDiff, Repository, Workspace
 
@@ -26,6 +28,7 @@ class _Expr(dx.Model):
 
 _EXPR_URI = "at://did:plc:abc/pub.layers.expression.expression/e1"
 _MEDIA_URI = "at://did:plc:abc/pub.layers.media.media/m1"
+_JUDGMENT_URI = "at://did:plc:abc/pub.layers.judgment.judgmentSet/j1"
 # one committed fixture repository per panproto committed-data carrier: 0.71 and
 # 0.72.1 committed source JSON, 0.74.3 commits canonical messagepack. all three
 # hold the same save/update/forget history, so history reads must agree.
@@ -116,6 +119,22 @@ def test_save_load_round_trip(tmp_path: Path) -> None:
     assert isinstance(loaded, _Expr)
     assert loaded.text == "hello"
     assert repo.load_raw(_EXPR_URI) == {"text": "hello"}
+
+
+def test_continuous_judgment_survives_commit_and_read(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    judgment = Judgment(
+        item=ObjectRef(recordRef=_EXPR_URI),
+        continuousValue=DecimalValue(coefficient=73, exponent=-2),
+    )
+    repo.save(_JUDGMENT_URI, judgment)
+    revision = repo.commit("continuous judgment")
+
+    reopened = Repository.open(tmp_path / "repo")
+    assert reopened.load(_JUDGMENT_URI, Judgment) == judgment
+    content = reopened.content_at(revision)[_JUDGMENT_URI]
+    assert isinstance(content, dict)
+    assert content["continuousValue"] == {"coefficient": 73, "exponent": -2}
 
 
 def test_load_absent_uri_returns_none(tmp_path: Path) -> None:

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-11
+
+### Added
+
+- **Lossless continuous judgments.** The generated `Judgment` model now carries
+  the Layers 0.11.0 `continuousValue` arm as a typed `DecimalValue` coefficient
+  and exponent, while `ExperimentDef.taskType` lists `continuous` among its
+  known values. `JudgmentStudy.judgments()` exposes that response as
+  `JudgmentRow.continuous_value: Decimal | None`, preserving participant and
+  item identity and keeping continuous responses distinct from the existing
+  integer `scalar_value`. The long-format Arrow and Parquet view stores the
+  exact decimal text in a `continuous_value` column rather than converting it
+  to binary floating point.
+
+### Changed
+
+- **Vendored Layers lexicons 0.11.0.** The vendored release is pinned to commit
+  `da20595e19874358f5c0fcd37462d8e457ec0cdb`; the regenerated lexicon tree hash
+  is `87f116cc92d112e697e0fde39368185a8301a1a422e9cfcf20d911b940f8615f`.
+  Generated integer fields now validate through a strict converter, so
+  malformed and nonfinite continuous components raise `dx.ValidationError` at
+  the typed boundary.
+
 ## [0.8.1] - 2026-09-25
 
 ### Fixed
@@ -364,7 +387,8 @@ didactic model.
   repositories, discovering datasets, building and searching the index, managing
   sessions, and launching the explorer.
 
-[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/layers-pub/lairs/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/layers-pub/lairs/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/layers-pub/lairs/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/layers-pub/lairs/compare/v0.7.0...v0.7.1

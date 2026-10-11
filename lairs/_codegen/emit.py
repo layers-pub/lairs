@@ -51,6 +51,7 @@ def emit_module(
     uses_literal = any(spec.is_union for spec in ordered)
     uses_blobref = any(_spec_uses_blobref(spec) for spec in ordered)
     uses_mixed_case = any(_spec_uses_mixed_case(spec) for spec in ordered)
+    uses_int = any(_spec_uses_int(spec) for spec in ordered)
 
     # codes inherent to atproto-faithful generated didactic models. N815: the
     # python attribute keeps the camelCase wire key. TC001/TC003: didactic
@@ -75,6 +76,8 @@ def emit_module(
         )
     )
     blocks.append(_dunder_all(ordered))
+    if uses_int:
+        blocks.append(_strict_int_converter())
     blocks.extend(_class_text(spec) for spec in ordered)
     body = "\n\n".join(blocks)
     return _suppress_long_lines(body.rstrip()) + "\n"
@@ -240,6 +243,21 @@ def _emitted_names(specs: Sequence[ModelSpec]) -> list[str]:
     return names
 
 
+def _strict_int_converter() -> str:
+    """Return the converter that makes bad integers typed validation errors."""
+    return (
+        "def _strict_int[T](value: T) -> int:\n"
+        "    if isinstance(value, bool) or not isinstance(value, int):\n"
+        '        msg = "expected an integer"\n'
+        "        raise TypeError(msg)\n"
+        "    return value\n\n\n"
+        "def _strict_optional_int[T](value: T) -> int | None:\n"
+        "    if value is None:\n"
+        "        return None\n"
+        "    return _strict_int(value)"
+    )
+
+
 def _class_text(spec: ModelSpec) -> str:
     """Render a single spec to a class definition (or union family)."""
     if spec.is_union:
@@ -365,6 +383,9 @@ def _field_args(field: FieldSpec) -> list[str]:
             args.append("default_factory=tuple,")
         else:
             args.append("default=None,")
+    if field.type_kind == "int":
+        converter = "_strict_int" if field.required else "_strict_optional_int"
+        args.append(f"converter={converter},")
     if field.description is not None:
         args.append(f"description={_py_str(field.description)},")
     extras = _field_extras(field)
@@ -420,6 +441,11 @@ def _py_str(value: str) -> str:
 def _spec_uses_datetime(spec: ModelSpec) -> bool:
     """Return whether any field of a spec is datetime-typed."""
     return any(_field_uses_datetime(field) for field in spec.fields)
+
+
+def _spec_uses_int(spec: ModelSpec) -> bool:
+    """Return whether a spec has a direct integer field."""
+    return any(field.type_kind == "int" for field in spec.fields)
 
 
 def _field_uses_datetime(field: FieldSpec) -> bool:

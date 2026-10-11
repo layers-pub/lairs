@@ -150,6 +150,9 @@ writes `judgments.parquet` (the long-format participant-by-item matrix),
 `region_responses.parquet` (per-region reading times, eye-movement measures,
 and per-region responses, empty for studies without them), so the study is
 queryable with DuckDB or the explorer's Query tab (`lairs tui --data <dir>`).
+The judgment matrix keeps integer responses in `scalar_value` and exact
+continuous responses in `continuous_value`, serialized as decimal text without
+binary floating-point conversion.
 
 ## `datasets`
 
