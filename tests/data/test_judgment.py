@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import pyarrow.parquet as pq
@@ -15,6 +16,7 @@ from lairs.data.judgment import JudgmentStudy, load_judgment_study
 from lairs.records._generated.defs import AgentRef, ObjectRef
 from lairs.records._generated.expression import Expression
 from lairs.records._generated.judgment import (
+    DecimalValue,
     ExperimentDef,
     Judgment,
     JudgmentSet,
@@ -188,6 +190,7 @@ def test_to_arrow_is_long_format() -> None:
         "item_ref",
         "item_text",
         "scalar_value",
+        "continuous_value",
         "categorical_value",
         "confidence",
         "response_time_ms",
@@ -197,6 +200,54 @@ def test_to_arrow_is_long_format() -> None:
         "The cat sat.",
         "Sat cat the on mat.",
     }
+
+
+def test_continuous_judgment_loads_and_flattens_losslessly() -> None:
+    experiment = ExperimentDef(
+        name="UNLI inference",
+        taskType="continuous",
+        createdAt=_NOW,
+    )
+    judgment_set = JudgmentSet(
+        agent=AgentRef(id="participant-1"),
+        judgments=(
+            Judgment(
+                item=ObjectRef(recordRef=_ITEM_1),
+                continuousValue=DecimalValue(coefficient=73, exponent=-2),
+            ),
+            Judgment(
+                item=ObjectRef(recordRef=_ITEM_2),
+                scalarValue=1,
+            ),
+        ),
+        experimentRef=_EXPERIMENT,
+        createdAt=_NOW,
+    )
+    fake = _FakePds(
+        {
+            _EXPERIMENT_DEF_NSID: [_envelope(_EXPERIMENT, experiment)],
+            _JUDGMENT_SET_NSID: [_envelope(_SET_A, judgment_set)],
+            _EXPRESSION_NSID: [
+                _envelope(_ITEM_1, _expression("A entails B.")),
+                _envelope(_ITEM_2, _expression("C entails D.")),
+            ],
+        },
+    )
+
+    study = load_judgment_study(_EXPERIMENT, source="pds", pds_client=fake)  # ty: ignore[invalid-argument-type]
+    rows = list(study.judgments())
+    assert rows[0].participant_id == "participant-1"
+    assert rows[0].item_ref == _ITEM_1
+    assert rows[0].item_text == "A entails B."
+    assert rows[0].continuous_value == Decimal("0.73")
+    assert rows[0].scalar_value is None
+    assert rows[1].continuous_value is None
+    assert rows[1].scalar_value == 1
+
+    table = study.to_arrow()
+    assert table.column("continuous_value").to_pylist() == ["0.73", None]
+    dumped = rows[0].model_dump_json()
+    assert rows[0].model_validate_json(dumped).continuous_value == Decimal("0.73")
 
 
 def test_materialize_writes_queryable_views(tmp_path: Path) -> None:

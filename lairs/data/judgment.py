@@ -22,6 +22,7 @@ avoid clashing with the surface types defined here.
 from __future__ import annotations
 
 import tempfile
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -85,6 +86,7 @@ _JUDGMENTS_SCHEMA = pa.schema(
         ("item_ref", pa.string()),
         ("item_text", pa.string()),
         ("scalar_value", pa.int64()),
+        ("continuous_value", pa.string()),
         ("categorical_value", pa.string()),
         ("confidence", pa.int64()),
         ("response_time_ms", pa.int64()),
@@ -174,7 +176,11 @@ class JudgmentRow(dx.Model):
     item_text : str or None
         The item's text, when the referenced expression resolved in the pool.
     scalar_value : int or None
-        The scalar response, when the task collects a scalar rating.
+        The integer scalar response, when the task collects an ordinal rating,
+        integer magnitude estimate, or rank.
+    continuous_value : decimal.Decimal or None
+        The exact decimal response, when the task collects a continuous value.
+        This remains distinct from ``scalar_value``.
     categorical_value : str or None
         The categorical label, when the task collects a categorical choice.
     confidence : int or None
@@ -192,7 +198,11 @@ class JudgmentRow(dx.Model):
     )
     scalar_value: int | None = dx.field(
         default=None,
-        description="the scalar response, when the task is scalar",
+        description="the integer scalar response, when present",
+    )
+    continuous_value: Decimal | None = dx.field(
+        default=None,
+        description="the exact decimal response, when present",
     )
     categorical_value: str | None = dx.field(
         default=None,
@@ -507,7 +517,8 @@ class JudgmentStudy:
 
         Each row carries the judging participant, the judged item's AT-URI and
         (when the expression resolved in the pool) its text, and the response
-        (scalar or categorical) plus confidence.
+        (integer scalar, exact continuous decimal, or categorical) plus
+        confidence.
 
         Returns
         -------
@@ -525,6 +536,7 @@ class JudgmentStudy:
                         item_ref=item_ref or "",
                         item_text=self._item_text(item_ref),
                         scalar_value=judgment.scalarValue,
+                        continuous_value=_decimal_value(judgment.continuousValue),
                         categorical_value=judgment.categoricalValue,
                         confidence=judgment.confidence,
                         response_time_ms=judgment.responseTimeMs,
@@ -654,9 +666,11 @@ class JudgmentStudy:
         """Return the judgments as a long-format Arrow table.
 
         One row per judgment, with the columns ``participant_id``, ``item_ref``,
-        ``item_text``, ``scalar_value``, ``categorical_value``, and
-        ``confidence``. This is the queryable matrix a materialized study writes
-        as ``judgments.parquet``.
+        ``item_text``, ``scalar_value``, ``continuous_value``,
+        ``categorical_value``, and ``confidence``. The exact decimal is written
+        as a decimal string, avoiding binary floating-point conversion. This is
+        the queryable matrix a materialized study writes as
+        ``judgments.parquet``.
 
         Returns
         -------
@@ -669,6 +683,9 @@ class JudgmentStudy:
                 "item_ref": row.item_ref,
                 "item_text": row.item_text,
                 "scalar_value": row.scalar_value,
+                "continuous_value": str(row.continuous_value)
+                if row.continuous_value is not None
+                else None,
                 "categorical_value": row.categorical_value,
                 "confidence": row.confidence,
                 "response_time_ms": row.response_time_ms,
@@ -786,6 +803,16 @@ def _distribution_for(
         maximum=maximum,
         label_counts=label_counts,
     )
+
+
+def _decimal_value(value: judgment_records.DecimalValue | None) -> Decimal | None:
+    """Return the exact public decimal represented by a generated value."""
+    if value is None:
+        return None
+    coefficient = value.coefficient
+    digits = tuple(int(digit) for digit in str(abs(coefficient)))
+    sign = int(coefficient < 0)
+    return Decimal((sign, digits, value.exponent))
 
 
 def _item_authorities(study: JudgmentStudy) -> set[str]:
