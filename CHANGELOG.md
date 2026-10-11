@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Vendored Layers lexicons 0.11.0.** The vendored release is pinned to commit
-  `762b12e979fb395719121e01f384efc5acdd2785`; the regenerated lexicon tree hash
+  `da20595e19874358f5c0fcd37462d8e457ec0cdb`; the regenerated lexicon tree hash
   is `87f116cc92d112e697e0fde39368185a8301a1a422e9cfcf20d911b940f8615f`.
   Generated integer fields now validate through a strict converter, so
   malformed and nonfinite continuous components raise `dx.ValidationError` at

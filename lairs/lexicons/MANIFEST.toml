@@ -8,7 +8,7 @@
 # file is its serialised, reviewable form.
 
 [provenance]
-layers_git_sha = "762b12e979fb395719121e01f384efc5acdd2785"
+layers_git_sha = "da20595e19874358f5c0fcd37462d8e457ec0cdb"
 layers_version = "0.11.0"
 vendored_at = "2026-10-11"
 lexicon_tree_hash = "87f116cc92d112e697e0fde39368185a8301a1a422e9cfcf20d911b940f8615f"
