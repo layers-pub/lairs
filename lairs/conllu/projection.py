@@ -129,7 +129,9 @@ from lairs.conllu.model import (
 from lairs.records._generated.alignment import Alignment
 from lairs.records._generated.annotation import AnnotationLayer
 from lairs.records._generated.corpus import Membership
-from lairs.records._generated.defs import Feature
+
+# didactic resolves field annotations at runtime, so Feature is a runtime import.
+from lairs.records._generated.defs import Feature  # noqa: TC001
 from lairs.records._generated.expression import Expression
 from lairs.records._generated.segmentation import Segmentation
 
@@ -215,7 +217,7 @@ _SPACE_AFTER = "SpaceAfter"
 
 # the published layer vocabulary.
 _FORMALISM = "universal-dependencies"
-_TOKEN_TAG = "token-tag"
+_TAG_KIND = "token-tag"
 _RELATION = "relation"
 _SUBKIND_POS = "pos"
 _SUBKIND_XPOS = "xpos"
@@ -250,20 +252,23 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 # locate a form the declared text spells with different punctuation.
 _NORMALIZE_TABLE = str.maketrans(
     {
-        "‘": "'",
-        "’": "'",
-        "‚": "'",
-        "‛": "'",
-        "“": '"',
-        "”": '"',
-        "„": '"',
-        "–": "-",
-        "—": "-",
-        "‐": "-",
-        "‑": "-",
-        " ": " ",
-        " ": " ",
-        " ": " ",
+        chr(code): canonical
+        for code, canonical in (
+            (0x2018, "'"),
+            (0x2019, "'"),
+            (0x201A, "'"),
+            (0x201B, "'"),
+            (0x201C, '"'),
+            (0x201D, '"'),
+            (0x201E, '"'),
+            (0x2013, "-"),
+            (0x2014, "-"),
+            (0x2010, "-"),
+            (0x2011, "-"),
+            (0x00A0, " "),
+            (0x2009, " "),
+            (0x202F, " "),
+        )
     }
 )
 
@@ -333,19 +338,19 @@ class OntologyResolver(Protocol):
 class NoOntology:
     """The neutral resolver: no ontology references and no normalisation."""
 
-    def ontology(self, kind: str) -> str | None:  # noqa: ARG002, PLR6301
+    def ontology(self, kind: str) -> str | None:  # noqa: ARG002
         """Return ``None``: the layer references no ontology."""
         return None
 
-    def pos_type(self, upos: str) -> str | None:  # noqa: ARG002, PLR6301
+    def pos_type(self, upos: str) -> str | None:  # noqa: ARG002
         """Return ``None``: the tag references no typeDef."""
         return None
 
-    def deprel_type(self, deprel: str) -> str | None:  # noqa: ARG002, PLR6301
+    def deprel_type(self, deprel: str) -> str | None:  # noqa: ARG002
         """Return ``None``: the relation references no typeDef."""
         return None
 
-    def feat(self, feature: str, value: str) -> FeatResolution:  # noqa: PLR6301
+    def feat(self, feature: str, value: str) -> FeatResolution:
         """Return the pair unchanged, with no references."""
         return _plain_feat(feature, value)
 
@@ -413,7 +418,7 @@ class LocalNaming:
         """Return ``<stem>-<kind>-<index>``."""
         return f"{self.stem}-{kind}-{index}"
 
-    def reference(self, nsid: str, local_id: str) -> str:  # noqa: PLR6301
+    def reference(self, nsid: str, local_id: str) -> str:
         """Return ``at://local/<nsid>/<local_id>``."""
         return f"at://local/{nsid}/{local_id}"
 
@@ -474,11 +479,7 @@ class ProjectedRecord(dx.Model):
 
 _MODELS: dict[
     str,
-    type[Expression]
-    | type[Segmentation]
-    | type[Alignment]
-    | type[AnnotationLayer]
-    | type[Membership],
+    type[Expression | Segmentation | Alignment | AnnotationLayer | Membership],
 ] = {
     EXPRESSION_NSID: Expression,
     SEGMENTATION_NSID: Segmentation,
@@ -631,9 +632,7 @@ def _comment_metadata(comment_lines: Sequence[str]) -> dict[str, str | None]:
         key, sep, value = line.strip()[1:].partition("=")
         key = key.strip()
         stripped = value.strip() if sep else None
-        if key in {"newdoc", "newpar"}:
-            metadata[key] = stripped
-        elif key and stripped:
+        if key in {"newdoc", "newpar"} or (key and stripped):
             metadata[key] = stripped
     return metadata
 
@@ -912,7 +911,9 @@ class _Shape:
         spans = _surface_spans([unit[0] for unit in self.units], self.text)
         self.unit_spans = spans
         self.word_spans: dict[int, tuple[int, int] | None] = {}
-        for (_form, word_ids, _misc, _feats), span in zip(self.units, spans, strict=True):
+        for (_form, word_ids, _misc, _feats), span in zip(
+            self.units, spans, strict=True
+        ):
             for word_id in word_ids:
                 self.word_spans[word_id] = span
         self._json: list[tuple[str, JsonObject]] = []
@@ -1053,7 +1054,8 @@ class _Shape:
     def _surface(self) -> JsonObject:
         """Return the surface tokenization."""
         forms = [
-            (unit[0], span) for unit, span in zip(self.units, self.unit_spans, strict=True)
+            (unit[0], span)
+            for unit, span in zip(self.units, self.unit_spans, strict=True)
         ]
         return {
             "kind": "custom",
@@ -1105,8 +1107,12 @@ class _Shape:
                 _drop_none(
                     {
                         "sourceIndices": [surface_index],
-                        "targetIndices": [index_of[w] for w in word_ids if w in index_of],
-                        "label": _MULTIWORD_LABEL if len(word_ids) > 1 else _ONE_TO_ONE_LABEL,
+                        "targetIndices": [
+                            index_of[w] for w in word_ids if w in index_of
+                        ],
+                        "label": _MULTIWORD_LABEL
+                        if len(word_ids) > 1
+                        else _ONE_TO_ONE_LABEL,
                         "features": _feature_map(entries),
                     }
                 )
@@ -1122,7 +1128,7 @@ class _Shape:
             "metadata": {"tool": self.p.tool},
         }
 
-    def _layer(
+    def _layer(  # noqa: PLR0913  (the layer fields the published shape sets)
         self,
         kind: str,
         subkind: str,
@@ -1173,7 +1179,7 @@ class _Shape:
             annotations.append(annotation)
         if subkind == _SUBKIND_POS:
             return self._layer(
-                _TOKEN_TAG,
+                _TAG_KIND,
                 subkind,
                 "universal-pos",
                 annotations,
@@ -1182,7 +1188,7 @@ class _Shape:
         if not annotations:
             return None
         label_set = "language-specific-pos" if subkind == _SUBKIND_XPOS else "lemma"
-        return self._layer(_TOKEN_TAG, subkind, label_set, annotations)
+        return self._layer(_TAG_KIND, subkind, label_set, annotations)
 
     def _morph_layer(self) -> JsonObject | None:
         """Return the FEATS layer: one annotation per ``Feature=Value``."""
@@ -1214,7 +1220,7 @@ class _Shape:
         if not annotations:
             return None
         return self._layer(
-            _TOKEN_TAG,
+            _TAG_KIND,
             _SUBKIND_MORPH,
             "universal-features",
             annotations,
@@ -1333,7 +1339,7 @@ class _Shape:
                 annotation["tokenIndex"] = index
             annotation["features"] = {"entries": entries}
             annotations.append(annotation)
-        layer = self._layer(_TOKEN_TAG, CARRIER_SUBKIND, "conllu-columns", annotations)
+        layer = self._layer(_TAG_KIND, CARRIER_SUBKIND, "conllu-columns", annotations)
         return self._emit("conllu", ANNOTATION_NSID, layer)
 
 
@@ -1581,12 +1587,14 @@ def _predict(json_records: Sequence[tuple[str, JsonObject]]) -> _Prediction:
     segmentations = [v for role, v in json_records if role in {"seg", "seg-enhanced"}]
     alignments = [v for role, v in json_records if role == "align"]
     layers = [
-        v for role, v in json_records if role in {"upos", "xpos", "lemma", "morph", "deps", "edeps"}
+        v
+        for role, v in json_records
+        if role in {"upos", "xpos", "lemma", "morph", "deps", "edeps"}
     ]
     return _rows_from(_Records(segmentations, layers, alignments))
 
 
-def _rows_from(records: _Records) -> _Prediction:  # noqa: C901, PLR0912, PLR0914, PLR0915
+def _rows_from(records: _Records) -> _Prediction:  # noqa: C901, PLR0912, PLR0915
     """Reconstruct every row's columns from the published shape."""
     prediction = _Prediction()
     words = _tokens_of(records.tokenizations.get(records.words_uuid or ""))
@@ -1610,7 +1618,8 @@ def _rows_from(records: _Records) -> _Prediction:  # noqa: C901, PLR0912, PLR091
         misc[index] = [
             (key, value)
             for key, value in _entries(annotation.get("features"))
-            if key not in {_UD_RELATION, _UD_SUBTYPE} and not key.startswith(CARRIER_PREFIX)
+            if key not in {_UD_RELATION, _UD_SUBTYPE}
+            and not key.startswith(CARRIER_PREFIX)
         ]
 
     # enhanced arcs: the enhanced index of each empty node, and each node's arcs.
@@ -1646,18 +1655,22 @@ def _rows_from(records: _Records) -> _Prediction:  # noqa: C901, PLR0912, PLR091
     surface = _tokens_of(records.tokenizations.get(records.surface_uuid or ""))
     units = _surface_units(records, surface, words)
     space_no: set[str] = set()
-    for position, (row_id, span, _form, _entries_) in enumerate(units):
+    for position, unit in enumerate(units):
+        row_id, span = unit[0], unit[1]
         if span is None or position + 1 >= len(units):
             continue
         following = units[position + 1][1]
         if following is not None and following[0] == span[1]:
             space_no.add(row_id)
     columns = prediction.columns
-    for row_id, _span_, form, link_entries in units:
+    for unit in units:
+        row_id, form, link_entries = unit[0], unit[2], unit[3]
         if "-" not in row_id:
             continue
         prediction.lossy.add(LOSSY_MULTIWORD)
-        pairs = [(k, v) for k, v in link_entries if not k.startswith(_FEATS_LINK_PREFIX)]
+        pairs = [
+            (k, v) for k, v in link_entries if not k.startswith(_FEATS_LINK_PREFIX)
+        ]
         if row_id in space_no:
             pairs.append((_SPACE_AFTER, "No"))
         range_feats = "|".join(
@@ -1677,9 +1690,10 @@ def _rows_from(records: _Records) -> _Prediction:  # noqa: C901, PLR0912, PLR091
         if row_id in space_no:
             pairs.append((_SPACE_AFTER, "No"))
         lemma = lemmas.get(index, EMPTY)
+        arcs_text = "|".join(deps.get(row_id, [])) or EMPTY
         columns[row_id] = (
             row_id, form, lemma, upos.get(index, EMPTY), xpos.get(index, EMPTY),
-            feats.get(index, EMPTY), head, deprel, "|".join(deps.get(row_id, [])) or EMPTY,
+            feats.get(index, EMPTY), head, deprel, arcs_text,
             _render_pairs(sorted(pairs, key=lambda p: p[0])),
         )  # fmt: skip
     for index in range(count, len(enhanced_tokens)):
@@ -1714,8 +1728,12 @@ def _surface_units(
             link = _obj(link_value)
             if link is None:
                 continue
-            sources = [i for i in _list(link.get("sourceIndices")) if isinstance(i, int)]
-            targets = [i for i in _list(link.get("targetIndices")) if isinstance(i, int)]
+            sources = [
+                i for i in _list(link.get("sourceIndices")) if isinstance(i, int)
+            ]
+            targets = [
+                i for i in _list(link.get("targetIndices")) if isinstance(i, int)
+            ]
             if not sources or not targets:
                 continue
             token = surface[sources[0]] if sources[0] < len(surface) else None
@@ -1734,9 +1752,7 @@ def _surface_units(
         span = _span(words[index])
         end = index
         while (
-            span is not None
-            and end + 1 < len(words)
-            and _span(words[end + 1]) == span
+            span is not None and end + 1 < len(words) and _span(words[end + 1]) == span
         ):
             end += 1
         if end > index:

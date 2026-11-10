@@ -26,7 +26,6 @@ carriers.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from lairs._aturi import nsid_of
@@ -38,6 +37,7 @@ from lairs.conllu.projection import (
     SEGMENTATION_NSID,
     sentence_from_json,
 )
+from lairs.data.corpus import Corpus
 from lairs.records._generated.alignment import Alignment
 from lairs.records._generated.annotation import AnnotationLayer
 from lairs.records._generated.corpus import Membership
@@ -45,14 +45,13 @@ from lairs.records._generated.expression import Expression
 from lairs.records._generated.segmentation import Segmentation
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterable, Iterator, Mapping
 
     import didactic.api as dx
 
     from lairs._types import JsonValue
     from lairs.conllu.model import ConlluSentence
     from lairs.conllu.projection import JsonObject
-    from lairs.data.corpus import Corpus
 
 __all__ = ["sentences", "sentences_from_json"]
 
@@ -109,10 +108,12 @@ def sentences(
         its reconstructed fields in
         :attr:`~lairs.conllu.model.ConlluSentence.lossy`.
     """
-    if isinstance(source, Mapping):
-        return sentences_from_json(_mapping_records(source), corpus=corpus, split=split)
-    selected = corpus if corpus is not None else source.uri
-    return sentences_from_json(_corpus_records(source), corpus=selected, split=split)
+    if isinstance(source, Corpus):
+        selected = corpus if corpus is not None else source.uri
+        return sentences_from_json(
+            _corpus_records(source), corpus=selected, split=split
+        )
+    return sentences_from_json(_mapping_records(source), corpus=corpus, split=split)
 
 
 def _mapping_records(
@@ -149,6 +150,55 @@ def _str(value: JsonValue | None) -> str | None:
     return value if isinstance(value, str) else None
 
 
+class _Index:
+    """One pass over the records: expressions, joins, and memberships."""
+
+    def __init__(self, corpus: str | None) -> None:
+        self.corpus = corpus
+        self.expressions: dict[str, JsonObject] = {}
+        self.joined: dict[str, _Joined] = {}
+        self.members: list[tuple[int, int, str, str | None]] = []
+
+    def add(self, uri: str, nsid: str, value: JsonObject) -> None:
+        """Index one record."""
+        if nsid == EXPRESSION_NSID:
+            self.expressions[uri] = value
+        elif nsid == MEMBERSHIP_NSID:
+            self._add_membership(value)
+        elif nsid in {SEGMENTATION_NSID, ANNOTATION_NSID, ALIGNMENT_NSID}:
+            ref = _str(value.get("expression"))
+            if ref is None:
+                return
+            bucket = self.joined.get(ref)
+            if bucket is None:
+                bucket = self.joined[ref] = _Joined()
+            if nsid == SEGMENTATION_NSID:
+                bucket.segmentations.append(value)
+            elif nsid == ANNOTATION_NSID:
+                bucket.layers.append(value)
+            else:
+                bucket.alignments.append(value)
+
+    def _add_membership(self, value: JsonObject) -> None:
+        """Index one membership of the selected corpus."""
+        if self.corpus is not None and value.get("corpusRef") != self.corpus:
+            return
+        ref = _str(value.get("expressionRef"))
+        if ref is None:
+            return
+        ordinal = value.get("ordinal")
+        position = ordinal if isinstance(ordinal, int) else len(self.members)
+        slug = _str(value.get("split"))
+        self.members.append((position, len(self.members), ref, slug))
+
+    def order(self, split: str | None) -> list[str]:
+        """Return the expression references in corpus order."""
+        if self.members:
+            members = sorted(self.members)
+            return [ref for _, _, ref, slug in members if split in {None, slug}]
+        return list(self.expressions) if split is None else []
+
+
 def sentences_from_json(
     records: Iterable[tuple[str, str, JsonObject]],
     *,
@@ -174,51 +224,20 @@ def sentences_from_json(
     ConlluSentence
         Each sentence, in membership order or else source order.
     """
-    expressions: dict[str, JsonObject] = {}
-    joined: dict[str, _Joined] = {}
-    members: list[tuple[int, int, str, str | None]] = []
+    index = _Index(corpus)
     for uri, nsid, value in records:
-        if nsid == EXPRESSION_NSID:
-            expressions[uri] = value
-            continue
-        if nsid == MEMBERSHIP_NSID:
-            if corpus is not None and value.get("corpusRef") != corpus:
-                continue
-            ref = _str(value.get("expressionRef"))
-            ordinal = value.get("ordinal")
-            if ref is not None:
-                position = ordinal if isinstance(ordinal, int) else len(members)
-                members.append((position, len(members), ref, _str(value.get("split"))))
-            continue
-        ref = _str(value.get("expression"))
-        if ref is None:
-            continue
-        bucket = joined.get(ref)
-        if bucket is None:
-            bucket = joined[ref] = _Joined()
-        if nsid == SEGMENTATION_NSID:
-            bucket.segmentations.append(value)
-        elif nsid == ANNOTATION_NSID:
-            bucket.layers.append(value)
-        elif nsid == ALIGNMENT_NSID:
-            bucket.alignments.append(value)
-    if members:
-        members.sort()
-        order = [ref for _, _, ref, slug in members if split is None or slug == split]
-    elif split is None:
-        order = list(expressions)
-    else:
-        order = []
+        index.add(uri, nsid, value)
     previous: tuple[str | None, str | None] = (None, None)
     empty = _Joined()
-    for ref in order:
+    expressions = index.expressions
+    for ref in index.order(split):
         expression = expressions.get(ref)
         if expression is None or expression.get("kind") != "sentence":
             continue
         units = _units(expression, expressions)
         opened = _opened(units, previous, expressions)
         previous = units
-        bucket = joined.get(ref, empty)
+        bucket = index.joined.get(ref, empty)
         yield sentence_from_json(
             expression,
             bucket.segmentations,

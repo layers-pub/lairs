@@ -172,7 +172,7 @@ class Feat(dx.Model):
 
     @property
     def feature(self) -> str:
-        """Return the feature name without its layer (``Number[psor]`` to ``Number``)."""
+        """Return the name without its layer (``Number[psor]`` to ``Number``)."""
         start = self.name.find("[")
         return self.name[:start] if start != -1 else self.name
 
@@ -425,14 +425,20 @@ def check_block(block: str) -> int:
     return first_row
 
 
-def _checked_row(line: str) -> str:
+def _checked_row[T](line: T) -> str:
     """Validate a row line for the :class:`ConlluRow` field converter."""
+    if not isinstance(line, str):
+        message = "a row line must be a string"
+        raise TypeError(message)
     check_row(line)
     return line
 
 
-def _checked_block(block: str) -> str:
+def _checked_block[T](block: T) -> str:
     """Validate a sentence block for the :class:`ConlluSentence` field converter."""
+    if not isinstance(block, str):
+        message = "a sentence block must be a string"
+        raise TypeError(message)
     check_block(block)
     return block
 
