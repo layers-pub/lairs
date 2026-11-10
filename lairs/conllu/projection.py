@@ -1860,7 +1860,8 @@ def sentence_from_json(
     ids = order if order is not None else sorted(columns, key=_row_key)
     rows = ["\t".join(columns[row_id]) for row_id in ids if row_id in columns]
     if not rows:
-        message = "the records hold no token rows"
+        name = _str(expression.get("id"))
+        message = f"the records of sentence {name!r} hold no token rows"
         raise ValueError(message)
     return ConlluSentence.build(comment_lines, rows, lossy=sorted(lossy))
 
