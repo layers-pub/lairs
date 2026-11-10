@@ -1566,7 +1566,7 @@ def pull(
 
     Each Layers collection is enumerated over the PDS read client and every
     record value is decoded against its generated model and staged into the
-    repository under its AT-URI, giving a git-like round trip: an author can
+    repository under its AT-URI in bulk, giving a git-like round trip: an author can
     pull, branch, modify, diff, and publish back. A record that fails to
     validate is skipped rather than aborting the pull.
 
@@ -1588,24 +1588,46 @@ def pull(
         The populated repository (the same handle as ``into``).
     """
     with PdsClient(endpoint, client) as pds_client:
-        for collection, model in _record_collections():
-            try:
-                envelopes = list(pds_client.list_records(did, collection))
-            except httpx.HTTPError:
-                continue
-            for envelope in envelopes:
-                if not isinstance(envelope.value, dict):
-                    continue
-                try:
-                    # decode drops the wire ``$type`` the generated model does
-                    # not declare, so a real PDS record validates here rather
-                    # than being skipped (refined types such as datetime also
-                    # round-trip from their string form through the json path).
-                    record = decode(envelope, model)
-                except dx.ValidationError:
-                    continue
-                into.save(envelope.uri, record)
+        into.save_many(_pulled_records(did, pds_client))
     return into
+
+
+def _pulled_records(
+    did: str,
+    pds_client: PdsClient,
+) -> Iterator[tuple[str, dx.Model]]:
+    """Yield an account's Layers records, validated, as ``(uri, model)`` pairs.
+
+    Parameters
+    ----------
+    did : str
+        The account DID to read.
+    pds_client : PdsClient
+        The PDS read client.
+
+    Yields
+    ------
+    tuple
+        The AT-URI and decoded model of each record that validates. A
+        collection that cannot be listed and a record that fails validation
+        are skipped.
+    """
+    for collection, model in _record_collections():
+        try:
+            envelopes = list(pds_client.list_records(did, collection))
+        except httpx.HTTPError:
+            continue
+        for envelope in envelopes:
+            if not isinstance(envelope.value, dict):
+                continue
+            try:
+                # decode drops the wire ``$type`` the generated model does not
+                # declare, so a real PDS record validates here rather than
+                # being skipped (refined types such as datetime also round-trip
+                # from their string form through the json path).
+                yield envelope.uri, decode(envelope, model)
+            except dx.ValidationError:
+                continue
 
 
 def _record_collections() -> Iterator[tuple[str, type[dx.Model]]]:
