@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Bulk ingestion into the record store.** `Repository.save_many` stages an
+  iterable of `(uri, model)` pairs and `Repository.save_many_raw` an iterable of
+  `(uri, raw JSON value)` pairs, lazily, in a new packed layout: up to
+  `batch_size` records of one collection (4,096 by default) per committed data
+  set, so staging costs one native panproto call per pack instead of one per
+  record. A 5,000-record treebank pull now writes about fifteen files instead of
+  thousands, and raw staging plus commit runs at several thousand
+  annotation-layer records a second (see the store guide for measurements).
+  `save_many_raw` performs no model validation and stores each value exactly as
+  given, including the wire `$type`, explicit nulls, key order, DAG-JSON links,
+  and integers beyond 64 bits, so `content_at` returns the published record
+  unchanged.
+- **Versioned store layout.** Packed data sets carry the store layout version in
+  their key and envelope, the working tree carries a `layout.json` marker, and
+  `Repository.layout_version()` and `STORE_LAYOUT_VERSION` expose it. A
+  repository or pack written under a newer layout is refused with
+  `panproto.VcsError` instead of being misread.
+
+### Changed
+
+- **`Repository.save` no longer rereads and rewrites the whole working-tree
+  index, or re-stages an unchanged schema, on every call.** Index updates are
+  appended to an `index.log` journal that `commit` folds into `index.json`, and
+  a handle stages a record type's schema only when it differs from the one it
+  staged last. The per-record layout `save` writes is unchanged, and existing
+  repositories, including those committed under panproto 0.71, 0.72.1, and
+  0.74.3, read back exactly as before. A loop of `save` calls remains quadratic
+  in the staged record count because panproto rewrites its own staging index on
+  every staging call; use `save_many` for more than a few records.
+
 ## [0.9.0] - 2026-10-11
 
 ### Added
