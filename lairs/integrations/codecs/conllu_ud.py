@@ -164,7 +164,8 @@ class UdConlluCodec:
             1
             for record in records
             if record.nsid == EXPRESSION_NSID
-            and '"kind": "sentence"' in record.value_json
+            and (value := _value(record)) is not None
+            and value.get("kind") == "sentence"
         )
         records.extend(
             FragmentRecord(
