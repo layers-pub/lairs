@@ -55,7 +55,7 @@ class ConlluSyntaxError(ValueError):
 
 
 def _lines_of(source: str | Iterable[str]) -> Iterator[str]:
-    """Yield the lines of ``source`` without their line terminators.
+    r"""Yield the lines of ``source`` without their line terminators.
 
     Text is split on ``\n`` only (not on the other characters
     :meth:`str.splitlines` treats as breaks, which may occur inside a FORM),
@@ -67,7 +67,7 @@ def _lines_of(source: str | Iterable[str]) -> Iterator[str]:
 
 
 def parse(source: str | Iterable[str]) -> Iterator[ConlluSentence]:
-    """Parse CoNLL-U into sentences, one at a time.
+    r"""Parse CoNLL-U into sentences, one at a time.
 
     Parameters
     ----------

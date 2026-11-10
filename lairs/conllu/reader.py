@@ -158,6 +158,7 @@ class _Index:
         self.expressions: dict[str, JsonObject] = {}
         self.joined: dict[str, _Joined] = {}
         self.members: list[tuple[int, int, str, str | None]] = []
+        self.has_memberships = False
 
     def add(self, uri: str, nsid: str, value: JsonObject) -> None:
         """Index one record."""
@@ -181,6 +182,7 @@ class _Index:
 
     def _add_membership(self, value: JsonObject) -> None:
         """Index one membership of the selected corpus."""
+        self.has_memberships = True
         if self.corpus is not None and value.get("corpusRef") != self.corpus:
             return
         ref = _str(value.get("expressionRef"))
@@ -192,8 +194,12 @@ class _Index:
         self.members.append((position, len(self.members), ref, slug))
 
     def order(self, split: str | None) -> list[str]:
-        """Return the expression references in corpus order."""
-        if self.members:
+        """Return the expression references in corpus order.
+
+        Membership order when the records hold any membership (so a corpus
+        selector that matches none selects nothing), else source order.
+        """
+        if self.has_memberships:
             members = sorted(self.members)
             return [ref for _, _, ref, slug in members if split in {None, slug}]
         return list(self.expressions) if split is None else []

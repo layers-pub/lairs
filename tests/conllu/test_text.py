@@ -90,14 +90,19 @@ def test_malformed_input_names_its_line(source: str, line: int, message: str) ->
 
 def test_serialize_sentence_and_dump() -> None:
     sentences = list(parse(_DOC))
-    assert serialize_sentence(sentences[1]) == "# newpar\n1\t_\t_\tPUNCT\t_\t_\t0\troot\t0:root\t_\n\n"
+    assert (
+        serialize_sentence(sentences[1])
+        == "# newpar\n1\t_\t_\tPUNCT\t_\t_\t0\troot\t0:root\t_\n\n"
+    )
     handle = io.StringIO()
     assert dump(sentences, handle) == 2
     assert handle.getvalue() == _DOC
 
 
 _FIELD = st.text(
-    alphabet=st.characters(blacklist_characters="\t\n\r|", blacklist_categories=("Cs",)),
+    alphabet=st.characters(
+        blacklist_characters="\t\n\r|", blacklist_categories=("Cs",)
+    ),
     min_size=1,
     max_size=6,
 ).filter(lambda s: s.strip() == s and s.strip() != "")
@@ -107,7 +112,9 @@ _FIELD = st.text(
 def _sentences(draw: st.DrawFn) -> ConlluSentence:
     """Draw a well-formed sentence with free-form forms, comments, and MISC."""
     count = draw(st.integers(min_value=1, max_value=4))
-    comments = [f"# {draw(_FIELD)} = {draw(_FIELD)}" for _ in range(draw(st.integers(0, 2)))]
+    comments = [
+        f"# {draw(_FIELD)} = {draw(_FIELD)}" for _ in range(draw(st.integers(0, 2)))
+    ]
     rows = []
     for word in range(1, count + 1):
         misc = "|".join(draw(st.lists(_FIELD, max_size=3))) or "_"

@@ -18,7 +18,10 @@ from lairs.conllu.model import (
     split_items,
 )
 
-_WORD = "2\tzu\tzu\tADP\tAPPR\tNumber[psor]=Sing|Case=Acc,Dat\t4\tcase\t4:case|4.1:dep\tBare|A=1|A=2|K=v=w"
+_WORD = (
+    "2\tzu\tzu\tADP\tAPPR\tNumber[psor]=Sing|Case=Acc,Dat\t4\tcase"
+    "\t4:case|4.1:dep\tBare|A=1|A=2|K=v=w"
+)
 _RANGE = "2-3\tzur\t_\t_\t_\tTypo=Yes\t_\t_\t_\tMwt=1"
 _EMPTY = "4.1\tgeht\tgehen\tVERB\t_\tMood=Ind\t_\t_\t4:conj|0:root\t_"
 
@@ -26,7 +29,9 @@ _EMPTY = "4.1\tgeht\tgehen\tVERB\t_\tMood=Ind\t_\t_\t4:conj|0:root\t_"
 def test_row_id_kinds_and_text() -> None:
     word, rng, empty, root = (RowId.parse(t) for t in ("7", "1-2", "3.1", "0"))
     assert (word.kind, rng.kind, empty.kind) == ("word", "range", "empty")
-    assert word.is_word and rng.is_range and empty.is_empty
+    assert word.is_word
+    assert rng.is_range
+    assert empty.is_empty
     assert root.is_word
     assert (rng.major, rng.end, empty.major, empty.minor) == (1, 2, 3, 1)
     assert [i.text for i in (word, rng, empty, root)] == ["7", "1-2", "3.1", "0"]
@@ -61,7 +66,11 @@ def test_dep_and_misc_text() -> None:
 
 def test_comment_key_and_value() -> None:
     keyed = Comment(text="  sent_id =  s1 ")
-    assert (keyed.key, keyed.value, keyed.line) == ("sent_id", "s1", "#  sent_id =  s1 ")
+    assert (keyed.key, keyed.value, keyed.line) == (
+        "sent_id",
+        "s1",
+        "#  sent_id =  s1 ",
+    )
     bare = Comment(text=" newdoc")
     assert (bare.key, bare.value) == ("newdoc", None)
 
@@ -147,12 +156,16 @@ def test_split_items() -> None:
 
 
 def test_sentence_views() -> None:
-    block = "\n".join(["# sent_id = s1", "# text = zur", "# newdoc", _RANGE, _WORD])
+    block = f"# sent_id = s1\n# text = zur\n# newdoc\n{_RANGE}\n{_WORD}"
     sentence = ConlluSentence(block=block)
     assert sentence.sent_id == "s1"
     assert sentence.text == "zur"
     assert sentence.comment("newdoc") is None
-    assert [c.text for c in sentence.comments] == [" sent_id = s1", " text = zur", " newdoc"]
+    assert [c.text for c in sentence.comments] == [
+        " sent_id = s1",
+        " text = zur",
+        " newdoc",
+    ]
     assert [r.kind for r in sentence.rows] == ["range", "word"]
     assert [r.form for r in sentence.words] == ["zu"]
     assert sentence.row_lines == (_RANGE, _WORD)

@@ -382,7 +382,10 @@ class RecordNaming(Protocol):
         ...
 
     def unit_local_id(self, kind: str, unit_id: str, index: int) -> str:
-        """Return the local id of a ``document`` or ``paragraph`` expression."""
+        """Return the local id of a ``document`` or ``paragraph`` expression.
+
+        ``index`` is the ordinal of the sentence that opens the unit.
+        """
         ...
 
     def reference(self, nsid: str, local_id: str) -> str:
@@ -764,7 +767,7 @@ class Projector:
         """
         out: list[ProjectedRecord] = []
         metadata = _comment_metadata(sentence.comment_lines)
-        parent = self._open_units(metadata, out)
+        parent = self._open_units(metadata, out, ordinal)
         out.extend(self._sentence_records(sentence, ordinal, metadata, parent))
         return out
 
@@ -772,16 +775,19 @@ class Projector:
         self,
         metadata: dict[str, str | None],
         out: list[ProjectedRecord],
+        ordinal: int,
     ) -> str | None:
         """Open any new document or paragraph and return the sentence's parent."""
         units = self._units
         doc_id = _unit_id(metadata, "newdoc")
         if doc_id is not None:
-            units.document = self._unit("document", doc_id, None, out)
+            units.document = self._unit("document", doc_id, None, out, ordinal)
             units.paragraph = None
         par_id = _unit_id(metadata, "newpar")
         if par_id is not None:
-            units.paragraph = self._unit("paragraph", par_id, units.document, out)
+            units.paragraph = self._unit(
+                "paragraph", par_id, units.document, out, ordinal
+            )
         return units.paragraph or units.document
 
     def _unit(
@@ -790,13 +796,14 @@ class Projector:
         unit_id: str,
         parent: str | None,
         out: list[ProjectedRecord],
+        ordinal: int,
     ) -> str:
         """Return the reference of a structure expression, emitting it once."""
         seen = self._units.seen
         known = seen.get((kind, unit_id))
         if known is not None:
             return known
-        local_id = self.naming.unit_local_id(kind, unit_id, len(seen))
+        local_id = self.naming.unit_local_id(kind, unit_id, ordinal)
         uri = self.naming.reference(EXPRESSION_NSID, local_id)
         seen[kind, unit_id] = uri
         value: JsonObject = {"id": unit_id, "kind": kind}

@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from lairs.conllu.model import ConlluSentence
 from lairs.conllu.projection import (
     ALIGNMENT_NSID,
     ANNOTATION_NSID,
@@ -36,6 +35,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from lairs._types import JsonValue
+    from lairs.conllu.model import ConlluSentence
     from lairs.conllu.projection import JsonObject
 
 _DOC = (
@@ -78,7 +78,9 @@ def _rebuild(records: Sequence[ProjectedRecord]) -> list[ConlluSentence]:
     out = []
     for expression in expressions:
         mine = [
-            r for r in records if json.loads(r.value_json).get("expression") == expression.uri
+            r
+            for r in records
+            if json.loads(r.value_json).get("expression") == expression.uri
         ]
         out.append(
             sentence_from_json(
@@ -91,7 +93,9 @@ def _rebuild(records: Sequence[ProjectedRecord]) -> list[ConlluSentence]:
     return out
 
 
-def _by_role(records: Sequence[ProjectedRecord], ordinal: int = 0) -> dict[str, JsonObject]:
+def _by_role(
+    records: Sequence[ProjectedRecord], ordinal: int = 0
+) -> dict[str, JsonObject]:
     """Return one sentence's records keyed by role."""
     marker = f"-{ordinal}-"
     return {r.role: r.value() for r in records if marker in r.local_id}
@@ -122,7 +126,12 @@ def _features(value: JsonValue) -> list[tuple[str, str]]:
 def test_every_record_validates_into_its_model() -> None:
     for record in _records():
         model = record.to_model()
-        assert type(model).__name__ in {"Expression", "Segmentation", "Alignment", "AnnotationLayer"}
+        assert type(model).__name__ in {
+            "Expression",
+            "Segmentation",
+            "Alignment",
+            "AnnotationLayer",
+        }
 
 
 def test_round_trip_with_carriers_is_exact() -> None:
@@ -140,7 +149,9 @@ def test_published_shape_of_a_sentence() -> None:
     expression = roles["expr"]
     assert (expression["id"], expression["kind"]) == ("s1", "sentence")
     assert expression["text"] == "Über zur Schule…"
-    published = [p for p in _features(expression["features"]) if not p[0].startswith("conllu:")]
+    published = [
+        p for p in _features(expression["features"]) if not p[0].startswith("conllu:")
+    ]
     assert published == [("odd spacing", "kept")]
     tokenizations = roles["seg"]["tokenizations"]
     assert isinstance(tokenizations, list)
@@ -149,7 +160,12 @@ def test_published_shape_of_a_sentence() -> None:
     assert words["uuid"] == {"value": "conllu/0/words"}
     surface_tokens = surface["tokens"]
     assert isinstance(surface_tokens, list)
-    assert [t["text"] for t in surface_tokens if isinstance(t, dict)] == ["Über", "zur", "Schule", "…"]
+    assert [t["text"] for t in surface_tokens if isinstance(t, dict)] == [
+        "Über",
+        "zur",
+        "Schule",
+        "…",
+    ]
     word_tokens = words["tokens"]
     assert isinstance(word_tokens, list)
     spans = [t["textSpan"] for t in word_tokens if isinstance(t, dict)]
@@ -169,7 +185,9 @@ def test_published_layers_follow_the_importer_conventions() -> None:
         ("ud_relation", "case"), ("A", "3"), ("Bare", ""), ("Z", "1"),
     ]  # fmt: skip
     edeps = _layer_annotations(roles["edeps"])
-    empty_arcs = [a for a in edeps if ("ud_empty_node", "4.1") in _features(a["features"])]
+    empty_arcs = [
+        a for a in edeps if ("ud_empty_node", "4.1") in _features(a["features"])
+    ]
     assert [a["headIndex"] for a in empty_arcs] == [3, -1]
     assert roles["edeps"]["parentLayerRef"] == (
         "at://local/pub.layers.annotation.annotationLayer/conllu-0-deps"
@@ -181,13 +199,17 @@ def test_published_layers_follow_the_importer_conventions() -> None:
     mwt = links[1]
     assert isinstance(mwt, dict)
     assert _features(mwt["features"]) == [("Mwt", "1"), ("feats:Typo", "Yes")]
-    assert all(layer.get("formalism") == "universal-dependencies" for layer in (
-        roles["upos"], roles["deps"], roles["edeps"], roles["morph"]))
+    assert all(
+        layer.get("formalism") == "universal-dependencies"
+        for layer in (roles["upos"], roles["deps"], roles["edeps"], roles["morph"])
+    )
 
 
 def test_carriers_are_minimal_and_documented() -> None:
     roles = _by_role(_records())
-    carriers = [p for p in _features(roles["expr"]["features"]) if p[0].startswith("conllu:")]
+    carriers = [
+        p for p in _features(roles["expr"]["features"]) if p[0].startswith("conllu:")
+    ]
     assert carriers == [
         ("conllu:scheme", "1"),
         ("conllu:comment", " newdoc id = doc1"),
@@ -198,13 +220,17 @@ def test_carriers_are_minimal_and_documented() -> None:
         ("conllu:comment", " free text without an equals sign"),
         ("conllu:rows", "3"),
     ]
-    rows = {a["label"]: _features(a["features"]) for a in _layer_annotations(roles["conllu"])}
+    rows = {
+        a["label"]: _features(a["features"])
+        for a in _layer_annotations(roles["conllu"])
+    }
     assert rows == {
         "1": [("conllu:misc", "Z=1|Bare|A=2|A=3")],
         "2": [("conllu:feats", "Number[psor]=Sing|Case=Acc,Dat")],
         "4.1": [
-            ("conllu:lemma", "gehen"), ("conllu:upos", "VERB"), ("conllu:xpos", "VVFIN"),
-            ("conllu:feats", "Mood=Ind"), ("conllu:misc", "Gloss=go"),
+            ("conllu:lemma", "gehen"), ("conllu:upos", "VERB"),
+            ("conllu:xpos", "VVFIN"), ("conllu:feats", "Mood=Ind"),
+            ("conllu:misc", "Gloss=go"),
         ],
     }  # fmt: skip
 
@@ -220,7 +246,13 @@ def test_without_carriers_the_shape_is_published_only() -> None:
 def test_lossy_reconstruction_flags_what_it_could_not_restore() -> None:
     rebuilt = _rebuild(_records(projector=Projector(carriers=False)))
     first = rebuilt[0]
-    assert set(first.lossy) == {"comments", "misc", "feats", "empty_nodes", "multiword_tokens"}
+    assert set(first.lossy) == {
+        "comments",
+        "misc",
+        "feats",
+        "empty_nodes",
+        "multiword_tokens",
+    }
     rows = {row.id.text: row for row in first.rows}
     # sorted pairs, a bare item, and SpaceAfter=No inferred from adjacent spans.
     assert rows["1"].columns[9] == "A=3|Bare|Z=1"
@@ -260,14 +292,19 @@ def test_long_carrier_values_are_split_and_rejoined() -> None:
     text = f"# comment {'ü' * 4100}\n1\tx\t_\tX\t_\t_\t_\t_\t_\t{long_misc}\n\n"
     records = _records(text)
     for record in records:
-        for entry in json.loads(record.value_json).get("features", {}).get("entries", []):
+        for entry in (
+            json.loads(record.value_json).get("features", {}).get("entries", [])
+        ):
             assert len(entry["value"].encode("utf-8")) <= 4096
     assert "conllu:more" in records[0].value_json
     assert serialize(_rebuild(records)) == text
 
 
 def test_sentence_without_text_or_id() -> None:
-    text = "1\ta\t_\tX\t_\t_\t0\troot\t_\tSpaceAfter=No\n2\tb\t_\tX\t_\t_\t1\tdep\t_\t_\n\n"
+    text = (
+        "1\ta\t_\tX\t_\t_\t0\troot\t_\tSpaceAfter=No\n"
+        "2\tb\t_\tX\t_\t_\t1\tdep\t_\t_\n\n"
+    )
     records = _records(text)
     expression = records[0].value()
     assert expression["id"] == "s0"
@@ -301,7 +338,9 @@ def test_structure_expressions_are_emitted_once() -> None:
     kinds = [r.role for r in records if r.nsid == EXPRESSION_NSID and r.role != "expr"]
     assert kinds == ["document", "paragraph", "paragraph"]
     second = _by_role(records, 1)["expr"]
-    paragraph = next(r for r in records if r.role == "paragraph" and "newpar:" in r.value_json)
+    paragraph = next(
+        r for r in records if r.role == "paragraph" and "newpar:" in r.value_json
+    )
     assert second["parentRef"] == paragraph.uri
     third = _by_role(records, 2)["expr"]
     assert third["parentRef"] == paragraph.uri
@@ -323,23 +362,23 @@ class _ImporterNaming:
         prefix = "doc" if kind == "document" else "par"
         return f"{self.stem}/{prefix}/{unit_id}"
 
-    def reference(self, nsid: str, local_id: str) -> str:  # noqa: ARG002, PLR6301
+    def reference(self, nsid: str, local_id: str) -> str:  # noqa: ARG002
         return f"at://local/{local_id}"
 
 
 class _Ontology:
     """A resolver that references every label and normalises one value."""
 
-    def ontology(self, kind: str) -> str | None:  # noqa: PLR6301
+    def ontology(self, kind: str) -> str | None:
         return f"at://ont/{kind}"
 
-    def pos_type(self, upos: str) -> str | None:  # noqa: PLR6301
+    def pos_type(self, upos: str) -> str | None:
         return f"at://ont/pos/{upos.lower()}"
 
-    def deprel_type(self, deprel: str) -> str | None:  # noqa: PLR6301
-        return f"at://ont/deprel/{deprel.split(':')[0]}"
+    def deprel_type(self, deprel: str) -> str | None:
+        return f"at://ont/deprel/{deprel.split(':', maxsplit=1)[0]}"
 
-    def feat(self, feature: str, value: str) -> FeatResolution:  # noqa: PLR6301
+    def feat(self, feature: str, value: str) -> FeatResolution:
         if (feature, value) == ("Gender", "Fem"):
             return FeatResolution(
                 feature="Gender",
@@ -360,7 +399,9 @@ def test_seams_are_injectable() -> None:
     naming = _ImporterNaming("ewt.eng.ud")
     assert isinstance(naming, RecordNaming)
     assert isinstance(_Ontology(), OntologyResolver)
-    projector = Projector(naming=naming, ontology=_Ontology(), tool="layers-repo ud importer")
+    projector = Projector(
+        naming=naming, ontology=_Ontology(), tool="layers-repo ud importer"
+    )
     records = _records(doc, projector=projector)
     expression = next(r for r in records if r.role == "expr")
     assert expression.local_id == "ewt.eng.ud/s1/expr"
@@ -379,7 +420,10 @@ def test_seams_are_injectable() -> None:
     lossy_projector = Projector(naming=naming, ontology=_Ontology(), carriers=False)
     lossy = _rebuild(list(lossy_projector.project(parse(doc))))
     assert "Gender=Fem" in lossy[0].rows[4].line
-    assert next(r for r in records if r.role == "document").local_id == "ewt.eng.ud/doc/doc1"
+    assert (
+        next(r for r in records if r.role == "document").local_id
+        == "ewt.eng.ud/doc/doc1"
+    )
 
 
 def test_defaults() -> None:
@@ -389,7 +433,9 @@ def test_defaults() -> None:
     assert naming.unit_local_id("document", "d", 0) == "x-document-0"
     assert naming.reference(EXPRESSION_NSID, "k") == f"at://local/{EXPRESSION_NSID}/k"
     none = NoOntology()
-    assert (none.ontology("pos"), none.pos_type("X"), none.deprel_type("dep")) == (None,) * 3
+    assert (none.ontology("pos"), none.pos_type("X"), none.deprel_type("dep")) == (
+        None,
+    ) * 3
     assert none.feat("Case", "Acc") == FeatResolution(feature="Case", value="Acc")
 
 
@@ -404,7 +450,11 @@ def test_wire_json_with_nulls_and_types_reads_the_same() -> None:
         return loaded
 
     expression = next(r for r in records if r.role == "expr")
-    mine = [r for r in records if r.role not in {"expr", "document", "paragraph"} and "-0-" in r.local_id]
+    mine = [
+        r
+        for r in records
+        if r.role not in {"expr", "document", "paragraph"} and "-0-" in r.local_id
+    ]
     rebuilt = sentence_from_json(
         wire(expression),
         [wire(r) for r in mine if r.nsid == SEGMENTATION_NSID],
