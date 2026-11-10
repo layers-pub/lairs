@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 __all__ = [
+    "Comment",
     "ConlluRow",
     "ConlluSentence",
     "Dep",

@@ -716,23 +716,30 @@ class Projector:
         self.carriers = carriers
         self._units = _Units()
 
-    def project(self, sentences: Iterable[ConlluSentence]) -> Iterator[ProjectedRecord]:
+    def project(
+        self,
+        sentences: Iterable[ConlluSentence],
+        *,
+        start: int = 0,
+    ) -> Iterator[ProjectedRecord]:
         """Project a run of sentences, tracking documents and paragraphs.
 
-        Ordinals count from 0 in iteration order. A document or paragraph
-        expression is emitted the first time a sentence opens it.
+        Ordinals count from ``start`` in iteration order. A document or
+        paragraph expression is emitted the first time a sentence opens it.
 
         Parameters
         ----------
         sentences : collections.abc.Iterable of ConlluSentence
             The sentences of one document or treebank file, in order.
+        start : int, optional
+            The ordinal of the first sentence.
 
         Yields
         ------
         ProjectedRecord
             The records, sentence by sentence.
         """
-        for ordinal, sentence in enumerate(sentences):
+        for ordinal, sentence in enumerate(sentences, start=start):
             yield from self.project_sentence(sentence, ordinal)
 
     def project_sentence(
