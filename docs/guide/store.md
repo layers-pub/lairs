@@ -66,11 +66,10 @@ repo = Repository.init(Path("corpus-repo"))   # create a new repository
 repo = Repository.open(Path("corpus-repo"))   # reopen an existing one
 ```
 
-didactic's Repository is a *schema* VCS, where a commit records the
-structural schema, not record instances, so lairs persists each record's
-value as JSON in the working tree under `records/`, indexed by AT-URI, and
-registers the record type's Model schema with the VCS. `save` stages both
-together, and `commit` captures the snapshot and returns the revision id:
+`save` writes a record's value as JSON in the working tree under `records/`,
+indexed by AT-URI, stages it as committed data keyed by that AT-URI, and stages
+the record type's Model schema alongside it. `commit` captures the snapshot and
+returns the revision id:
 
 ```python
 repo.save(expression_uri, expression)
@@ -95,6 +94,82 @@ raw = repo.load_raw(expression_uri)                # JsonValue, or None
 per-record-type listing (`by_nsid`, `nsids`, and `uris_of(nsid)`), since
 a corpus is a graph of many record types.
 
+## Ingest in bulk
+
+`save` stages one record per call in the per-record layout. Each call costs one
+native panproto staging call, and panproto rewrites its whole staging index on
+every such call, so the per-call price grows with the number of records already
+staged and a loop of `save` calls is quadratic. That suits edits of a few
+records, not a treebank. For many records use `save_many`, or `save_many_raw`
+for records as a PDS serves them:
+
+```python
+staged = repo.save_many(
+    (envelope.uri, decode(envelope, model)) for envelope in envelopes
+)
+staged += repo.save_many_raw(
+    (envelope.uri, envelope.value) for envelope in other_envelopes
+)
+revision = repo.commit("pull did:plc:...")
+```
+
+Both take any iterable of `(uri, value)` pairs, consume it lazily, and return
+the number of records staged. They group records by collection NSID and write
+them in the packed layout, `batch_size` records per pack (4,096 by default), so
+staging costs one native call per pack. Records of different types may be
+interleaved in one call, several calls may precede one `commit`, and a record
+staged twice keeps its later value. Neither commits: `commit` takes one snapshot
+of everything staged, as after `save`.
+
+`save_many_raw` validates nothing and stores each value exactly as given, which
+is the fast path for a pull. Validating a few-kilobyte annotation layer into its
+generated model and dumping it again costs several milliseconds a record, far
+more than staging it, so a pull that goes model-in, model-out is capped near a
+hundred records a second however fast the store is. A raw value keeps its wire
+`$type`, its explicit nulls, its key order, its DAG-JSON objects such as
+`{"$link": ...}`, and its numbers, including integers beyond 64 bits, so
+`content_at` and `load_raw` return it unchanged and a record CID recomputed from
+it matches the PDS's. A record whose collection has no generated model is stored
+the same way. `load` drops the wire `$type` and rewrites blob objects before
+validating a raw record, as reading from a PDS does.
+
+`save`, `save_many`, `save_many_raw`, and `forget` may be mixed freely. A record
+packed in one commit can be updated by `save` or forgotten in the next, and the
+reverse; `content_at`, `diff`, `load`, and `staged_uris` see the latest write
+whichever layout made it.
+
+The figures below come from `benchmarks/store_ingest.py` on an Apple-silicon
+laptop with panproto 0.74.3. Stage time includes building the synthetic records;
+"rec/s" is records per second of stage plus commit. The `layer` profile mixes
+annotation layers of about 10 KB of JSON (several hundred nodes, mostly null),
+segmentations of about 3 KB, and sentences of about 0.4 KB; the `small` profile
+uses 250-byte records the size of a UniMorph entry.
+
+| Path | Profile | Records | Stage (s) | Commit (s) | `content_at` (s) | rec/s | Files | MB on disk |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `save`, 0.9.0 | layer | 500 | 8.72 | 0.02 | 0.46 | 57 | 1,012 | 7.4 |
+| `save`, 0.9.0 | layer | 2,000 | 62.07 | 0.03 | 1.95 | 32 | 4,012 | 29.6 |
+| `save` | layer | 500 | 7.46 | 0.02 | 0.21 | 67 | 1,013 | 7.4 |
+| `save` | layer | 2,000 | 55.80 | 0.03 | 2.11 | 36 | 4,013 | 29.6 |
+| `save_many` | layer | 5,000 | 10.16 | 0.03 | 0.35 | 491 | 15 | 2.8 |
+| `save_many_raw` | layer | 5,000 | 0.49 | 0.02 | 0.25 | 9,829 | 15 | 2.3 |
+| `save_many_raw` | layer | 50,000 | 5.27 | 0.05 | 2.57 | 9,392 | 37 | 23.1 |
+| `save_many_raw` | small | 5,000 | 0.19 | 0.02 | 0.01 | 23,779 | 13 | 0.9 |
+| `save_many_raw` | small | 50,000 | 0.78 | 0.08 | 0.25 | 57,967 | 35 | 9.0 |
+| `save_many_raw` | small | 600,000 | 9.52 | 0.51 | 2.82 | 59,799 | 303 | 108.1 |
+
+The `save_many` row validates each record into its generated model before
+staging it, so most of its time is model validation and dumping, not the store.
+Peak resident memory was 1.7 GB for the 50,000-record layer snapshot and 1.5 GB
+for the 600,000-record small one, almost all of it the dictionary `content_at`
+returns.
+
+Packed ingestion is linear: stage, commit, and read time all grow in proportion
+to the record count, and a 5,000-record pull writes about fifteen files instead
+of a thousand or more. Staging is then bounded by Python's own JSON encoding of
+the values, and reading by JSON decoding into the returned dictionaries, not by
+panproto, whose share is a few milliseconds a pack.
+
 ## Tag and diff revisions
 
 A tag pins the exact record values committed at a revision, giving a
@@ -113,9 +188,10 @@ turns a branch name, tag name, or commit-id prefix into a full commit id.
 
 There is no native revision-to-revision data diff on either surface, so
 the wrapper computes the record diff itself. It reconstructs each
-revision's value set by folding the committed data read with `data_at`
-over the revision's commit ancestry, keyed by AT-URI, then compares the
-two sets by content. `diff` resolves both refs (so an unknown ref fails
+revision's value set by folding the committed data read with
+`decoded_data_at` over the revision's commit ancestry, keyed by AT-URI,
+then compares the two sets by content. `content_at(ref)` returns that value
+set directly. `diff` resolves both refs (so an unknown ref fails
 loudly) and returns a `RecordDiff` of the `added`, `removed`, and
 `changed` AT-URIs:
 

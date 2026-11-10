@@ -941,7 +941,11 @@ class Repository:
 
         Committed data is recorded per commit, so the value set at ``ref`` is the
         fold of ``decoded_data_at`` over the revision's ancestry, oldest commit
-        first, with the latest value for each AT-URI winning.
+        first, with the latest value for each AT-URI winning. Within a commit,
+        data sets fold in staging order and a pack's entries in the order they
+        were staged, so the per-record and packed layouts interleave correctly.
+        Each commit's data is read once and each pack is decompressed and parsed
+        once, so the cost is linear in the number of stored values.
 
         Parameters
         ----------
