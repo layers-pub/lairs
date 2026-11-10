@@ -62,9 +62,10 @@ PACK_KEY_PREFIX = "lairs:pack:"
 PACK_ENCODING = "jsonl+zlib+base64"
 """The payload encoding of a layout-2 pack."""
 
-# the zlib level trades a little staging time for a much smaller payload; 6 is
-# zlib's own default and compresses annotation JSON about tenfold.
-_ZLIB_LEVEL = 6
+# zlib's fastest level. annotation JSON is so repetitive that it still shrinks
+# by an order of magnitude, while the default level 6 costs two to four times as
+# long and would make compression the largest single cost of staging.
+_ZLIB_LEVEL = 1
 # the number of hex digits of the payload digest carried in the data-set key.
 _KEY_DIGEST_HEX = 16
 # a payload entry is the pair ``[uri, value]``.
