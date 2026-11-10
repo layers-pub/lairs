@@ -55,10 +55,15 @@ class ConlluSyntaxError(ValueError):
 
 
 def _lines_of(source: str | Iterable[str]) -> Iterator[str]:
-    """Yield the lines of ``source`` without their line terminators."""
-    lines = source.splitlines() if isinstance(source, str) else source
+    """Yield the lines of ``source`` without their line terminators.
+
+    Text is split on ``\n`` only (not on the other characters
+    :meth:`str.splitlines` treats as breaks, which may occur inside a FORM),
+    and a ``\r`` before the ``\n`` is dropped.
+    """
+    lines = source.split("\n") if isinstance(source, str) else source
     for line in lines:
-        yield line.rstrip("\r\n")
+        yield line.removesuffix("\n").removesuffix("\r")
 
 
 def parse(source: str | Iterable[str]) -> Iterator[ConlluSentence]:
@@ -67,8 +72,9 @@ def parse(source: str | Iterable[str]) -> Iterator[ConlluSentence]:
     Parameters
     ----------
     source : str or collections.abc.Iterable of str
-        The CoNLL-U text, or its lines (with or without terminators), such as an
-        open text file.
+        The CoNLL-U text, or its lines (with or without terminators), such as a
+        text file. Open files with ``newline="\n"`` so a stray carriage return
+        or other break character inside a column is not taken for a line end.
 
     Yields
     ------
