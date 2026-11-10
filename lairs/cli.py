@@ -108,6 +108,9 @@ if TYPE_CHECKING:
 
 __all__ = ["main"]
 
+# the per-request timeout of a dataset pull, which outlasts a loaded PDS.
+_PULL_TIMEOUT_SECONDS = 60.0
+
 # the most AT-URIs printed per mismatch kind by ``verify-pin``.
 _MAX_LISTED_URIS = 20
 
@@ -842,7 +845,10 @@ def _run_pull_dataset(args: argparse.Namespace) -> int:
         return 1
     into: Path = args.into
     try:
-        with PdsClient(endpoint) as client:
+        with (
+            httpx.Client(timeout=_PULL_TIMEOUT_SECONDS) as http,
+            PdsClient(endpoint, http) as client,
+        ):
             pin = snapshot.pull_dataset(
                 args.uri,
                 into=into,

@@ -89,6 +89,10 @@ _RESOLVE_HANDLE_NSID = "com.atproto.identity.resolveHandle"
 _DOWNLOAD_CHUNK_BYTES = 1 << 20
 """The chunk size used when streaming a CAR archive to disk."""
 
+_DOWNLOAD_TIMEOUT = httpx.Timeout(60.0, read=600.0)
+"""The timeout for a streamed archive download: a PDS may take minutes to
+start serving a large repository, far longer than a record read."""
+
 _DESCRIBE_REPO_NSID = "com.atproto.repo.describeRepo"
 """The XRPC method for repository metadata (collections, handle, did doc)."""
 
@@ -993,6 +997,7 @@ class PdsClient:
             "GET",
             self._xrpc_url(_GET_REPO_NSID),
             params={"did": repo},
+            timeout=_DOWNLOAD_TIMEOUT,
         ) as response:
             response.raise_for_status()
             with partial.open("wb") as handle:
