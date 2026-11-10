@@ -101,7 +101,12 @@ def _tamper(path: Path, old: bytes, new: bytes) -> None:
 
 
 def test_exports() -> None:
-    assert set(repository.__all__) == {"RecordDiff", "Repository", "Workspace"}
+    assert set(repository.__all__) == {
+        "STORE_LAYOUT_VERSION",
+        "RecordDiff",
+        "Repository",
+        "Workspace",
+    }
 
 
 def test_record_diff_defaults_are_empty() -> None:
