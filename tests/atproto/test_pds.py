@@ -16,6 +16,7 @@ from lairs.atproto.pds import (
     PdsClient,
     RecordEnvelope,
     RecordNotFoundError,
+    RepoCommit,
     RepoDescription,
     _envelopes_from_blocks,
     _walk_mst,
@@ -23,11 +24,14 @@ from lairs.atproto.pds import (
     decode,
     decode_all,
     decode_repo_car,
+    iter_repo_car_records,
+    read_repo_car_commit,
 )
 from lairs.records._generated.expression import Expression
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from conftest import PdsServer
 
@@ -57,6 +61,7 @@ def test_exports() -> None:
         "RecordDecodeFailure",
         "RecordEnvelope",
         "RecordNotFoundError",
+        "RepoCommit",
         "RepoDescription",
         "RepoListing",
         "count_repo_car",
@@ -66,7 +71,9 @@ def test_exports() -> None:
         "describe_repo",
         "get_record",
         "get_repo",
+        "iter_repo_car_records",
         "list_records",
+        "read_repo_car_commit",
     }
 
 
@@ -502,6 +509,136 @@ def test_envelopes_from_blocks_returns_empty_without_roots() -> None:
 
 def test_envelopes_from_blocks_returns_empty_on_non_object_header() -> None:
     assert _envelopes_from_blocks("not a header", {}) == ()
+
+
+def _record_car(texts: dict[str, str]) -> tuple[bytes, bytes]:
+    """Build a one-node repository CAR holding an expression per record key.
+
+    Returns the archive bytes and the raw CID of its commit. Records sharing a
+    text share one block, as a real repository stores identical records once.
+    """
+    records = {rkey: _expression_record(text) for rkey, text in texts.items()}
+    entries: list[IpldValue] = []
+    previous = b""
+    for rkey in sorted(records):
+        key = f"{_COLLECTION}/{rkey}".encode()
+        entries.append(_mst_entry(previous, key, _cid_bytes(records[rkey])))
+        previous = key
+    node: dict[str, IpldValue] = {"l": None, "e": entries}
+    node_cid = _cid_bytes(node)
+    commit: dict[str, IpldValue] = {
+        "version": 3,
+        "did": _REPO_DID,
+        "data": node_cid,
+        "rev": "3kabc",
+        "prev": None,
+    }
+    commit_cid = _cid_bytes(commit)
+    blocks: dict[bytes, IpldValue] = {commit_cid: commit, node_cid: node}
+    for record in records.values():
+        blocks[_cid_bytes(record)] = record
+    # a block no tree key references must not surface as a record.
+    orphan = _expression_record("orphan")
+    blocks[_cid_bytes(orphan)] = orphan
+    return _encode_car([commit_cid], blocks), commit_cid
+
+
+def test_iter_repo_car_records_matches_the_in_memory_decoder(tmp_path: Path) -> None:
+    car, _ = _record_car({"aaaaa": "alpha", "aaaab": "beta", "aaaac": "alpha"})
+    path = tmp_path / "repo.car"
+    path.write_bytes(car)
+    streamed = {uri: (cid, value) for uri, cid, value in iter_repo_car_records(path)}
+    in_memory = {
+        envelope.uri: (envelope.cid, envelope.value)
+        for envelope in decode_repo_car(car)
+    }
+    # two keys share the "alpha" block, and both are still yielded.
+    assert set(streamed) == {
+        f"at://{_REPO_DID}/{_COLLECTION}/{rkey}" for rkey in ("aaaaa", "aaaab", "aaaac")
+    }
+    assert streamed == in_memory
+    uri = f"at://{_REPO_DID}/{_COLLECTION}/aaaab"
+    assert streamed[uri][0] == _cid_str(_expression_record("beta"))
+
+
+def test_read_repo_car_commit_reads_the_signed_commit(tmp_path: Path) -> None:
+    car, commit_cid = _record_car({"aaaaa": "alpha"})
+    path = tmp_path / "repo.car"
+    path.write_bytes(car)
+    commit = read_repo_car_commit(path)
+    assert isinstance(commit, RepoCommit)
+    assert commit.did == _REPO_DID
+    assert commit.rev == "3kabc"
+    assert commit.cid == CID.decode(commit_cid).encode("base32")
+    assert commit.data.startswith("bafy")
+
+
+def test_repo_car_on_disk_without_a_commit_is_empty(tmp_path: Path) -> None:
+    record = _expression_record("alpha")
+    path = tmp_path / "repo.car"
+    # no roots at all.
+    path.write_bytes(_encode_car([], {_cid_bytes(record): record}))
+    assert read_repo_car_commit(path) is None
+    assert list(iter_repo_car_records(path)) == []
+    # a root that names a block the archive does not hold.
+    path.write_bytes(_encode_car([_cid_bytes(record)], {}))
+    assert read_repo_car_commit(path) is None
+    # a root block that is not a well-formed commit.
+    stub: dict[str, IpldValue] = {"did": _REPO_DID}
+    path.write_bytes(_encode_car([_cid_bytes(stub)], {_cid_bytes(stub): stub}))
+    assert read_repo_car_commit(path) is None
+    assert list(iter_repo_car_records(path)) == []
+
+
+def test_repo_car_on_disk_skips_an_undecodable_block(tmp_path: Path) -> None:
+    car, _ = _record_car({"aaaaa": "alpha"})
+    junk = _cid_bytes({"junk": True}) + b"\xff\xff"
+    path = tmp_path / "repo.car"
+    path.write_bytes(car + _unsigned_varint(len(junk)) + junk)
+    assert len(list(iter_repo_car_records(path))) == 1
+
+
+def test_download_repo_car_streams_to_a_file(tmp_path: Path) -> None:
+    car, _ = _record_car({"aaaaa": "alpha"})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/xrpc/com.atproto.sync.getRepo"
+        assert request.url.params["did"] == _REPO_DID
+        return httpx.Response(200, content=car)
+
+    dest = tmp_path / "nested" / "repo.car"
+    with _client(handler) as client:
+        assert client.download_repo_car(_REPO_DID, dest) == dest
+    assert dest.read_bytes() == car
+    assert not dest.with_name("repo.car.part").exists()
+
+
+def test_download_repo_car_leaves_no_file_on_error(tmp_path: Path) -> None:
+    dest = tmp_path / "repo.car"
+    with (
+        _client(lambda _r: httpx.Response(500)) as client,
+        pytest.raises(httpx.HTTPStatusError),
+    ):
+        client.download_repo_car(_REPO_DID, dest)
+    assert not dest.exists()
+
+
+def test_get_latest_commit_maps_cid_and_rev() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/xrpc/com.atproto.sync.getLatestCommit"
+        assert request.url.params["did"] == _REPO
+        return httpx.Response(200, json={"cid": "bafyhead", "rev": "3kabc"})
+
+    with _client(handler) as client:
+        latest = client.get_latest_commit(_REPO)
+    assert (latest.did, latest.head, latest.rev) == (_REPO, "bafyhead", "3kabc")
+
+
+def test_get_latest_commit_tolerates_a_non_object_body() -> None:
+    with _client(lambda _r: httpx.Response(200, json=[])) as client:
+        latest = client.get_latest_commit(_REPO)
+    assert latest.head is None
+    assert latest.rev is None
 
 
 def test_count_repo_car_tallies_by_collection(

@@ -10,11 +10,17 @@ batch and collects per-record validation failures instead of failing fast.
 The transport is ``httpx``. The bulk ``com.atproto.sync.getRepo`` path fetches a
 CAR archive and decodes its Merkle search tree into record envelopes through
 ``libipld``. Public reads need no auth.
+
+A repository too large to hold in memory is read through the on-disk path
+instead: ``PdsClient.download_repo_car`` streams the archive to a file,
+``read_repo_car_commit`` reads its signed commit, and ``iter_repo_car_records``
+yields its records one block at a time.
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path  # noqa: TC003  (runtime: public signatures)
 from typing import TYPE_CHECKING, Self
 
 import didactic.api as dx
@@ -22,7 +28,12 @@ import httpx
 import libipld
 
 from lairs._types import JsonValue  # noqa: TC001  (runtime: didactic field sort)
-from lairs.atproto._car import cid_to_base32, ipld_to_json
+from lairs.atproto._car import (
+    cid_to_base32,
+    ipld_to_json,
+    iter_car_sections,
+    read_car_roots,
+)
 from lairs.records.blobref import normalize_blob_refs
 
 if TYPE_CHECKING:
@@ -37,6 +48,7 @@ __all__ = [
     "RecordDecodeFailure",
     "RecordEnvelope",
     "RecordNotFoundError",
+    "RepoCommit",
     "RepoDescription",
     "RepoListing",
     "count_repo_car",
@@ -46,7 +58,9 @@ __all__ = [
     "describe_repo",
     "get_record",
     "get_repo",
+    "iter_repo_car_records",
     "list_records",
+    "read_repo_car_commit",
 ]
 
 type QueryParams = dict[str, str | int | bool]
@@ -65,6 +79,12 @@ _LIST_RECORDS_NSID = "com.atproto.repo.listRecords"
 
 _GET_REPO_NSID = "com.atproto.sync.getRepo"
 """The XRPC method for bulk CAR export of a whole repository."""
+
+_GET_LATEST_COMMIT_NSID = "com.atproto.sync.getLatestCommit"
+"""The XRPC method for a repository's current commit CID and revision."""
+
+_DOWNLOAD_CHUNK_BYTES = 1 << 20
+"""The chunk size used when streaming a CAR archive to disk."""
 
 _DESCRIBE_REPO_NSID = "com.atproto.repo.describeRepo"
 """The XRPC method for repository metadata (collections, handle, did doc)."""
@@ -130,6 +150,32 @@ class RepoListing(dx.Model):
         default=None,
         description="whether the service reports the repository as active",
     )
+
+
+class RepoCommit(dx.Model):
+    """The signed commit at the root of a repository CAR archive.
+
+    A commit identifies one exact state of a repository: its ``rev`` orders it
+    against the repository's other commits, and its ``data`` link is the root
+    of the Merkle search tree over every record, so two archives with the same
+    commit CID hold the same records.
+
+    Attributes
+    ----------
+    did : str
+        The repository's DID.
+    cid : str
+        The CID of the commit block itself.
+    rev : str
+        The commit's revision (a timestamp identifier).
+    data : str
+        The CID of the Merkle search tree root the commit signs.
+    """
+
+    did: str = dx.field(description="the repository's DID")
+    cid: str = dx.field(description="CID of the commit block")
+    rev: str = dx.field(description="the commit's revision")
+    data: str = dx.field(description="CID of the Merkle search tree root")
 
 
 class RecordDecodeFailure(dx.Model):
@@ -514,6 +560,169 @@ def decode_repo_car(car: bytes) -> tuple[RecordEnvelope, ...]:
     return _envelopes_from_blocks(header, blocks)
 
 
+def _decode_block(block: bytes) -> IpldValue:
+    """Decode one DAG-CBOR block, mapping a malformed block to ``None``.
+
+    Parameters
+    ----------
+    block : bytes
+        The undecoded DAG-CBOR bytes of one CAR block.
+
+    Returns
+    -------
+    IpldValue
+        The decoded block, or ``None`` when it is not valid DAG-CBOR.
+    """
+    try:
+        return libipld.decode_dag_cbor(block)
+    except ValueError:
+        return None
+
+
+def _structural_blocks(path: Path) -> dict[bytes, IpldValue]:
+    """Return the non-record blocks of a CAR archive on disk, keyed by CID.
+
+    A repository archive holds the signed commit, the Merkle search tree nodes,
+    and the record blocks. Every record carries a ``$type``, and neither the
+    commit nor a tree node does, so the structural blocks are exactly those
+    without one. They are small next to the records, so holding them all is
+    cheap even for a very large repository.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The CAR archive file.
+
+    Returns
+    -------
+    dict of bytes to IpldValue
+        The decoded commit and tree-node blocks, keyed by raw CID bytes.
+    """
+    structural: dict[bytes, IpldValue] = {}
+    for cid, block in iter_car_sections(path):
+        value = _decode_block(block)
+        if isinstance(value, dict) and "$type" not in value:
+            structural[cid] = value
+    return structural
+
+
+def _commit_of(
+    roots: tuple[bytes, ...],
+    blocks: Mapping[bytes, IpldValue],
+) -> tuple[RepoCommit, bytes] | None:
+    """Return the commit a CAR archive's first root names, with its tree root.
+
+    Parameters
+    ----------
+    roots : tuple of bytes
+        The archive's root CIDs.
+    blocks : collections.abc.Mapping of bytes to IpldValue
+        The archive's structural blocks, keyed by raw CID bytes.
+
+    Returns
+    -------
+    tuple of (RepoCommit, bytes) or None
+        The commit and the raw CID of its Merkle search tree root, or ``None``
+        when the archive has no well-formed commit.
+    """
+    if not roots:
+        return None
+    commit = blocks.get(roots[0])
+    if not isinstance(commit, dict):
+        return None
+    did = commit.get("did")
+    rev = commit.get("rev")
+    mst_root = commit.get("data")
+    if (
+        not isinstance(did, str)
+        or not isinstance(rev, str)
+        or not isinstance(mst_root, bytes)
+    ):
+        return None
+    return (
+        RepoCommit(
+            did=did,
+            cid=cid_to_base32(roots[0]),
+            rev=rev,
+            data=cid_to_base32(mst_root),
+        ),
+        mst_root,
+    )
+
+
+def read_repo_car_commit(path: Path) -> RepoCommit | None:
+    """Read the signed commit of a repository CAR archive on disk.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The CAR archive file, as written by ``PdsClient.download_repo_car``.
+
+    Returns
+    -------
+    RepoCommit or None
+        The repository's commit, or ``None`` when the archive carries no
+        well-formed commit.
+
+    Raises
+    ------
+    lairs.atproto._car.CarFormatError
+        When the archive is truncated or structurally malformed.
+    """
+    found = _commit_of(read_car_roots(path), _structural_blocks(path))
+    return None if found is None else found[0]
+
+
+def iter_repo_car_records(path: Path) -> Iterator[tuple[str, str, JsonValue]]:
+    """Iterate the records of a repository CAR archive on disk.
+
+    The archive is read in two passes, neither of which holds the record
+    blocks: the first decodes the commit and the Merkle search tree to learn
+    which block is which record, and the second decodes each record block as it
+    is reached. Memory use is therefore bounded by the tree and one record,
+    not by the archive, so a repository of hundreds of thousands of records is
+    read with a small footprint.
+
+    Records are yielded in archive order, which a PDS writes in tree order but
+    which the CAR format does not guarantee. A record block the tree does not
+    reference is skipped, and a block referenced under several keys is yielded
+    once per key.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The CAR archive file, as written by ``PdsClient.download_repo_car``.
+
+    Yields
+    ------
+    tuple of (str, str, JsonValue)
+        Each record's AT-URI, its CID, and its value in DAG-JSON shape (the
+        shape the XRPC record endpoints emit).
+
+    Raises
+    ------
+    lairs.atproto._car.CarFormatError
+        When the archive is truncated or structurally malformed.
+    """
+    structural = _structural_blocks(path)
+    found = _commit_of(read_car_roots(path), structural)
+    if found is None:
+        return
+    commit, mst_root = found
+    keys_of: dict[bytes, list[str]] = {}
+    for key, target in _walk_mst(structural, mst_root):
+        keys_of.setdefault(target, []).append(key.decode("utf-8"))
+    del structural
+    for cid, block in iter_car_sections(path):
+        keys = keys_of.get(cid)
+        if keys is None:
+            continue
+        value = ipld_to_json(_decode_block(block))
+        rendered_cid = cid_to_base32(cid)
+        for key in keys:
+            yield f"at://{commit.did}/{key}", rendered_cid, value
+
+
 def count_repo_car(car: bytes) -> dict[str, int]:
     """Count records per collection from a CAR archive, without decoding values.
 
@@ -746,6 +955,86 @@ class PdsClient:
         )
         response.raise_for_status()
         return response.content
+
+    def download_repo_car(self, repo: str, dest: Path) -> Path:
+        """Stream a whole repository's CAR archive to a file.
+
+        Unlike ``get_repo_car`` the archive is never held in memory: the
+        ``com.atproto.sync.getRepo`` response is written to ``dest`` chunk by
+        chunk, so a repository of any size can be fetched and then read with
+        ``iter_repo_car_records``. The archive is written to a sibling
+        temporary file and renamed into place on success, so an interrupted
+        download never leaves a truncated archive at ``dest``.
+
+        Parameters
+        ----------
+        repo : str
+            The repository DID.
+        dest : pathlib.Path
+            The file to write the archive to. Its parent directory is created
+            when missing.
+
+        Returns
+        -------
+        pathlib.Path
+            ``dest``, once the archive is complete.
+
+        Raises
+        ------
+        httpx.HTTPStatusError
+            If the PDS returns a non-success status.
+        """
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        partial = dest.with_name(f"{dest.name}.part")
+        with self._client.stream(
+            "GET",
+            self._xrpc_url(_GET_REPO_NSID),
+            params={"did": repo},
+        ) as response:
+            response.raise_for_status()
+            with partial.open("wb") as handle:
+                for chunk in response.iter_bytes(_DOWNLOAD_CHUNK_BYTES):
+                    handle.write(chunk)
+        partial.replace(dest)
+        return dest
+
+    def get_latest_commit(self, repo: str) -> RepoListing:
+        """Fetch a repository's current commit CID and revision.
+
+        Wraps ``com.atproto.sync.getLatestCommit``, the cheap way to learn
+        whether a repository moved since it was last read without fetching any
+        of its records.
+
+        Parameters
+        ----------
+        repo : str
+            The repository DID.
+
+        Returns
+        -------
+        RepoListing
+            The repository's DID with its current ``head`` commit CID and
+            ``rev``; a field the service omits is ``None``.
+
+        Raises
+        ------
+        httpx.HTTPStatusError
+            If the PDS returns a non-success status.
+        """
+        response = self._client.get(
+            self._xrpc_url(_GET_LATEST_COMMIT_NSID),
+            params={"did": repo},
+        )
+        response.raise_for_status()
+        body = response.json()
+        fields = body if isinstance(body, dict) else {}
+        head = fields.get("cid")
+        rev = fields.get("rev")
+        return RepoListing(
+            did=repo,
+            head=head if isinstance(head, str) else None,
+            rev=rev if isinstance(rev, str) else None,
+        )
 
     def get_repo(self, repo: str) -> tuple[RecordEnvelope, ...]:
         """Fetch a whole repository and decode it into record envelopes.
