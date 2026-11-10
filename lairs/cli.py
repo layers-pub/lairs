@@ -18,6 +18,11 @@ gen
     stale.
 pull
     Ingest an account's Layers records from a PDS into a local Repository.
+pull-dataset
+    Pull every account a corpus depends on into one pinned local snapshot;
+    resumable, and optionally including the annotation accounts.
+verify-pin
+    Check a pulled dataset against its pin offline, or against the PDS.
 materialize
     Build the Arrow/Parquet views of a corpus loaded from a PDS.
 publish
@@ -72,6 +77,7 @@ from lairs.atproto import auth
 from lairs.atproto.identity import IdentityError
 from lairs.atproto.pds import PdsClient
 from lairs.author import publish as publish_ops
+from lairs.data import snapshot
 from lairs.discovery import accelerator
 from lairs.store.repository import Repository
 from lairs.tui import run_tui
@@ -101,6 +107,9 @@ if TYPE_CHECKING:
     )
 
 __all__ = ["main"]
+
+# the most AT-URIs printed per mismatch kind by ``verify-pin``.
+_MAX_LISTED_URIS = 20
 
 # the package-relative location of the vendored lexicons and generated models.
 _PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -193,6 +202,8 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_vendor(subparsers)
     _add_gen(subparsers)
     _add_pull(subparsers)
+    _add_pull_dataset(subparsers)
+    _add_verify_pin(subparsers)
     _add_materialize(subparsers)
     _add_publish(subparsers)
     _add_inspect(subparsers)
@@ -302,6 +313,100 @@ def _add_pull(subparsers: _Subparsers) -> None:
         help="commit message for the pulled snapshot",
     )
     sub.set_defaults(handler=_run_pull)
+
+
+def _add_pull_dataset(subparsers: _Subparsers) -> None:
+    """Register the ``pull-dataset`` subcommand."""
+    sub = subparsers.add_parser(
+        "pull-dataset",
+        help="pull and pin every account a corpus depends on",
+        description=(
+            "Resolve the accounts a corpus depends on, pull each into one local "
+            "Repository as a resumable operation, and write a pin (the corpus "
+            "URI, every record CID, each account's signed commit, and a content "
+            "hash) that `lairs verify-pin` checks offline. Run the same command "
+            "again to resume an interrupted pull or to pick up upstream changes."
+        ),
+    )
+    sub.add_argument("uri", help="the corpus AT-URI to pull")
+    sub.add_argument(
+        "--into",
+        required=True,
+        type=Path,
+        help="the local Repository directory to create or extend",
+    )
+    sub.add_argument(
+        "--endpoint",
+        default=None,
+        help="the base URL of the PDS (default: the default configured source)",
+    )
+    sub.add_argument(
+        "--with-annotations",
+        dest="with_annotations",
+        action="store_true",
+        help=(
+            "also pull the dataset's other record-type accounts "
+            "(segmentation, annotation, alignment, and the rest)"
+        ),
+    )
+    sub.add_argument(
+        "--with-references",
+        dest="with_references",
+        action="store_true",
+        help="also pull every account a pulled record cites (ontologies, eprints)",
+    )
+    sub.add_argument(
+        "--refresh",
+        action="store_true",
+        help="re-fetch accounts even when their pinned commit is still current",
+    )
+    sub.add_argument(
+        "--tag",
+        default=None,
+        help="tag the completed snapshot with this name",
+    )
+    sub.set_defaults(handler=_run_pull_dataset)
+
+
+def _add_verify_pin(subparsers: _Subparsers) -> None:
+    """Register the ``verify-pin`` subcommand."""
+    sub = subparsers.add_parser(
+        "verify-pin",
+        help="check a pulled dataset against its pin",
+        description=(
+            "Recompute the CID of every record in a pulled dataset from its "
+            "stored value and compare the result with the pin. This needs no "
+            "network access. With --remote, also report which pinned accounts "
+            "have moved on the PDS since the pull."
+        ),
+    )
+    sub.add_argument(
+        "path",
+        type=Path,
+        help="the pulled dataset directory",
+    )
+    sub.add_argument(
+        "--pin",
+        type=Path,
+        default=None,
+        help="a pin manifest to check against (default: the one in the directory)",
+    )
+    sub.add_argument(
+        "--remote",
+        action="store_true",
+        help="also compare each pinned account with its current upstream commit",
+    )
+    sub.add_argument(
+        "--endpoint",
+        default=None,
+        help="the PDS base URL for --remote (default: the one the pin records)",
+    )
+    sub.add_argument(
+        "--json",
+        action="store_true",
+        help="print JSON instead of text",
+    )
+    sub.set_defaults(handler=_run_verify_pin)
 
 
 def _add_materialize(subparsers: _Subparsers) -> None:
@@ -709,6 +814,142 @@ def _run_pull(args: argparse.Namespace) -> int:
     revision = repo.commit(args.message)
     print(f"committed snapshot {revision}")
     return 0
+
+
+def _default_endpoint() -> str | None:
+    """Return the endpoint of the default configured source, if any."""
+    source = discovery.default_source()
+    return None if source is None else source.endpoint
+
+
+def _run_pull_dataset(args: argparse.Namespace) -> int:
+    """Handle ``lairs pull-dataset``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments.
+
+    Returns
+    -------
+    int
+        ``0`` on success, ``1`` on a resolution, transport, or pin failure. A
+        failed pull keeps the accounts it finished, so it can be resumed.
+    """
+    endpoint = args.endpoint or _default_endpoint()
+    if endpoint is None:
+        print("error: no PDS endpoint; pass --endpoint", file=sys.stderr)
+        return 1
+    into: Path = args.into
+    try:
+        with PdsClient(endpoint) as client:
+            pin = snapshot.pull_dataset(
+                args.uri,
+                into=into,
+                client=client,
+                endpoint=endpoint,
+                with_annotations=args.with_annotations,
+                with_references=args.with_references,
+                refresh=args.refresh,
+                progress=print,
+            )
+    except (httpx.HTTPError, snapshot.PinError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        print(f"rerun the same command to resume into {into}", file=sys.stderr)
+        return 1
+    print(
+        f"pinned {pin.record_count} record(s) from {len(pin.accounts)} account(s) "
+        f"into {into}",
+    )
+    print(f"  revision        {pin.revision}")
+    print(f"  content sha256  {pin.content_sha256}")
+    print(f"  pin             {into / snapshot.PIN_FILE}")
+    if pin.external_refs:
+        print(
+            f"  {len(pin.external_refs)} cited account(s) not pulled "
+            "(pass --with-references to include them)",
+        )
+    if args.tag is not None and pin.revision is not None:
+        Repository.open(into).tag(args.tag, revision=pin.revision)
+        print(f"  tagged          {args.tag}")
+    return 0
+
+
+def _run_verify_pin(args: argparse.Namespace) -> int:
+    """Handle ``lairs verify-pin``.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments.
+
+    Returns
+    -------
+    int
+        ``0`` when the snapshot matches its pin (and, with ``--remote``, no
+        pinned account has moved), ``1`` otherwise.
+    """
+    path: Path = args.path
+    try:
+        pin = snapshot.read_pin(args.pin if args.pin is not None else path)
+        if pin is None:
+            print(f"error: no {snapshot.PIN_FILE} for {path}", file=sys.stderr)
+            return 1
+        result = snapshot.verify_pin(path, pin=pin)
+        drift: tuple[snapshot.AccountDrift, ...] = ()
+        if args.remote:
+            with PdsClient(args.endpoint or pin.endpoint) as client:
+                drift = snapshot.check_remote(pin, client)
+    except (httpx.HTTPError, snapshot.PinError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    moved = [entry for entry in drift if entry.moved]
+    if args.json:
+        payload: dict[str, JsonValue] = {
+            "verification": json.loads(result.model_dump_json()),
+            "remote": [json.loads(entry.model_dump_json()) for entry in drift],
+        }
+        print(json.dumps(payload, indent=2))
+    else:
+        _print_verification(pin, result, drift)
+    return 0 if result.ok and not moved else 1
+
+
+def _print_verification(
+    pin: snapshot.DatasetPin,
+    result: snapshot.PinVerification,
+    drift: Sequence[snapshot.AccountDrift],
+) -> None:
+    """Print a pin verification, and any remote drift, as text.
+
+    Parameters
+    ----------
+    pin : lairs.data.snapshot.DatasetPin
+        The pin that was checked.
+    result : lairs.data.snapshot.PinVerification
+        The offline verification outcome.
+    drift : collections.abc.Sequence of lairs.data.snapshot.AccountDrift
+        The per-account remote comparison; empty when it was not requested.
+    """
+    verdict = "ok" if result.ok else "MISMATCH"
+    print(
+        f"{verdict}: {result.record_count} record(s) checked against {pin.corpus_uri}"
+    )
+    print(f"  content sha256  {pin.content_sha256}")
+    for label, uris in (
+        ("missing", result.missing),
+        ("unexpected", result.unexpected),
+        ("changed", result.changed),
+    ):
+        if uris:
+            print(f"  {label}: {len(uris)}")
+            for uri in uris[:_MAX_LISTED_URIS]:
+                print(f"    {uri}")
+    for problem in result.problems:
+        print(f"  {problem}")
+    for entry in drift:
+        state = "moved upstream" if entry.moved else "current"
+        print(f"  {entry.handle or entry.did}: {state}")
 
 
 def _run_materialize(args: argparse.Namespace) -> int:

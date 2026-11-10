@@ -449,25 +449,27 @@ def _write_pin_records(directory: Path, records: Mapping[str, str]) -> None:
 # pin manifest -----------------------------------------------------------------
 
 
-def read_pin(directory: Path) -> DatasetPin | None:
-    """Read the pin manifest of a pulled dataset.
+def read_pin(path: Path) -> DatasetPin | None:
+    """Read a pin manifest.
 
     Parameters
     ----------
-    directory : pathlib.Path
-        The pulled dataset directory.
+    path : pathlib.Path
+        A pulled dataset directory, or a pin manifest file (for instance a copy
+        kept under version control with an analysis).
 
     Returns
     -------
     DatasetPin or None
-        The pin, or ``None`` when the directory has none.
+        The pin, or ``None`` when the directory has none or the file is absent.
 
     Raises
     ------
     PinError
         When the manifest is malformed or written by a newer format version.
     """
-    path = directory / PIN_FILE
+    if path.is_dir():
+        path = path / PIN_FILE
     if not path.exists():
         return None
     try:
