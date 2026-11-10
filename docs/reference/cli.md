@@ -15,6 +15,14 @@ CLI](../guide/cli.md).
   ingest an account's records into a local Repository. ``--message``
   sets the commit message of the pulled snapshot (default
   ``pull layers records``).
+- ``lairs pull-dataset <corpus-uri> --into <repo> [--endpoint <pds>]
+  [--with-annotations] [--with-references] [--refresh] [--tag <name>]``:
+  pull every account a corpus depends on into one local Repository as a
+  resumable operation, and write a pin (``lairs-pin.json`` and
+  ``lairs-pin.records.tsv.gz``).
+- ``lairs verify-pin <repo> [--pin <file>] [--remote] [--endpoint <pds>]
+  [--json]``: check a pulled dataset against its pin offline, and with
+  ``--remote`` report the pinned accounts that have moved upstream.
 - ``lairs materialize <uri> --endpoint <pds> --out <dir>``: write the
   Arrow/Parquet views of a corpus.
 - ``lairs publish --repo <dir> [--revision <rev>] [--to <did>]
