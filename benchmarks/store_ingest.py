@@ -1,3 +1,4 @@
+# ruff: noqa: INP001
 """Benchmark bulk ingestion into the lairs record store.
 
 Each run builds a fresh repository in a temporary directory, stages ``n``
@@ -35,8 +36,6 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import didactic.api as dx
-
 from lairs.records._generated.annotation import AnnotationLayer
 from lairs.records._generated.expression import Expression
 from lairs.records._generated.segmentation import Segmentation
@@ -44,6 +43,8 @@ from lairs.store.repository import Repository
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    import didactic.api as dx
 
     from lairs._types import JsonValue
 
