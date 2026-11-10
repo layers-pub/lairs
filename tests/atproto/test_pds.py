@@ -623,6 +623,32 @@ def test_download_repo_car_leaves_no_file_on_error(tmp_path: Path) -> None:
     assert not dest.exists()
 
 
+def test_resolve_handle_returns_the_did() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/xrpc/com.atproto.identity.resolveHandle"
+        assert request.url.params["handle"] == "corpus.x.example"
+        return httpx.Response(200, json={"did": _REPO})
+
+    with _client(handler) as client:
+        assert client.resolve_handle("corpus.x.example") == _REPO
+
+
+def test_resolve_handle_is_none_for_an_unknown_handle() -> None:
+    body = {"error": "InvalidRequest", "message": "Unable to resolve handle"}
+    with _client(lambda _r: httpx.Response(400, json=body)) as client:
+        assert client.resolve_handle("nope.example") is None
+    with _client(lambda _r: httpx.Response(200, json={})) as client:
+        assert client.resolve_handle("nope.example") is None
+
+
+def test_resolve_handle_raises_on_a_server_error() -> None:
+    with (
+        _client(lambda _r: httpx.Response(503)) as client,
+        pytest.raises(httpx.HTTPStatusError),
+    ):
+        client.resolve_handle("corpus.x.example")
+
+
 def test_get_latest_commit_maps_cid_and_rev() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/xrpc/com.atproto.sync.getLatestCommit"

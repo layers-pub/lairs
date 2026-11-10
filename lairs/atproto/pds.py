@@ -83,6 +83,9 @@ _GET_REPO_NSID = "com.atproto.sync.getRepo"
 _GET_LATEST_COMMIT_NSID = "com.atproto.sync.getLatestCommit"
 """The XRPC method for a repository's current commit CID and revision."""
 
+_RESOLVE_HANDLE_NSID = "com.atproto.identity.resolveHandle"
+"""The XRPC method for resolving a handle to a DID through the PDS."""
+
 _DOWNLOAD_CHUNK_BYTES = 1 << 20
 """The chunk size used when streaming a CAR archive to disk."""
 
@@ -1035,6 +1038,40 @@ class PdsClient:
             head=head if isinstance(head, str) else None,
             rev=rev if isinstance(rev, str) else None,
         )
+
+    def resolve_handle(self, handle: str) -> str | None:
+        """Resolve a handle to a DID through the PDS.
+
+        Wraps ``com.atproto.identity.resolveHandle``. A PDS answers for the
+        handles of the accounts it hosts without a DNS or well-known lookup, so
+        this is the direct way to find a sibling account by its handle.
+
+        Parameters
+        ----------
+        handle : str
+            The handle to resolve.
+
+        Returns
+        -------
+        str or None
+            The DID, or ``None`` when the PDS cannot resolve the handle.
+
+        Raises
+        ------
+        httpx.HTTPStatusError
+            If the PDS returns a server error. A client error (an unknown or
+            malformed handle) is reported as ``None``.
+        """
+        response = self._client.get(
+            self._xrpc_url(_RESOLVE_HANDLE_NSID),
+            params={"handle": handle},
+        )
+        if response.is_client_error:
+            return None
+        response.raise_for_status()
+        body = response.json()
+        did = body.get("did") if isinstance(body, dict) else None
+        return did if isinstance(did, str) and did else None
 
     def get_repo(self, repo: str) -> tuple[RecordEnvelope, ...]:
         """Fetch a whole repository and decode it into record envelopes.
