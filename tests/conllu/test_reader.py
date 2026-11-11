@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+import pytest
 
 from lairs.conllu.projection import Projector
 from lairs.conllu.reader import sentences, sentences_from_json
@@ -378,3 +381,25 @@ def test_reads_importer_shaped_records_without_alignment() -> None:
     records = {k: v for k, v in _published().items() if not k.startswith(_ALN)}
     (sentence,) = sentences(records)
     assert sentence.row_lines[0] == "1-2\tzur\t_\t_\t_\t_\t_\t_\t_\t_"
+
+
+# records the layers-repo UD importer built from each fixture (see the README
+# beside them); the reader contract requires an exact rebuild from them.
+_IMPORTER_FIXTURES = Path(__file__).parent / "fixtures" / "layers_repo"
+_IMPORTER_NAMES = sorted(p.stem for p in _IMPORTER_FIXTURES.glob("*.conllu"))
+
+
+def test_importer_fixtures_are_present() -> None:
+    assert "und_edge_cases" in _IMPORTER_NAMES
+    assert "en_empty_nodes" in _IMPORTER_NAMES
+
+
+@pytest.mark.parametrize("name", _IMPORTER_NAMES)
+def test_rebuilds_importer_records_byte_for_byte(name: str) -> None:
+    source = (_IMPORTER_FIXTURES / f"{name}.conllu").read_text(encoding="utf-8")
+    records = json.loads(
+        (_IMPORTER_FIXTURES / f"{name}.records.json").read_text(encoding="utf-8")
+    )
+    rebuilt = list(sentences(records))
+    assert serialize(rebuilt) == source
+    assert all(sentence.exact for sentence in rebuilt)

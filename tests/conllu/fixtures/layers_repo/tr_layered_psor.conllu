@@ -1,0 +1,32 @@
+# sent_id = n01002058
+# text = Söylediği ve yaptığı şeyler gerçekten inanılmaz.
+# text_en = What she’s saying and what she’s doing, it — actually, it’s unbelievable.
+1	Söylediği	söyle	ADJ	VJ	Number=Sing|Number[psor]=Sing|Person[psor]=3|Polarity=Pos	4	acl	_	_
+2	ve	ve	CCONJ	CCONJ	_	3	cc	_	_
+3	yaptığı	yap	ADJ	VJ	Number=Sing|Number[psor]=Sing|Person[psor]=3|Polarity=Pos	1	conj	_	_
+4	şeyler	şey	NOUN	NN	Case=Nom|Number=Plur	6	nsubj	_	_
+5	gerçekten	gerçekten	ADV	RB	_	6	advmod	_	_
+6	inanılmaz	inan	VERB	VB	Aspect=Hab|Mood=Gen|Number=Sing|Person=3|Polarity=Neg|Tense=Pres|Voice=Pass	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	.	_	6	punct	_	_
+
+# newdoc id = n01052
+# sent_id = n01052004
+# text = 84 yaşındaydı.
+# text_en = She was 84 years old.
+1	84	84	NUM	CD	Number=Sing|NumType=Ord	2	nummod	_	_
+2-3	yaşındaydı	_	_	_	_	_	_	_	SpaceAfter=No
+2	yaşında	yaşında	NOUN	NN	Case=Loc|Number=Sing|Number[psor]=Sing|Person[psor]=3	0	root	_	_
+3	ydı	i	AUX	AUX	Aspect=Perf|Mood=Ind|Number=Sing|Person=3|Tense=Past	2	cop	_	_
+4	.	.	PUNCT	.	_	2	punct	_	_
+
+# sent_id = w01058013
+# text = Son Olimpiyat Oyunlarının 393'te yapıldığı düşünülüyor.
+# text_en = The last Olympic Games are believed to have been held in 393.
+1	Son	son	ADJ	JJ	Number=Sing	3	amod	_	_
+2	Olimpiyat	Olimpiyat	NOUN	NN	Number=Sing	3	nmod:poss	_	Proper=True
+3	Oyunlarının	Oyun	NOUN	NN	Case=Gen|Number=Plur|Number[psor]=Sing|Person[psor]=3	5	nsubj	_	Proper=True
+4	393'te	393	NOUN	NN	Case=Loc|Number=Sing	5	obl	_	_
+5	yapıldığı	yap	NOUN	VN	Case=Nom|Number=Sing|Number[psor]=Sing|Person[psor]=3|Polarity=Pos	6	csubj	_	_
+6	düşünülüyor	düşün	VERB	VB	Aspect=Prog|Mood=Ind|Number=Sing|Person=3|Tense=Pres|Voice=Pass	0	root	_	SpaceAfter=No
+7	.	.	PUNCT	.	_	6	punct	_	_
+

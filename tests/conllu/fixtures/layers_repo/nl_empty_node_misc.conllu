@@ -1,0 +1,16 @@
+# archive = WR-P-E-I-train.collection
+# source = LassyDevelop/WR-P-E-I-0000022743/WR-P-E-I-0000022743.p.4.s.154.xml
+# sent_id = WR-P-E-I-0000022743.p.4.s.154
+# text = Vele monniken werden vermoord, en kloosters vernield.
+# auto = ALUD2.13.0
+1	Vele	veel	ADV	VNW|onbep|grad|stan|prenom|met-e|agr|basis	_	2	amod	2:amod	_
+2	monniken	monnik	NOUN	N|soort|mv|basis	Number=Plur	4	nsubj:pass	4:nsubj:pass	_
+3	werden	worden	AUX	WW|pv|verl|mv	Number=Plur|Tense=Past|VerbForm=Fin	4	aux:pass	4:aux:pass	_
+4	vermoord	vermoorden	VERB	WW|vd|vrij|zonder	VerbForm=Part	0	root	0:root	SpaceAfter=No
+5	,	,	PUNCT	LET	_	8	punct	8:punct	_
+6	en	en	CCONJ	VG|neven	_	8	cc	8:cc	_
+6.1	werden	worden	AUX	WW|pv|verl|mv	Number=Plur|Tense=Past|VerbForm=Fin	_	_	8:aux:pass	CopiedFrom=3
+7	kloosters	klooster	NOUN	N|soort|mv|basis	Number=Plur	8	nsubj	8:nsubj:pass	_
+8	vernield	vernielen	VERB	WW|vd|vrij|zonder	VerbForm=Part	4	conj	4:conj:en	SpaceAfter=No
+9	.	.	PUNCT	LET	_	4	punct	4:punct	_
+
