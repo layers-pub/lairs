@@ -380,8 +380,8 @@ class RecordNaming(Protocol):
     ``conllu``, and ``mem`` for records (the token-tag roles also occur with an
     ``-enhanced`` suffix for the layers over empty nodes), and ``surface``,
     ``words``, and ``enhanced`` for tokenization uuids. These are the suffixes
-    the Layers UD importer uses, so its scheme is ``f"{stem}/{sent_id}/{role}"`` with references
-    ``f"at://local/{local_id}"``.
+    the Layers UD importer uses, so its scheme is
+    ``f"{stem}/{sent_id}/{role}"`` with references ``f"at://local/{local_id}"``.
     """
 
     def local_id(self, role: str, sentence_id: str, ordinal: int) -> str:
@@ -600,6 +600,11 @@ def _chunked(key: str, value: str) -> list[tuple[str, str]]:
     entries = [(key, pieces[0])]
     entries.extend((f"{key}{_CONTINUATION}", piece) for piece in pieces[1:])
     return entries
+
+
+def _chunked_all(pairs: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Return the entries of several pairs, each continued when over-long."""
+    return [entry for key, value in pairs for entry in _chunked(key, value)]
 
 
 def _continued(entries: Sequence[tuple[str, str]], key: str) -> list[str]:
@@ -1095,10 +1100,12 @@ class _Shape:
             features.extend(_chunked(_UD_COMMENT, line))
         # the queryable view: the key = value comments, key-sorted, last wins.
         features.extend(
-            sorted(
-                (key, value)
-                for key, value in self.metadata.items()
-                if key not in _STRUCTURAL_KEYS and value
+            _chunked_all(
+                sorted(
+                    (key, value)
+                    for key, value in self.metadata.items()
+                    if key not in _STRUCTURAL_KEYS and value
+                )
             )
         )
         return _drop_none(
@@ -1172,13 +1179,15 @@ class _Shape:
             entries: list[tuple[str, str]] = []
             if len(word_ids) > 1:
                 # the queryable view, then the verbatim range-line columns.
-                entries.extend(_published_misc(misc))
+                entries.extend(_chunked_all(_published_misc(misc)))
                 entries.extend(
-                    (f"{_FEATS_LINK_PREFIX}{key}", value)
-                    for key, value in sorted(
-                        (key, value)
-                        for key, value in _pairs(feats).items()
-                        if value is not None
+                    _chunked_all(
+                        (f"{_FEATS_LINK_PREFIX}{key}", value)
+                        for key, value in sorted(
+                            (key, value)
+                            for key, value in _pairs(feats).items()
+                            if value is not None
+                        )
                     )
                 )
                 if feats != EMPTY:
@@ -1393,7 +1402,7 @@ class _Shape:
             entries = [(_UD_RELATION, universal)]
             if subtype is not None:
                 entries.append((_UD_SUBTYPE, subtype))
-            entries.extend(_published_misc(row[MISC]))
+            entries.extend(_chunked_all(_published_misc(row[MISC])))
             annotations.append(
                 _drop_none(
                     {

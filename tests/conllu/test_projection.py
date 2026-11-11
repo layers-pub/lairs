@@ -123,6 +123,60 @@ def _features(value: JsonValue) -> list[tuple[str, str]]:
     return pairs
 
 
+# a row the reader contract cannot represent: a HEAD with no DEPREL, and a
+# FEATS key that recurs after another key (the contract groups values by key).
+_ODD = (
+    "# sent_id = odd\n"
+    "1\ta\t_\tX\t_\tA=1|B=2|A=3\t0\t_\t_\t_\n"
+    "2\tb\t_\tX\t_\t_\t1\tdep\t_\t_\n\n"
+)
+
+
+def _legacy(records: Sequence[ProjectedRecord]) -> list[ProjectedRecord]:
+    """Reduce a projection to the shape the importer published before the contract.
+
+    That shape had no verbatim comment block, no MISC layers, no token-tag
+    layers over empty nodes, no verbatim range-line columns, and FEATS labels
+    without their layer.
+    """
+    out: list[ProjectedRecord] = []
+    for record in records:
+        tag_over_empties = record.role.endswith("-enhanced") and record.role != (
+            "seg-enhanced"
+        )
+        if record.role == "misc" or tag_over_empties:
+            continue
+        value = record.value()
+        if record.role == "expr":
+            kept = [
+                {"key": key, "value": val}
+                for key, val in _features(value["features"])
+                if not key.startswith("ud_comment")
+            ]
+            value["features"] = {"entries": kept}
+        elif record.role == "morph":
+            for annotation in _layer_annotations(value):
+                label = annotation["label"]
+                assert isinstance(label, str)
+                name, _, val = label.partition("=")
+                annotation["label"] = f"{name.partition('[')[0]}={val}"
+        elif record.role == "align":
+            links = value["links"]
+            assert isinstance(links, list)
+            for link in links:
+                assert isinstance(link, dict)
+                if "features" in link:
+                    link["features"] = {
+                        "entries": [
+                            {"key": key, "value": val}
+                            for key, val in _features(link["features"])
+                            if key not in {"ud_feats", "ud_misc"}
+                        ]
+                    }
+        out.append(record.with_(value_json=json.dumps(value, ensure_ascii=False)))
+    return out
+
+
 def test_every_record_validates_into_its_model() -> None:
     for record in _records():
         model = record.to_model()
@@ -134,7 +188,7 @@ def test_every_record_validates_into_its_model() -> None:
         }
 
 
-def test_round_trip_with_carriers_is_exact() -> None:
+def test_round_trip_is_exact() -> None:
     rebuilt = _rebuild(_records())
     assert serialize(rebuilt) == _DOC
     assert all(sentence.exact for sentence in rebuilt)
@@ -143,16 +197,24 @@ def test_round_trip_with_carriers_is_exact() -> None:
 def test_published_shape_of_a_sentence() -> None:
     roles = _by_role(_records())
     assert set(roles) == {
-        "expr", "seg", "align", "upos", "xpos", "lemma", "morph", "deps",
-        "seg-enhanced", "edeps", "conllu",
+        "expr", "seg", "align", "upos", "xpos", "lemma", "morph", "misc", "deps",
+        "seg-enhanced", "edeps", "upos-enhanced", "xpos-enhanced",
+        "lemma-enhanced", "morph-enhanced", "misc-enhanced",
     }  # fmt: skip
     expression = roles["expr"]
     assert (expression["id"], expression["kind"]) == ("s1", "sentence")
     assert expression["text"] == "Über zur Schule…"
-    published = [
-        p for p in _features(expression["features"]) if not p[0].startswith("conllu:")
+    # the verbatim comment block first, then the queryable key = value view.
+    assert _features(expression["features"]) == [
+        ("ud_comment_lines", "6"),
+        ("ud_comment", "# newdoc id = doc1"),
+        ("ud_comment", "# newpar id = par1"),
+        ("ud_comment", "# sent_id = s1"),
+        ("ud_comment", "# text = Über zur Schule…"),
+        ("ud_comment", "#  odd spacing =  kept  "),
+        ("ud_comment", "# free text without an equals sign"),
+        ("odd spacing", "kept"),
     ]
-    assert published == [("odd spacing", "kept")]
     tokenizations = roles["seg"]["tokenizations"]
     assert isinstance(tokenizations, list)
     surface, words = (t for t in tokenizations if isinstance(t, dict))
@@ -178,7 +240,8 @@ def test_published_shape_of_a_sentence() -> None:
 def test_published_layers_follow_the_importer_conventions() -> None:
     roles = _by_role(_records())
     morph = [a["label"] for a in _layer_annotations(roles["morph"])]
-    assert morph == ["Number=Sing", "Case=Acc", "Case=Dat", "Gender=Fem"]
+    # the label keeps the layered key; a multi-valued feature is one per value.
+    assert morph == ["Number[psor]=Sing", "Case=Acc", "Case=Dat", "Gender=Fem"]
     deps = _layer_annotations(roles["deps"])
     assert [a["headIndex"] for a in deps] == [3, 3, 3, -1, 3]
     assert _features(deps[0]["features"]) == [
@@ -198,41 +261,78 @@ def test_published_layers_follow_the_importer_conventions() -> None:
     assert labels == ["one-to-one", "multiword-token", "one-to-one", "one-to-one"]
     mwt = links[1]
     assert isinstance(mwt, dict)
-    assert _features(mwt["features"]) == [("Mwt", "1"), ("feats:Typo", "Yes")]
+    # the queryable view, then the range line's verbatim FEATS and MISC.
+    assert _features(mwt["features"]) == [
+        ("Mwt", "1"), ("feats:Typo", "Yes"), ("ud_feats", "Typo=Yes"),
+        ("ud_misc", "Mwt=1"),
+    ]  # fmt: skip
     assert all(
         layer.get("formalism") == "universal-dependencies"
         for layer in (roles["upos"], roles["deps"], roles["edeps"], roles["morph"])
     )
 
 
-def test_carriers_are_minimal_and_documented() -> None:
+def test_misc_and_empty_node_layers_follow_the_reader_contract() -> None:
     roles = _by_role(_records())
+    misc = roles["misc"]
+    assert (misc["subkind"], misc["labelSet"]) == ("misc", "ud-misc")
+    # one annotation per word that has a MISC column, holding it verbatim.
+    assert [(a["tokenIndex"], a["value"]) for a in _layer_annotations(misc)] == [
+        (0, "Z=1|Bare|A=2|A=3"),
+        (3, "SpaceAfter=No"),
+    ]
+    for role, field, expected in (
+        ("upos-enhanced", "label", "VERB"),
+        ("xpos-enhanced", "label", "VVFIN"),
+        ("lemma-enhanced", "value", "gehen"),
+        ("morph-enhanced", "label", "Mood=Ind"),
+        ("misc-enhanced", "value", "Gloss=go"),
+    ):
+        layer = roles[role]
+        assert layer["tokenizationId"] == {"value": "conllu/0/enhanced"}
+        words_role = role.removesuffix("-enhanced")
+        assert layer["parentLayerRef"] == (
+            f"at://local/pub.layers.annotation.annotationLayer/conllu-0-{words_role}"
+        )
+        (annotation,) = _layer_annotations(layer)
+        # the empty node is token 5 of the enhanced tokenization: five words first.
+        assert annotation["tokenIndex"] == 5
+        assert annotation[field] == expected
+        assert ("ud_empty_node", "4.1") in _features(annotation["features"])
+
+
+def test_empty_node_without_misc_still_names_itself() -> None:
+    text = "1\ta\t_\tX\t_\t_\t0\troot\t_\t_\n1.1\t_\t_\t_\t_\t_\t_\t_\t_\t_\n\n"
+    records = _records(text)
+    roles = _by_role(records)
+    assert "edeps" not in roles
+    (annotation,) = _layer_annotations(roles["misc-enhanced"])
+    assert annotation["value"] == "_"
+    assert _features(annotation["features"]) == [("ud_empty_node", "1.1")]
+    assert serialize(_rebuild(records)) == text
+
+
+def test_valid_ud_needs_no_residual_carriers() -> None:
+    records = _records()
+    assert all(r.role != "conllu" for r in records)
+    assert all("conllu:" not in r.value_json for r in records)
+
+
+def test_residual_carriers_cover_what_the_contract_cannot_hold() -> None:
+    records = _records(_ODD)
+    roles = _by_role(records)
     carriers = [
         p for p in _features(roles["expr"]["features"]) if p[0].startswith("conllu:")
     ]
-    assert carriers == [
-        ("conllu:scheme", "1"),
-        ("conllu:comment", " newdoc id = doc1"),
-        ("conllu:comment", " newpar id = par1"),
-        ("conllu:comment-ref", "sent_id"),
-        ("conllu:comment-ref", "text"),
-        ("conllu:comment", "  odd spacing =  kept  "),
-        ("conllu:comment", " free text without an equals sign"),
-        ("conllu:rows", "3"),
-    ]
+    assert carriers == [("conllu:scheme", "1"), ("conllu:rows", "1")]
     rows = {
         a["label"]: _features(a["features"])
         for a in _layer_annotations(roles["conllu"])
     }
-    assert rows == {
-        "1": [("conllu:misc", "Z=1|Bare|A=2|A=3")],
-        "2": [("conllu:feats", "Number[psor]=Sing|Case=Acc,Dat")],
-        "4.1": [
-            ("conllu:lemma", "gehen"), ("conllu:upos", "VERB"),
-            ("conllu:xpos", "VVFIN"), ("conllu:feats", "Mood=Ind"),
-            ("conllu:misc", "Gloss=go"),
-        ],
-    }  # fmt: skip
+    assert rows == {"1": [("conllu:feats", "A=1|B=2|A=3"), ("conllu:head", "0")]}
+    rebuilt = _rebuild(records)
+    assert serialize(rebuilt) == _ODD
+    assert rebuilt[0].exact
 
 
 def test_without_carriers_the_shape_is_published_only() -> None:
@@ -244,7 +344,7 @@ def test_without_carriers_the_shape_is_published_only() -> None:
 
 
 def test_lossy_reconstruction_flags_what_it_could_not_restore() -> None:
-    rebuilt = _rebuild(_records(projector=Projector(carriers=False)))
+    rebuilt = _rebuild(_legacy(_records()))
     first = rebuilt[0]
     assert set(first.lossy) == {
         "comments",
@@ -287,16 +387,44 @@ def test_non_canonical_order_is_carried() -> None:
         assert serialize(_rebuild(records)) == source
 
 
-def test_long_carrier_values_are_split_and_rejoined() -> None:
+def test_long_values_are_split_and_rejoined() -> None:
     long_misc = "Note=" + "é" * 5000
-    text = f"# comment {'ü' * 4100}\n1\tx\t_\tX\t_\t_\t_\t_\t_\t{long_misc}\n\n"
+    long_feats = "Long=" + "ü" * 3000
+    text = (
+        f"# comment {'ü' * 4100}\n"
+        f"1-2\txy\t_\t_\t_\t{long_feats}\t_\t_\t_\t{long_misc}\n"
+        f"1\tx\t_\tX\t_\t_\t0\troot\t_\t{long_misc}\n"
+        "2\ty\t_\tX\t_\t_\t1\tdep\t_\t_\n\n"
+    )
     records = _records(text)
+    joined = "".join(r.value_json for r in records)
+    for key in ("ud_comment+", "ud_misc+", "ud_feats+"):
+        assert f'"{key}"' in joined
+
+    def strings(value: JsonValue) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list):
+            return [s for item in value for s in strings(item)]
+        if isinstance(value, dict):
+            return [s for item in value.values() for s in strings(item)]
+        return []
+
     for record in records:
-        for entry in (
-            json.loads(record.value_json).get("features", {}).get("entries", [])
-        ):
-            assert len(entry["value"].encode("utf-8")) <= 4096
-    assert "conllu:more" in records[0].value_json
+        # every feature value, label, and annotation value fits the lexicon's
+        # 4096-byte limit, the queryable views included.
+        value = record.value()
+        checked = value.get("features") if record.role == "expr" else value
+        assert all(len(s.encode("utf-8")) <= 4096 for s in strings(checked))
+    assert serialize(_rebuild(records)) == text
+
+
+def test_long_residual_carrier_values_are_split_and_rejoined() -> None:
+    # a FEATS key that recurs out of order is regrouped by the contract, so
+    # the whole column travels in a residual carrier.
+    text = f"1\tx\t_\tX\t_\tA=1|B={'é' * 5000}|A=3\t0\troot\t_\t_\n\n"
+    records = _records(text)
+    assert '"conllu:more"' in "".join(r.value_json for r in records)
     assert serialize(_rebuild(records)) == text
 
 
@@ -478,13 +606,24 @@ def test_sentence_from_records_accepts_models() -> None:
 
 
 def test_missing_carrier_layer_is_flagged() -> None:
-    records = [r for r in _records() if "-0-" in r.local_id and r.role != "conllu"]
+    records = [r for r in _records(_ODD) if r.role != "conllu"]
     rebuilt = _rebuild(records)[0]
     assert "carriers" in rebuilt.lossy
 
 
+def test_comment_count_mismatch_is_flagged() -> None:
+    records = _records()
+    expression = records[2].value()
+    assert expression["id"] == "s1"
+    entries = _features(expression["features"])
+    kept = [{"key": k, "value": v} for k, v in entries if "free text" not in v]
+    expression["features"] = {"entries": kept}
+    records[2] = records[2].with_(value_json=json.dumps(expression))
+    assert _rebuild(records)[0].lossy == ("comments",)
+
+
 def test_lossy_comments_restore_structure_markers() -> None:
-    records = _records(projector=Projector(carriers=False))
+    records = _legacy(_records())
     expression = next(r for r in records if r.role == "expr").value()
     units = [r.value() for r in records if r.role in {"document", "paragraph"}][:2]
     rebuilt = sentence_from_json(
