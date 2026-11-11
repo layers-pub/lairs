@@ -148,7 +148,7 @@ def _legacy(records: Sequence[ProjectedRecord]) -> list[ProjectedRecord]:
             continue
         value = record.value()
         if record.role == "expr":
-            kept = [
+            kept: list[JsonValue] = [
                 {"key": key, "value": val}
                 for key, val in _features(value["features"])
                 if not key.startswith("ud_comment")
@@ -616,7 +616,9 @@ def test_comment_count_mismatch_is_flagged() -> None:
     expression = records[2].value()
     assert expression["id"] == "s1"
     entries = _features(expression["features"])
-    kept = [{"key": k, "value": v} for k, v in entries if "free text" not in v]
+    kept: list[JsonValue] = [
+        {"key": k, "value": v} for k, v in entries if "free text" not in v
+    ]
     expression["features"] = {"entries": kept}
     records[2] = records[2].with_(value_json=json.dumps(expression))
     assert _rebuild(records)[0].lossy == ("comments",)
