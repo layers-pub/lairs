@@ -26,6 +26,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Repository.layout_version()` and `STORE_LAYOUT_VERSION` expose it. A
   repository or pack written under a newer layout is refused with
   `panproto.VcsError` instead of being misread.
+- **Typed, exact CoNLL-U.** The new `lairs.conllu` package models a CoNLL-U
+  sentence and its rows (words, multiword ranges, and empty nodes) as typed
+  `ConlluSentence` and `ConlluRow` values, with `RowId`, `Feat`, `Dep`, and
+  `MiscItem` for the structured columns. Layered and multi-valued features,
+  bare and duplicate MISC items, and every comment survive. `parse` streams
+  sentences from text or a file and `serialize` writes them back byte for byte;
+  a malformed line raises `ConlluSyntaxError` with its line number. Over the
+  573 released files of the mirrored UD 2.14 treebanks, 1,906,050 sentences,
+  the text round trip is exact.
+- **One projection between CoNLL-U and Layers records.**
+  `lairs.conllu.Projector` maps sentences to the records the Layers UD
+  importer publishes (sentence, document, and paragraph expressions,
+  surface, word, and enhanced tokenizations, the multiword-token alignment,
+  and the UPOS, XPOS, lemma, morph, dependency, and enhanced-dependency
+  layers), plus lossless carriers for what that shape drops: `conllu:`
+  feature entries on the expression and a `conllu` carrier layer. Naming,
+  ontology references, timestamps, languages, and memberships are injectable
+  so other producers can share it. `sentence_from_json` inverts it, exactly
+  when the carriers are present and best-effort otherwise, naming the
+  reconstructed fields in `ConlluSentence.lossy`.
+- **A typed reader over corpora.** `lairs.conllu.sentences(source, corpus=...,
+  split=...)` yields `ConlluSentence` values in membership order from a
+  `Corpus` or from a raw AT-URI to JSON mapping such as
+  `Repository.content_at` returns, working on record JSON without validating
+  models.
+- **The `conllu-ud` codec.** `UdConlluCodec` decodes CoNLL-U into those
+  records and encodes them back exactly, documents and paragraphs included,
+  and `UdConlluIso` is its single-sentence round trip. The existing `conllu`
+  codec is unchanged.
 
 ### Changed
 
