@@ -182,8 +182,6 @@ CARRIER_SUBKIND = "conllu"
 
 # the carrier feature keys.
 _K_SCHEME = "conllu:scheme"
-_K_COMMENT = "conllu:comment"
-_K_COMMENT_REF = "conllu:comment-ref"
 _K_ORDER = "conllu:order"
 _K_ROWS = "conllu:rows"
 _K_MORE = "conllu:more"
@@ -211,6 +209,12 @@ _UD_RELATION = "ud_relation"
 _UD_SUBTYPE = "ud_subtype"
 _UD_EMPTY_NODE = "ud_empty_node"
 _UD_FEATS_ORIGINAL = "ud_feats_original"
+_UD_COMMENT_LINES = "ud_comment_lines"
+_UD_COMMENT = "ud_comment"
+_UD_MISC = "ud_misc"
+_UD_FEATS = "ud_feats"
+# the suffix of the entries that continue an over-long value.
+_CONTINUATION = "+"
 _IS_ENHANCED = "isEnhanced"
 _FEATS_LINK_PREFIX = "feats:"
 _SPACE_AFTER = "SpaceAfter"
@@ -223,6 +227,7 @@ _SUBKIND_POS = "pos"
 _SUBKIND_XPOS = "xpos"
 _SUBKIND_LEMMA = "lemma"
 _SUBKIND_MORPH = "morph"
+_SUBKIND_MISC = "misc"
 _SUBKIND_DEPENDENCY = "dependency"
 _SUBKIND_ENHANCED = "enhanced-dependency"
 _MULTIWORD_LABEL = "multiword-token"
@@ -331,7 +336,12 @@ class OntologyResolver(Protocol):
         ...
 
     def feat(self, feature: str, value: str) -> FeatResolution:
-        """Return how one ``Feature=Value`` pair (layer stripped) is published."""
+        """Return how one ``Feature=Value`` pair is published.
+
+        ``feature`` is the full FEATS key, layer included (``Number[psor]``).
+        A resolver that normalises the pair must return the source pair in an
+        ``ud_feats_original`` entry of ``extra``.
+        """
         ...
 
 
@@ -366,10 +376,11 @@ class RecordNaming(Protocol):
     """Names projected records, tokenizations, and references.
 
     ``role`` is one of ``expr``, ``seg``, ``seg-enhanced``, ``align``,
-    ``upos``, ``xpos``, ``lemma``, ``morph``, ``deps``, ``edeps``, ``conllu``,
-    and ``mem`` for records, and ``surface``, ``words``, and ``enhanced`` for
-    tokenization uuids. These are the suffixes the Layers UD importer uses, so
-    its scheme is ``f"{stem}/{sent_id}/{role}"`` with references
+    ``upos``, ``xpos``, ``lemma``, ``morph``, ``misc``, ``deps``, ``edeps``,
+    ``conllu``, and ``mem`` for records (the token-tag roles also occur with an
+    ``-enhanced`` suffix for the layers over empty nodes), and ``surface``,
+    ``words``, and ``enhanced`` for tokenization uuids. These are the suffixes
+    the Layers UD importer uses, so its scheme is ``f"{stem}/{sent_id}/{role}"`` with references
     ``f"at://local/{local_id}"``.
     """
 
@@ -531,12 +542,6 @@ def _space_after(column: str) -> bool:
     return _pairs(column).get(_SPACE_AFTER) != "No"
 
 
-def _feature_name(name: str) -> str:
-    """Strip the layer from a feature name (``Number[psor]`` to ``Number``)."""
-    start = name.find("[")
-    return name[:start] if start != -1 else name
-
-
 def _split_deprel(deprel: str) -> tuple[str, str | None]:
     """Split a relation into its universal part and subtype."""
     universal, sep, subtype = deprel.partition(":")
@@ -583,6 +588,30 @@ def _chunks(value: str) -> list[str]:
         size += width
     pieces.append("".join(piece))
     return pieces
+
+
+def _chunked(key: str, value: str) -> list[tuple[str, str]]:
+    """Return ``(key, value)`` entries for a value, continued when over-long.
+
+    A value over the 4096-byte limit is split at character boundaries into an
+    entry ``key`` followed by entries ``key+``, which a reader joins in order.
+    """
+    pieces = _chunks(value)
+    entries = [(key, pieces[0])]
+    entries.extend((f"{key}{_CONTINUATION}", piece) for piece in pieces[1:])
+    return entries
+
+
+def _continued(entries: Sequence[tuple[str, str]], key: str) -> list[str]:
+    """Return the values of ``key`` in order, each joined with its continuations."""
+    values: list[str] = []
+    more = f"{key}{_CONTINUATION}"
+    for name, value in entries:
+        if name == key:
+            values.append(value)
+        elif name == more and values:
+            values[-1] += value
+    return values
 
 
 def _carrier_entries(key: str, value: str) -> list[JsonValue]:
@@ -830,13 +859,14 @@ class Projector:
         predicted = _predict(shape.json_records())
         carrier_rows = _row_carriers(predicted.columns, shape.rows)
         order = [row[ID] for row in shape.rows]
-        canonical = sorted(order, key=_row_key)
-        entries = shape.comment_carriers()
-        if order != canonical:
+        entries: list[JsonValue] = []
+        if order != [row_id for row_id in predicted.order if row_id in set(order)]:
             entries.extend(_carrier_entries(_K_ORDER, " ".join(order)))
         if carrier_rows:
             entries.append({"key": _K_ROWS, "value": str(len(carrier_rows))})
             records.append(shape.carrier_layer(carrier_rows))
+        if not entries:
+            return records
         expression = records[0].value()
         features = expression.get("features")
         published = features.get("entries") if isinstance(features, dict) else None
@@ -844,7 +874,9 @@ class Projector:
         merged.append({"key": _K_SCHEME, "value": CARRIER_SCHEME})
         merged.extend(entries)
         expression["features"] = {"entries": merged}
-        records[0] = records[0].with_(value_json=json.dumps(expression))
+        records[0] = records[0].with_(
+            value_json=json.dumps(expression, ensure_ascii=False)
+        )
         return records
 
 
@@ -990,17 +1022,21 @@ class _Shape:
         alignment = self._alignment()
         if alignment is not None:
             out.append(self._emit("align", ALIGNMENT_NSID, alignment))
+        emitted: dict[str, str] = {}
         for role, layer in (
             ("upos", self._tag_layer(_SUBKIND_POS, UPOS)),
             ("xpos", self._tag_layer(_SUBKIND_XPOS, XPOS)),
             ("lemma", self._tag_layer(_SUBKIND_LEMMA, LEMMA)),
             ("morph", self._morph_layer()),
+            ("misc", self._misc_layer()),
             ("deps", self._dependency_layer()),
         ):
             if layer is not None:
-                out.append(self._emit(role, ANNOTATION_NSID, layer))
+                record = self._emit(role, ANNOTATION_NSID, layer)
+                emitted[role] = record.uri
+                out.append(record)
         enhanced = self._enhanced_layer()
-        if enhanced is not None:
+        if enhanced is not None or self.empties:
             out.append(
                 self._emit(
                     "seg-enhanced",
@@ -1012,7 +1048,9 @@ class _Shape:
                     },
                 )
             )
+        if enhanced is not None:
             out.append(self._emit("edeps", ANNOTATION_NSID, enhanced))
+        out.extend(self._empty_node_layers(emitted))
         if p.corpus_ref is not None:
             membership = _drop_none(
                 {
@@ -1026,12 +1064,42 @@ class _Shape:
             out.append(self._emit("mem", MEMBERSHIP_NSID, membership))
         return out
 
+    def _empty_node_layers(self, emitted: dict[str, str]) -> list[ProjectedRecord]:
+        """Return the token-tag layers over the empty nodes.
+
+        Each names the words layer of the same subkind, when the sentence has
+        one, in ``parentLayerRef``.
+        """
+        out: list[ProjectedRecord] = []
+        if not self.empties:
+            return out
+        for role, layer in (
+            ("upos", self._tag_layer(_SUBKIND_POS, UPOS, empty=True)),
+            ("xpos", self._tag_layer(_SUBKIND_XPOS, XPOS, empty=True)),
+            ("lemma", self._tag_layer(_SUBKIND_LEMMA, LEMMA, empty=True)),
+            ("morph", self._morph_layer(empty=True)),
+            ("misc", self._misc_layer(empty=True)),
+        ):
+            if layer is None:
+                continue
+            parent = emitted.get(role)
+            if parent is not None:
+                layer["parentLayerRef"] = parent
+            out.append(self._emit(f"{role}-enhanced", ANNOTATION_NSID, layer))
+        return out
+
     def _expression(self) -> JsonObject:
         """Return the sentence expression."""
-        features = sorted(
-            (key, value)
-            for key, value in self.metadata.items()
-            if key not in _STRUCTURAL_KEYS and value
+        features = [(_UD_COMMENT_LINES, str(len(self.comment_lines)))]
+        for line in self.comment_lines:
+            features.extend(_chunked(_UD_COMMENT, line))
+        # the queryable view: the key = value comments, key-sorted, last wins.
+        features.extend(
+            sorted(
+                (key, value)
+                for key, value in self.metadata.items()
+                if key not in _STRUCTURAL_KEYS and value
+            )
         )
         return _drop_none(
             {
@@ -1101,15 +1169,22 @@ class _Shape:
         index_of = {int(row[ID]): index for index, row in enumerate(self.words)}
         links: list[JsonValue] = []
         for surface_index, (_form, word_ids, misc, feats) in enumerate(self.units):
-            entries = _published_misc(misc)
-            entries.extend(
-                (f"{_FEATS_LINK_PREFIX}{key}", value)
-                for key, value in sorted(
-                    (key, value)
-                    for key, value in _pairs(feats).items()
-                    if value is not None
+            entries: list[tuple[str, str]] = []
+            if len(word_ids) > 1:
+                # the queryable view, then the verbatim range-line columns.
+                entries.extend(_published_misc(misc))
+                entries.extend(
+                    (f"{_FEATS_LINK_PREFIX}{key}", value)
+                    for key, value in sorted(
+                        (key, value)
+                        for key, value in _pairs(feats).items()
+                        if value is not None
+                    )
                 )
-            )
+                if feats != EMPTY:
+                    entries.extend(_chunked(_UD_FEATS, feats))
+                if misc != EMPTY:
+                    entries.extend(_chunked(_UD_MISC, misc))
             links.append(
                 _drop_none(
                     {
@@ -1163,20 +1238,57 @@ class _Shape:
             }
         )
 
-    def _tag_layer(self, subkind: str, column: int) -> JsonObject | None:
-        """Return a UPOS, XPOS, or lemma token-tag layer, or ``None`` when empty."""
+    def _targets(self, *, empty: bool) -> list[tuple[int, str, tuple[str, ...]]]:
+        """Return (token index, tokenization uuid, row) for words or empty nodes."""
+        if not empty:
+            return [(i, self.uuid_words, row) for i, row in enumerate(self.words)]
+        base = len(self.words)
+        return [
+            (base + offset, self.uuid_enhanced, row)
+            for offset, row in enumerate(self.empties)
+        ]
+
+    def _annotation(
+        self,
+        uuid: str,
+        index: int,
+        tokenization: str,
+        row: tuple[str, ...],
+        entries: Sequence[tuple[str, str]] = (),
+    ) -> JsonObject:
+        """Return the common fields of a token annotation on a row."""
+        features = list(entries)
+        if "." in row[ID]:
+            features.append((_UD_EMPTY_NODE, row[ID]))
+        return _drop_none(
+            {
+                "uuid": {"value": uuid},
+                "anchor": _anchor(index, tokenization),
+                "tokenIndex": index,
+                "features": _feature_map(features),
+            }
+        )
+
+    def _tag_layer(
+        self,
+        subkind: str,
+        column: int,
+        *,
+        empty: bool = False,
+    ) -> JsonObject | None:
+        """Return a UPOS, XPOS, or lemma token-tag layer, or ``None`` when empty.
+
+        With ``empty`` the layer is over the enhanced tokenization and holds
+        the empty nodes' annotations only.
+        """
         annotations: list[JsonValue] = []
         prefix = "upos" if subkind == _SUBKIND_POS else subkind
-        for index, row in enumerate(self.words):
+        for index, tokenization, row in self._targets(empty=empty):
             value = row[column]
             if value == EMPTY:
                 continue
-            annotation: JsonObject = {
-                "uuid": {"value": f"{prefix}-{index}"},
-                "anchor": _anchor(index, self.uuid_words),
-                "tokenIndex": index,
-                "label": value,
-            }
+            annotation = self._annotation(f"{prefix}-{index}", index, tokenization, row)
+            annotation["label"] = value
             if subkind == _SUBKIND_LEMMA:
                 annotation["value"] = value
             elif subkind == _SUBKIND_POS:
@@ -1184,7 +1296,8 @@ class _Shape:
                 if type_ref is not None:
                     annotation["ontologyTypeRef"] = type_ref
             annotations.append(annotation)
-        if subkind == _SUBKIND_POS:
+        uuid = self.uuid_enhanced if empty else None
+        if subkind == _SUBKIND_POS and not empty:
             return self._layer(
                 _TAG_KIND,
                 subkind,
@@ -1194,36 +1307,42 @@ class _Shape:
             )
         if not annotations:
             return None
+        if subkind == _SUBKIND_POS:
+            return self._layer(
+                _TAG_KIND,
+                subkind,
+                "universal-pos",
+                annotations,
+                ontology=self.p.ontology.ontology("pos"),
+                uuid=uuid,
+            )
         label_set = "language-specific-pos" if subkind == _SUBKIND_XPOS else "lemma"
-        return self._layer(_TAG_KIND, subkind, label_set, annotations)
+        return self._layer(_TAG_KIND, subkind, label_set, annotations, uuid=uuid)
 
-    def _morph_layer(self) -> JsonObject | None:
-        """Return the FEATS layer: one annotation per ``Feature=Value``."""
+    def _morph_layer(self, *, empty: bool = False) -> JsonObject | None:
+        """Return the FEATS layer: one annotation per ``Feature=Value``.
+
+        The label keeps the full FEATS key, layer included, and a multi-valued
+        feature gives one annotation per value, in column order.
+        """
         annotations: list[JsonValue] = []
-        for index, row in enumerate(self.words):
-            for name, raw in _pairs(row[FEATS]).items():
-                if raw is None:
+        for index, tokenization, row in self._targets(empty=empty):
+            for item in split_items(row[FEATS]):
+                name, sep, raw = item.partition("=")
+                if not sep:
                     continue
-                feature = _feature_name(name)
-                for part in raw.split(","):
-                    value = part.strip()
-                    if not value:
-                        continue
-                    resolved = self.p.ontology.feat(feature, value)
+                for value in raw.split(","):
+                    resolved = self.p.ontology.feat(name, value)
                     extra = [(entry.key, entry.value) for entry in resolved.extra]
-                    annotations.append(
-                        _drop_none(
-                            {
-                                "uuid": {"value": f"morph-{len(annotations)}"},
-                                "anchor": _anchor(index, self.uuid_words),
-                                "tokenIndex": index,
-                                "label": f"{resolved.feature}={resolved.value}",
-                                "value": resolved.literal,
-                                "ontologyTypeRef": resolved.type_ref,
-                                "features": _feature_map(extra),
-                            }
-                        )
+                    annotation = self._annotation(
+                        f"morph-{len(annotations)}", index, tokenization, row, extra
                     )
+                    annotation["label"] = f"{resolved.feature}={resolved.value}"
+                    if resolved.literal is not None:
+                        annotation["value"] = resolved.literal
+                    if resolved.type_ref is not None:
+                        annotation["ontologyTypeRef"] = resolved.type_ref
+                    annotations.append(annotation)
         if not annotations:
             return None
         return self._layer(
@@ -1232,6 +1351,34 @@ class _Shape:
             "universal-features",
             annotations,
             ontology=self.p.ontology.ontology("feats"),
+            uuid=self.uuid_enhanced if empty else None,
+        )
+
+    def _misc_layer(self, *, empty: bool = False) -> JsonObject | None:
+        """Return the verbatim MISC layer: one annotation per row's column.
+
+        A word with no MISC has no annotation. Every empty node has one, with
+        ``_`` for no MISC, so its ``ud_empty_node`` entry always names the node.
+        """
+        annotations: list[JsonValue] = []
+        for index, tokenization, row in self._targets(empty=empty):
+            if row[MISC] == EMPTY and not empty:
+                continue
+            pieces = _chunks(row[MISC])
+            more = [(f"{_UD_MISC}{_CONTINUATION}", piece) for piece in pieces[1:]]
+            annotation = self._annotation(
+                f"misc-{index}", index, tokenization, row, more
+            )
+            annotation["value"] = pieces[0]
+            annotations.append(annotation)
+        if not annotations:
+            return None
+        return self._layer(
+            _TAG_KIND,
+            _SUBKIND_MISC,
+            "ud-misc",
+            annotations,
+            uuid=self.uuid_enhanced if empty else None,
         )
 
     def _dependency_layer(self) -> JsonObject:
@@ -1316,20 +1463,6 @@ class _Shape:
             uuid=self.uuid_enhanced,
             parent=deps_ref,
         )
-
-    def comment_carriers(self) -> list[JsonValue]:
-        """Return the comment carrier entries, in comment order."""
-        entries: list[JsonValue] = []
-        sent_line = f"# sent_id = {self.sid}"
-        text_line = f"# text = {self.text}"
-        for line in self.comment_lines:
-            if line == sent_line:
-                entries.append({"key": _K_COMMENT_REF, "value": "sent_id"})
-            elif line == text_line:
-                entries.append({"key": _K_COMMENT_REF, "value": "text"})
-            else:
-                entries.extend(_carrier_entries(_K_COMMENT, line[1:]))
-        return entries
 
     def carrier_layer(self, rows: list[tuple[str, list[JsonValue]]]) -> ProjectedRecord:
         """Return the carrier layer for the rows the published shape misses."""
@@ -1460,6 +1593,7 @@ class _Prediction:
 
     def __init__(self) -> None:
         self.columns: dict[str, tuple[str, ...]] = {}
+        self.order: list[str] = []
         self.lossy: set[str] = set()
 
 
@@ -1501,6 +1635,7 @@ class _Records:
                     self.tokenizations[uuid] = obj
                     uuids.append(uuid)
             self.order.append(uuids)
+        self.all_layers = list(layers)
         self.layers: dict[str, JsonObject] = {}
         for layer in layers:
             subkind = _str(layer.get("subkind"))
@@ -1590,15 +1725,238 @@ def _labels(layer: JsonObject | None, *, prefer_value: bool = False) -> dict[int
 
 
 def _predict(json_records: Sequence[tuple[str, JsonObject]]) -> _Prediction:
-    """Predict a sentence's rows from its published-shape records (forward side)."""
+    """Read a sentence's rows back from its own records (forward side)."""
     segmentations = [v for role, v in json_records if role in {"seg", "seg-enhanced"}]
     alignments = [v for role, v in json_records if role == "align"]
     layers = [
         v
         for role, v in json_records
-        if role in {"upos", "xpos", "lemma", "morph", "deps", "edeps"}
+        if role not in {"expr", "seg", "seg-enhanced", "align", "mem"}
     ]
-    return _rows_from(_Records(segmentations, layers, alignments))
+    return _contract_rows(_Records(segmentations, layers, alignments))
+
+
+def _token_of(
+    layer: JsonObject, annotation: JsonObject
+) -> tuple[str | None, int | None]:
+    """Return the (tokenization uuid, token index) an annotation is anchored to."""
+    anchor = _obj(annotation.get("anchor"))
+    ref = _obj(anchor.get("tokenRef")) if anchor is not None else None
+    uuid = _uuid_of(ref.get("tokenizationId")) if ref is not None else None
+    index = _int(ref.get("tokenIndex")) if ref is not None else None
+    if uuid is None:
+        uuid = _uuid_of(layer.get("tokenizationId"))
+    if index is None:
+        index = _int(annotation.get("tokenIndex"))
+    return uuid, index
+
+
+class _Contract:
+    """One sentence read by the Layers UD reader contract.
+
+    The tokenization roles come from the records, never from uuid spelling:
+    the words are the tokenization of the ``dependency`` layer, the surface
+    tokenization is the other one in the same segmentation, and the enhanced
+    tokenization is the single tokenization of the sentence's other
+    segmentation (the words, then the empty nodes in file order).
+    """
+
+    def __init__(self, records: _Records) -> None:
+        self.records = records
+        self.words_uuid = records.words_uuid
+        self.enhanced_uuid: str | None = None
+        self.surface_uuid: str | None = None
+        for uuids in records.order:
+            if self.words_uuid in uuids:
+                others = [u for u in uuids if u != self.words_uuid]
+                self.surface_uuid = others[0] if others else None
+            elif len(uuids) == 1 and self.enhanced_uuid is None:
+                self.enhanced_uuid = uuids[0]
+        tokenizations = records.tokenizations
+        self.words = _tokens_of(tokenizations.get(self.words_uuid or ""))
+        self.surface = _tokens_of(tokenizations.get(self.surface_uuid or ""))
+        self.enhanced = _tokens_of(tokenizations.get(self.enhanced_uuid or ""))
+        self.count = len(self.words)
+        self.lossy: set[str] = set()
+        # every row is keyed by its token index in the enhanced numbering:
+        # words 0..count-1, then the empty nodes.
+        self.rows: dict[int, list[str]] = {
+            index: [str(index + 1), _str(token.get("text")) or EMPTY]
+            + [EMPTY] * (COLUMNS - 2)
+            for index, token in enumerate(self.words)
+        }
+        self.node_ids = self._node_ids()
+        for index in range(self.count, len(self.enhanced)):
+            node_id = self.node_ids.get(index)
+            if node_id is None:
+                self.lossy.add(LOSSY_EMPTY_NODES)
+                continue
+            form = _str(self.enhanced[index].get("text")) or EMPTY
+            self.rows[index] = [node_id, form] + [EMPTY] * (COLUMNS - 2)
+        self.ranges: dict[int, list[str]] = {}
+
+    def _layers(self, subkind: str) -> Iterator[tuple[JsonObject, JsonObject]]:
+        """Yield (layer, annotation) for every annotation of a subkind."""
+        for layer in self.records.all_layers:
+            if _str(layer.get("subkind")) == subkind:
+                for annotation in _annotations(layer):
+                    yield layer, annotation
+
+    def _node_ids(self) -> dict[int, str]:
+        """Return the CoNLL-U id of each empty node, by enhanced token index."""
+        ids: dict[int, str] = {}
+        for layer in self.records.all_layers:
+            for annotation in _annotations(layer):
+                uuid, index = _token_of(layer, annotation)
+                if uuid != self.enhanced_uuid or index is None or index < self.count:
+                    continue
+                node_id = dict(_entries(annotation.get("features"))).get(_UD_EMPTY_NODE)
+                if node_id is not None:
+                    ids[index] = node_id
+        return ids
+
+    def _row(self, layer: JsonObject, annotation: JsonObject) -> list[str] | None:
+        """Return the row an annotation is anchored to, if any."""
+        uuid, index = _token_of(layer, annotation)
+        if index is None:
+            return None
+        if uuid == self.enhanced_uuid and uuid is not None and index >= self.count:
+            return self.rows.get(index)
+        if uuid in {self.words_uuid, self.enhanced_uuid} and 0 <= index < self.count:
+            return self.rows[index]
+        return None
+
+    def _node(self, index: int) -> str | None:
+        """Return the CoNLL-U id of an enhanced-graph node index."""
+        if index == _ROOT:
+            return "0"
+        if 0 <= index < self.count:
+            return str(index + 1)
+        return self.node_ids.get(index)
+
+    def read(self) -> _Prediction:
+        """Fill every column and return the rows in CoNLL-U order."""
+        self._tags()
+        self._dependencies()
+        self._multiword()
+        prediction = _Prediction()
+        prediction.lossy = self.lossy
+        for row in self._ordered():
+            prediction.columns[row[ID]] = tuple(row)
+            prediction.order.append(row[ID])
+        return prediction
+
+    def _tags(self) -> None:
+        """Fill LEMMA, UPOS, XPOS, FEATS, and MISC."""
+        for subkind, column in ((_SUBKIND_POS, UPOS), (_SUBKIND_XPOS, XPOS)):
+            for layer, annotation in self._layers(subkind):
+                row = self._row(layer, annotation)
+                label = _str(annotation.get("label"))
+                if row is not None and label is not None:
+                    row[column] = label
+        for layer, annotation in self._layers(_SUBKIND_LEMMA):
+            row = self._row(layer, annotation)
+            lemma = _str(annotation.get("value")) or _str(annotation.get("label"))
+            if row is not None and lemma is not None:
+                row[LEMMA] = lemma
+        feats: dict[str, dict[str, list[str]]] = {}
+        for layer, annotation in self._layers(_SUBKIND_MORPH):
+            row = self._row(layer, annotation)
+            if row is None:
+                continue
+            # a normalised pair keeps the treebank's own pair in
+            # ud_feats_original, which takes precedence over the label.
+            original = dict(_entries(annotation.get("features"))).get(
+                _UD_FEATS_ORIGINAL
+            )
+            pair = original or _str(annotation.get("label")) or ""
+            key, _, value = pair.partition("=")
+            groups = feats.setdefault(row[ID], {})
+            groups.setdefault(key, []).append(value)
+            row[FEATS] = "|".join(f"{k}={','.join(v)}" for k, v in groups.items())
+        for layer, annotation in self._layers(_SUBKIND_MISC):
+            row = self._row(layer, annotation)
+            value = _str(annotation.get("value"))
+            if row is not None and value is not None:
+                entries = [(_UD_MISC, ""), *_entries(annotation.get("features"))]
+                row[MISC] = value + _continued(entries, _UD_MISC)[0]
+
+    def _dependencies(self) -> None:
+        """Fill HEAD, DEPREL, and DEPS."""
+        for layer, annotation in self._layers(_SUBKIND_DEPENDENCY):
+            row = self._row(layer, annotation)
+            head = _int(annotation.get("headIndex"))
+            if row is None or head is None:
+                continue
+            row[HEAD] = "0" if head == _ROOT else str(head + 1)
+            row[DEPREL] = _str(annotation.get("label")) or EMPTY
+        deps: dict[str, list[str]] = {}
+        for layer, annotation in self._layers(_SUBKIND_ENHANCED):
+            row = self._row(layer, annotation)
+            head = _int(annotation.get("headIndex"))
+            label = _str(annotation.get("label"))
+            node = self._node(head) if head is not None else None
+            if row is None or node is None or label is None:
+                self.lossy.add(LOSSY_DEPS)
+                continue
+            items = deps.setdefault(row[ID], [])
+            items.append(f"{node}:{label}")
+            row[DEPS] = "|".join(items)
+
+    def _multiword(self) -> None:
+        """Build the multiword-token range rows from the alignment."""
+        alignment = self.records.alignment
+        if alignment is None:
+            return
+        for link_value in _list(alignment.get("links")):
+            link = _obj(link_value)
+            if link is None or _str(link.get("label")) != _MULTIWORD_LABEL:
+                continue
+            sources = [
+                i for i in _list(link.get("sourceIndices")) if isinstance(i, int)
+            ]
+            targets = [
+                i for i in _list(link.get("targetIndices")) if isinstance(i, int)
+            ]
+            if not sources or not targets:
+                continue
+            first, last = min(targets) + 1, max(targets) + 1
+            token = self.surface[sources[0]] if sources[0] < len(self.surface) else None
+            form = (_str(token.get("text")) if token is not None else None) or EMPTY
+            entries = _entries(link.get("features"))
+            feats = _continued(entries, _UD_FEATS)
+            misc = _continued(entries, _UD_MISC)
+            row = [f"{first}-{last}", form] + [EMPTY] * (COLUMNS - 2)
+            row[FEATS] = feats[0] if feats else EMPTY
+            row[MISC] = misc[0] if misc else EMPTY
+            self.ranges[first] = row
+
+    def _ordered(self) -> list[list[str]]:
+        """Interleave words, range lines, and empty nodes.
+
+        A range ``a-b`` precedes word ``a``. An empty node ``n.m`` follows word
+        ``n`` (``0.m`` precedes word 1); nodes after one word keep their
+        enhanced-tokenization order, which is file order.
+        """
+        after: dict[int, list[list[str]]] = {}
+        for index in sorted(i for i in self.rows if i >= self.count):
+            row = self.rows[index]
+            major = row[ID].partition(".")[0]
+            position = int(major) if major.isdigit() else self.count
+            after.setdefault(position, []).append(row)
+        rows = list(after.get(0, []))
+        for number in range(1, self.count + 1):
+            mwt = self.ranges.get(number)
+            if mwt is not None:
+                rows.append(mwt)
+            rows.append(self.rows[number - 1])
+            rows.extend(after.get(number, []))
+        return rows
+
+
+def _contract_rows(records: _Records) -> _Prediction:
+    """Rebuild every row by the Layers UD reader contract."""
+    return _Contract(records).read()
 
 
 def _rows_from(records: _Records) -> _Prediction:  # noqa: C901, PLR0912, PLR0915
@@ -1837,27 +2195,32 @@ def sentence_from_json(
         When the records hold no token rows to rebuild.
     """
     records = _Records(segmentations, layers, alignments)
-    prediction = _rows_from(records)
+    features = _entries(expression.get("features"))
+    declared = [value for key, value in features if key == _UD_COMMENT_LINES]
+    if declared:
+        prediction = _contract_rows(records)
+        ids = prediction.order
+        lossy = set(prediction.lossy)
+        comment_lines = _continued(features, _UD_COMMENT)
+        if declared != [str(len(comment_lines))]:
+            lossy.add(LOSSY_COMMENTS)
+    else:
+        prediction = _rows_from(records)
+        ids = sorted(prediction.columns, key=_row_key)
+        lossy = prediction.lossy | {LOSSY_COMMENTS}
+        comment_lines = _comments_lossy(expression, opened)
     columns = prediction.columns
-    carriers = _carrier_values(_entries(expression.get("features")))
-    scheme = any(key == _K_SCHEME for key, _ in carriers)
-    lossy: set[str] = set()
-    order: list[str] | None = None
-    if scheme:
+    carriers = _carrier_values(features)
+    if any(key == _K_SCHEME for key, _ in carriers):
         expected = 0
         for key, value in carriers:
             if key == _K_ROWS:
                 expected = int(value)
             elif key == _K_ORDER:
-                order = value.split(" ")
+                ids = value.split(" ")
         found = _apply_row_carriers(records.layers.get(CARRIER_SUBKIND), columns)
         if found != expected:
-            lossy = prediction.lossy | {LOSSY_CARRIERS}
-        comment_lines = _comments_carried(expression, carriers)
-    else:
-        lossy = prediction.lossy | {LOSSY_COMMENTS}
-        comment_lines = _comments_lossy(expression, opened)
-    ids = order if order is not None else sorted(columns, key=_row_key)
+            lossy.add(LOSSY_CARRIERS)
     rows = ["\t".join(columns[row_id]) for row_id in ids if row_id in columns]
     if not rows:
         name = _str(expression.get("id"))
@@ -1888,21 +2251,6 @@ def _apply_row_carriers(
                 row[column] = value
         columns[row_id] = tuple(row)
     return found
-
-
-def _comments_carried(
-    expression: JsonObject,
-    carriers: Sequence[tuple[str, str]],
-) -> list[str]:
-    """Restore comment lines from the comment carriers."""
-    lines: list[str] = []
-    for key, value in carriers:
-        if key == _K_COMMENT:
-            lines.append(f"#{value}")
-        elif key == _K_COMMENT_REF:
-            field = "id" if value == "sent_id" else value
-            lines.append(f"# {value} = {_str(expression.get(field)) or ''}")
-    return lines
 
 
 def _model_json(model: LayersRecord) -> JsonObject:
