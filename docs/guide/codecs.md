@@ -78,9 +78,8 @@ sentence = iso.backward(fragment)        # backward(forward(x)) == x on the subs
 ## CoNLL-U, full fidelity
 
 `UdConlluCodec` (`conllu-ud`) keeps every column of every row and every
-comment. It is built on [`lairs.conllu`](conllu.md), and its records are the
-shape the Layers UD importer publishes plus the lossless carriers that
-[`lairs.conllu`](conllu.md#the-lossless-carrier-encoding) specifies, so a
+comment. It is built on [`lairs.conllu`](conllu.md), and its records are in
+[the shape the Layers UD importer publishes](conllu.md#the-record-shape), so a
 treebank decoded locally and the same treebank read from the public PDS are
 interchangeable. For well-formed input the round trip is byte-exact:
 
@@ -162,7 +161,7 @@ from.
 ## See also
 
 - [Universal Dependencies and CoNLL-U](conllu.md) for the typed reader and the
-  carrier encoding.
+  record shape.
 - [Dataset API](dataset-api.md) for working with the records a codec produces.
 - [Authoring](authoring.md) for building records and layers directly.
 - [Knowledge bases](knowledge-bases.md) for grounding decoded labels.

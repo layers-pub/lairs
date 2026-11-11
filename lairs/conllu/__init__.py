@@ -9,7 +9,7 @@ The package has four parts:
 - :mod:`lairs.conllu.text`: streaming :func:`parse` and exact
   :func:`serialize`;
 - :mod:`lairs.conllu.projection`: the one mapping between sentences and
-  ``pub.layers.*`` records, with the lossless carriers;
+  ``pub.layers.*`` records, in the shape the Layers UD importer publishes;
 - :mod:`lairs.conllu.reader`: :func:`sentences`, which reads sentences back
   out of a loaded corpus or a raw record mapping.
 

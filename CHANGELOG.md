@@ -45,16 +45,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   573 released files of the mirrored UD 2.14 treebanks, 1,906,050 sentences,
   the text round trip is exact.
 - **One projection between CoNLL-U and Layers records.**
-  `lairs.conllu.Projector` maps sentences to the records the Layers UD
-  importer publishes (sentence, document, and paragraph expressions,
-  surface, word, and enhanced tokenizations, the multiword-token alignment,
-  and the UPOS, XPOS, lemma, morph, dependency, and enhanced-dependency
-  layers), plus lossless carriers for what that shape drops: `conllu:`
-  feature entries on the expression and a `conllu` carrier layer. Naming,
-  ontology references, timestamps, languages, and memberships are injectable
-  so other producers can share it. `sentence_from_json` inverts it, exactly
-  when the carriers are present and best-effort otherwise, naming the
-  reconstructed fields in `ConlluSentence.lossy`.
+  `lairs.conllu.Projector` maps sentences to records in the shape the Layers
+  UD importer publishes, as its reader contract states it: sentence, document,
+  and paragraph expressions with the comment block verbatim in `ud_comment`
+  entries; surface, word, and enhanced tokenizations; the multiword-token
+  alignment with each range line's FEATS and MISC; and the UPOS, XPOS, lemma,
+  morph, MISC, dependency, and enhanced-dependency layers, including the
+  layers over empty nodes. Naming, ontology references, timestamps,
+  languages, and memberships are injectable. `sentence_from_json` inverts it
+  exactly for records in that shape, which is tested against records the
+  importer built. For records published before that shape it reconstructs
+  what it can and names the reconstructed fields in `ConlluSentence.lossy`.
+  Input that parses as CoNLL-U but is not valid UD keeps an exact local round
+  trip through residual `conllu:` carriers.
 - **A typed reader over corpora.** `lairs.conllu.sentences(source, corpus=...,
   split=...)` yields `ConlluSentence` values in membership order from a
   `Corpus` or from a raw AT-URI to JSON mapping such as

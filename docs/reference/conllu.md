@@ -1,9 +1,9 @@
 # CoNLL-U
 
 The `lairs.conllu` package: typed CoNLL-U sentences and rows, exact text
-input and output, the projection between sentences and Layers records with
-its lossless carriers, and the reader that yields sentences from a corpus.
-For usage and the carrier specification, see
+input and output, the projection between sentences and Layers records, and
+the reader that yields sentences from a corpus. For usage and the record
+shape, see
 [Guides > Universal Dependencies and CoNLL-U](../guide/conllu.md).
 
 ## Package

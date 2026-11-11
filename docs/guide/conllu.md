@@ -7,8 +7,7 @@ has four parts:
 
 - `lairs.conllu.model`: the typed `ConlluSentence` and `ConlluRow`.
 - `lairs.conllu.text`: streaming `parse` and exact `serialize`.
-- `lairs.conllu.projection`: the one mapping between sentences and records,
-  with lossless carriers.
+- `lairs.conllu.projection`: the one mapping between sentences and records.
 - `lairs.conllu.reader`: `sentences`, which yields sentences from a corpus.
 
 The `conllu-ud` codec (see [Format codecs](codecs.md)) is built on the same
@@ -99,11 +98,11 @@ is supplied. A malformed line raises `ConlluSyntaxError`, whose `line` is the
 
 ## Fidelity
 
-A sentence rebuilt from records that carry the lossless carriers (described
-below) is exact. A sentence rebuilt from records without them, as the Layers
-UD importer publishes them today, is reconstructed from what the records hold,
-and `sentence.lossy` names the fields that were reconstructed rather than
-restored:
+A sentence rebuilt from records in the shape described below is exact. That
+is the shape the Layers UD importer publishes once a treebank has been
+imported with its lossless importer. A sentence rebuilt from records published
+before that is reconstructed from what the records hold, and `sentence.lossy`
+names the fields that were reconstructed rather than restored:
 
 | Flag | What was reconstructed |
 |---|---|
@@ -113,71 +112,69 @@ restored:
 | `empty_nodes` | empty nodes from `ud_empty_node` and the enhanced tokenization; their LEMMA, UPOS, XPOS, FEATS, and MISC are lost |
 | `multiword_tokens` | ranges from the alignment or shared spans; their MISC order and `SpaceAfter` are reconstructed |
 | `deps` | an enhanced arc whose head or dependent could not be identified was dropped |
-| `carriers` | the sentence declares carriers that are not all present (for example, the carrier layer was not loaded) |
+| `carriers` | the sentence declares residual carriers that are not all present (for example, the carrier layer was not loaded) |
 
 `sentence.exact` is true when `lossy` is empty. A value is never invented: a
 field the records do not hold stays `_`.
 
-## The lossless carrier encoding
+## The record shape
 
-The projection emits the published shape plus carriers for exactly what that
-shape loses. The carriers never change the meaning of a published field. They
-are extra `features` entries whose keys start with `conllu:`, and one extra
-annotation layer with its own subkind. This section specifies them so that
-other producers, the Layers UD importer among them, can emit them too.
+The projection reads and writes the shape the Layers UD importer publishes.
+Its reader contract, `docs/ud-reader-contract.md` in `layers-repo`, is the
+specification, and `lairs` tests its reader against records that importer
+built. In outline, per sentence:
 
-### On the sentence expression
-
-Appended to the sentence `Expression`'s `features`, after the published
-entries:
-
-| Key | Value | When |
-|---|---|---|
-| `conllu:scheme` | `1` | always; the sentence carries carriers of this scheme |
-| `conllu:comment` | the comment line after its `#`, verbatim | once per comment line, in order |
-| `conllu:comment-ref` | `sent_id` or `text` | in place of a `conllu:comment` entry when the line is exactly `# sent_id = <id>` or `# text = <text>` for the expression's own `id` or `text` |
-| `conllu:order` | the row ids in source order, space-separated | only when the rows are not in canonical order |
-| `conllu:rows` | the number of annotations in the carrier layer | only when it is not zero |
-
-Canonical order puts each range just before its first word and each empty node
-`n.m` just after word `n`.
-
-### The carrier layer
-
-One `AnnotationLayer` with `kind="token-tag"`, `subkind="conllu"`,
-`labelSet="conllu-columns"`, and `formalism="universal-dependencies"`, on the
-word tokenization. It holds one annotation per row whose columns the published
-shape does not restore exactly, and is omitted when there are none:
-
-| Field | Value |
+| CoNLL-U | Where it lives |
 |---|---|
-| `label` | the row id: `3`, `1-2`, or `3.1` |
-| `tokenIndex`, `anchor` | the word's index, for a word row only |
-| `features` | `conllu:<column>` = the column's exact text, for each column the published shape gets wrong |
+| comment lines | `ud_comment` entries on the sentence `Expression`'s `features`, verbatim and in order, after a `ud_comment_lines` count |
+| FORM | token `text` in the word tokenization |
+| LEMMA, UPOS, XPOS | `lemma`, `pos`, and `xpos` token-tag layers |
+| FEATS | a `morph` layer with one annotation per value, labelled with the full key (`Number[psor]=Sing`); `ud_feats_original` holds the source pair when it was normalised |
+| HEAD, DEPREL | a `dependency` relation layer |
+| DEPS | an `enhanced-dependency` layer over the enhanced tokenization (the words, then the empty nodes) |
+| MISC | a `misc` token-tag layer whose annotation `value` is the column verbatim |
+| multiword-token lines | `multiword-token` links of a `word-to-word` alignment, with the line's FEATS and MISC verbatim in `ud_feats` and `ud_misc` |
+| empty nodes | tokens of the enhanced tokenization after the words, with `pos`, `xpos`, `lemma`, `morph`, and `misc` layers over them; every annotation carries `ud_empty_node` with the `n.m` id |
 
-The column keys are `conllu:form`, `conllu:lemma`, `conllu:upos`,
-`conllu:xpos`, `conllu:feats`, `conllu:head`, `conllu:deprel`, `conllu:deps`,
-and `conllu:misc`. A row the published shape implies but the source lacks gets
-`conllu:drop` = `true`.
-
-The forward projection decides which rows need an annotation by rebuilding the
-sentence from its own published-shape records and comparing the result with
-the source, column by column. A reader therefore rebuilds every row from the
-published layers and then overwrites the carried columns.
+Other feature entries on these records (the `key = value` comments, the parsed
+MISC items on dependency annotations and links, `feats:<Key>`) are a
+queryable view. The reader never rebuilds from them.
 
 ### Long values
 
-`Feature.value` is limited to 4096 UTF-8 bytes. A longer carrier value is split
-at character boundaries, and each further piece follows as a `conllu:more`
-entry, whose value is appended to the entry before it.
+Feature values and annotation values are limited to 4096 UTF-8 bytes. A longer
+value is split at character boundaries into an entry `K` followed by entries
+`K+`, which are joined in order. An over-long MISC column is the annotation
+`value` followed by `ud_misc+` entries.
+
+### Residual carriers
+
+That shape holds every valid UD sentence, so a valid sentence projects to
+records with nothing added. Some input still parses as CoNLL-U but does not
+fit: rows out of canonical order, a HEAD with no DEPREL, or a FEATS key that
+recurs after another key. For that input only, `Projector` adds residual
+carriers, so that the local round trip stays exact:
+
+| Where | Key | Value |
+|---|---|---|
+| sentence `Expression` | `conllu:scheme` | `1` |
+| sentence `Expression` | `conllu:order` | the row ids in source order, space-separated, when the rows are not in canonical order |
+| sentence `Expression` | `conllu:rows` | the number of annotations in the carrier layer, when it is not zero |
+| carrier layer annotation | `conllu:<column>` | the column's exact text, for each column the shape does not restore |
+| carrier layer annotation | `conllu:drop` | `true`, for a row the shape implies but the source lacks |
+
+The carrier layer is an `AnnotationLayer` with `kind="token-tag"` and
+`subkind="conllu"`, and each annotation's `label` is its row id. A long value
+continues in `conllu:more` entries. Canonical order puts each range just
+before its first word and each empty node `n.m` just after word `n`.
+`Projector(carriers=False)` leaves the residual carriers out.
 
 ### Adopting the seams
 
 `Projector` takes the record naming (`RecordNaming`), the ontology references
 and FEATS normalisation (`OntologyResolver`), `created_at`, `languages`,
 `source_method`, `corpus_ref`, `split`, and the alignment `tool` as
-parameters. With a naming that returns `f"{stem}/{sent_id}/{role}"` and
-`f"at://local/{local_id}"`, and a resolver that wraps the importer's ontology
-registry, `Projector(carriers=False)` reproduces the importer's records, and
-`Projector()` adds the carriers. `NoOntology` and `LocalNaming` are the neutral
+parameters. `OntologyResolver.feat` receives the full FEATS key, layer
+included, and a resolver that normalises a pair returns the source pair in an
+`ud_feats_original` entry. `NoOntology` and `LocalNaming` are the neutral
 defaults.

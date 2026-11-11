@@ -19,8 +19,8 @@ several accounts) and locally projected ones.
 Sentences come in membership order (``ordinal``) when the source holds
 membership records for the selected corpus, and otherwise in source order.
 Document and paragraph expressions are not sentences, but they restore the
-``# newdoc`` and ``# newpar`` comments of records published without the comment
-carriers.
+``# newdoc`` and ``# newpar`` comments of records published without the
+verbatim comment block.
 """
 
 from __future__ import annotations
@@ -104,8 +104,8 @@ def sentences(
     Yields
     ------
     ConlluSentence
-        Each sentence. A sentence rebuilt without the lossless carriers names
-        its reconstructed fields in
+        Each sentence. A sentence rebuilt from records published before the
+        importer's lossless shape names its reconstructed fields in
         :attr:`~lairs.conllu.model.ConlluSentence.lossy`.
     """
     if isinstance(source, Corpus):

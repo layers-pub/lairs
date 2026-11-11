@@ -8,97 +8,91 @@ This module is the single place the CoNLL-U to ``pub.layers.*`` mapping lives.
 locally and the same corpus as published by the Layers UD importer have one
 shape.
 
-The published shape
--------------------
-Per sentence, the forward projection emits what the importer publishes:
+The record shape
+----------------
+The shape is the one the Layers UD importer publishes, as its reader contract
+states it (``docs/ud-reader-contract.md`` in ``layers-repo``). Per sentence:
 
 - a sentence ``Expression`` (``kind="sentence"``, ``id`` = ``sent_id``, the
-  sentence text, ``parentRef`` to the enclosing paragraph or document, and the
-  non-structural ``key = value`` comments as sorted ``features``), plus a
+  sentence text, ``parentRef`` to the enclosing paragraph or document), plus a
   document or paragraph ``Expression`` the first time a ``# newdoc`` or
-  ``# newpar`` opens one;
+  ``# newpar`` opens one. Its ``features`` start with ``ud_comment_lines``
+  (the number of comment lines) and one ``ud_comment`` entry per comment line,
+  verbatim and in order. The ``key = value`` comments follow as a key-sorted
+  queryable view that a reader ignores;
 - a ``Segmentation`` holding a surface tokenization (a multiword token is one
   token) and a syntactic-word tokenization, with UTF-8 byte spans into the
   sentence text (the words of a multiword token share its span);
 - when the sentence has a multiword token, an ``Alignment``
   (``tokenization-to-tokenization``, ``word-to-word``) from surface tokens to
-  words, whose links carry the range row's MISC and ``feats:<F>`` entries;
-- token-tag layers on the words: ``pos`` (UPOS), ``xpos``, ``lemma``, and
-  ``morph`` (one annotation per ``Feature=Value``);
+  words. A ``multiword-token`` link carries the range line's FEATS and MISC
+  verbatim in ``ud_feats`` and ``ud_misc``, after a queryable view of both;
+- token-tag layers on the words: ``pos`` (UPOS), ``xpos``, ``lemma``,
+  ``morph`` (one annotation per value, labelled with the full FEATS key,
+  layer included, and carrying ``ud_feats_original`` when the resolver
+  normalised the pair), and ``misc`` (the MISC column verbatim in ``value``);
 - a ``dependency`` relation layer (``headIndex`` 0-based, ``-1`` at the root,
-  with ``ud_relation``, ``ud_subtype``, and the word's sorted MISC pairs);
-- when DEPS is present, a second ``Segmentation`` with an enhanced
-  tokenization (the words, then the empty nodes) and an
-  ``enhanced-dependency`` layer with one annotation per arc;
+  with ``ud_relation``, ``ud_subtype``, and a queryable view of MISC);
+- when the sentence has DEPS or empty nodes, a second ``Segmentation`` with an
+  enhanced tokenization (the words, then the empty nodes in file order), and
+  an ``enhanced-dependency`` layer with one annotation per arc;
+- for the empty nodes, ``pos``, ``xpos``, ``lemma``, ``morph``, and ``misc``
+  layers over the enhanced tokenization. Every annotation on an empty node
+  carries ``ud_empty_node`` with the node's ``n.m`` id, and every empty node
+  has a ``misc`` annotation (``_`` when it has no MISC);
 - when a corpus reference is configured, a ``Membership`` with the ordinal and
   split.
 
-That shape loses information: MISC order, bare items, and ``SpaceAfter``;
-comment order and comments without a value; layered feature names and the
-grouping of multi-valued features; the LEMMA, UPOS, XPOS, FEATS, and MISC of
-empty nodes; the MISC of words with no HEAD; and anything a non-canonical file
-does differently.
+A value longer than the 4096-byte limit is split at character boundaries into
+an entry ``K`` followed by entries ``K+``, and an over-long MISC column into
+the annotation ``value`` followed by ``ud_misc+`` entries.
 
-The lossless carriers
----------------------
-On top of the published shape, the forward projection adds carriers for
-exactly what the shape loses. They never change the meaning of a published
-field: they are extra ``features`` entries whose keys start with ``conllu:``,
-and one extra annotation layer with its own subkind.
+Residual carriers
+-----------------
+That shape holds every valid UD sentence exactly, so a valid sentence projects
+to records with nothing added. It cannot hold some input that still parses as
+CoNLL-U: rows out of canonical order, a HEAD with no DEPREL, or a FEATS key
+that recurs after another key. For those, and only those, the forward
+projection adds residual carriers, which never change the meaning of a
+published field:
 
-On the sentence ``Expression``'s ``features``, after the published entries:
+- on the sentence ``Expression``'s ``features``, ``conllu:scheme`` = ``1``,
+  then ``conllu:order`` (the row ids in source order, space-separated) when
+  the rows are not in canonical order, and ``conllu:rows`` (the number of
+  annotations in the carrier layer) when it is not zero;
+- a carrier layer (``kind="token-tag"``, ``subkind="conllu"``) with one
+  annotation per row the shape does not restore. Its ``label`` is the row id,
+  and its features are ``conllu:<column>`` = the column's exact text for each
+  such column, or ``conllu:drop`` = ``true`` for a row the shape implies but
+  the source lacks. A long value continues in ``conllu:more`` entries.
 
-- ``conllu:scheme`` = ``1``: the sentence carries the carriers of this scheme.
-- ``conllu:comment``: one entry per comment line, in order, holding the line
-  after its ``#`` verbatim; or ``conllu:comment-ref`` = ``sent_id`` or
-  ``text`` in its place when the line is exactly ``# sent_id = <id>`` or
-  ``# text = <text>`` for the expression's own ``id`` or ``text``.
-- ``conllu:order``: the row ids in source order, space-separated, present only
-  when the rows are not in canonical order (each range just before its first
-  word, each empty node ``n.m`` just after word ``n``).
-- ``conllu:rows``: the number of row annotations in the carrier layer, present
-  only when it is not zero.
-
-A carrier layer (``kind="token-tag"``, ``subkind="conllu"``) holds one
-annotation per row whose columns the published shape does not restore
-exactly. Its ``label`` is the row id (``3``, ``1-2``, ``3.1``); a word row also
-carries ``tokenIndex`` and a token anchor. Its features are
-``conllu:<column>`` = the column's exact text for each such column
-(``form``, ``lemma``, ``upos``, ``xpos``, ``feats``, ``head``, ``deprel``,
-``deps``, ``misc``), or ``conllu:drop`` = ``true`` for a row the published
-shape implies but the source does not have.
-
-The forward projection decides which rows need a carrier by running the
-inverse over its own published-shape output and comparing it with the source,
-so the carriers are minimal and the round trip is exact by construction. A
-carrier value longer than the 4096-byte ``Feature.value`` limit is split at
-character boundaries, and each further piece follows as a ``conllu:more``
-entry appended to the entry before it.
+The forward projection decides what needs a carrier by reading its own records
+back and comparing the result with the source, so the round trip is exact by
+construction.
 
 The inverse
 -----------
 :func:`sentence_from_json` reads one sentence's records as JSON (wire JSON with
 ``$type`` keys and explicit nulls, or model-dumped JSON; an absent key and a
-null are the same) and rebuilds the sentence. With carriers the result is
-exact. Without them (records as the importer currently publishes them) it
-reconstructs what it can: MISC from the sorted pairs plus ``SpaceAfter=No``
-from adjacent byte spans, FEATS regrouped from the morph annotations with
-``ud_feats_original`` undoing normalisation, empty nodes from
-``ud_empty_node`` and the enhanced tokenization, multiword ranges from the
-alignment or from shared spans, and comments from the expression's fields.
-The result's :attr:`~lairs.conllu.model.ConlluSentence.lossy` then names the
-fields that were reconstructed: ``comments``, ``misc``, ``feats``,
-``empty_nodes``, ``multiword_tokens``, and ``deps``, as they apply, plus
-``carriers`` when a sentence declares carriers that are missing.
+null are the same) and rebuilds the sentence. Records in the shape above (the
+expression carries ``ud_comment_lines``) are read by the reader contract and
+the result is exact. Records published before that shape existed are
+reconstructed from what they hold: MISC from the sorted pairs plus
+``SpaceAfter=No`` from adjacent byte spans, FEATS regrouped from the morph
+annotations, empty nodes from ``ud_empty_node`` and the enhanced tokenization,
+multiword ranges from the alignment or from shared spans, and comments from
+the expression's fields. The result's
+:attr:`~lairs.conllu.model.ConlluSentence.lossy` then names the fields that
+were reconstructed: ``comments``, ``misc``, ``feats``, ``empty_nodes``,
+``multiword_tokens``, and ``deps``, as they apply, plus ``carriers`` when a
+sentence declares residual carriers that are missing.
 
 Seams for other producers
 -------------------------
 The naming of records, uuids, and references (:class:`RecordNaming`), the
 ontology references and FEATS normalisation (:class:`OntologyResolver`), the
 ``createdAt`` stamp, languages, source method, corpus reference, and split are
-all parameters of :class:`Projector`, with neutral defaults. A producer such as
-the Layers UD importer supplies its own naming and an ontology resolver backed
-by its registry, and gets the same records it builds today plus the carriers.
+all parameters of :class:`Projector`, with neutral defaults.
 """
 
 from __future__ import annotations
@@ -722,8 +716,8 @@ class Projector:
     tool : str, optional
         The ``metadata.tool`` of the multiword-token alignment.
     carriers : bool, optional
-        Whether to add the lossless carriers (true by default). Without them
-        the output is exactly the published shape.
+        Whether to add residual carriers for input the record shape cannot
+        hold (true by default). Valid UD never needs them.
     """
 
     def __init__(  # noqa: PLR0913  (each projection seam is one keyword)
@@ -856,7 +850,7 @@ class Projector:
         metadata: dict[str, str | None],
         parent: str | None,
     ) -> list[ProjectedRecord]:
-        """Build one sentence's records: the published shape plus carriers."""
+        """Build one sentence's records, with residual carriers when needed."""
         shape = _Shape(self, sentence, ordinal, metadata, parent)
         records = shape.published()
         if not self.carriers:
@@ -2190,7 +2184,7 @@ def sentence_from_json(
     opened : collections.abc.Sequence of JsonObject, optional
         The document and paragraph expressions this sentence opens, outermost
         first. Used only to restore ``# newdoc`` and ``# newpar`` comments when
-        the comment carriers are absent.
+        the verbatim comment block is absent.
 
     Returns
     -------

@@ -5,8 +5,8 @@ text and Layers records through :mod:`lairs.conllu`: the exact text parser,
 and the one projection the Layers UD importer's published shape is defined
 by. Decoding covers every column of every row (words, multiword ranges, and
 empty nodes, DEPS and MISC included), all sentence comments in order, and the
-``# newdoc``/``# newpar`` structure. The records are the published shape plus
-the lossless carriers documented in :mod:`lairs.conllu.projection`, so for
+``# newdoc``/``# newpar`` structure. The records are in the shape the Layers
+UD importer publishes, documented in :mod:`lairs.conllu.projection`, so for
 well-formed input ``encode(decode(text).records) == text`` byte for byte (up
 to the framing normalisation :mod:`lairs.conllu.text` documents).
 
@@ -239,7 +239,7 @@ class UdConlluIso(dx.Iso[ConlluSentence, CorpusFragment]):
     """An :class:`~didactic.api.Iso` between one sentence and its fragment.
 
     ``backward(forward(sentence)) == sentence`` for every well-formed
-    sentence, since the fragment carries the lossless carriers.
+    sentence, since the record shape holds every column and comment.
     """
 
     @override
