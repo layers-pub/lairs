@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -17,6 +18,8 @@ from lairs.store import repository
 from lairs.store.repository import RecordDiff, Repository, Workspace
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from lairs._types import JsonValue
 
 
@@ -101,7 +104,12 @@ def _tamper(path: Path, old: bytes, new: bytes) -> None:
 
 
 def test_exports() -> None:
-    assert set(repository.__all__) == {"RecordDiff", "Repository", "Workspace"}
+    assert set(repository.__all__) == {
+        "STORE_LAYOUT_VERSION",
+        "RecordDiff",
+        "Repository",
+        "Workspace",
+    }
 
 
 def test_record_diff_defaults_are_empty() -> None:
@@ -485,3 +493,522 @@ def test_keyed_committed_data_must_contain_one_record() -> None:
     }
     with pytest.raises(panproto.VcsError, match="expected 1"):
         repository._keyed_record(dataset)
+
+
+# bulk staging and the packed layout ---------------------------------------------
+
+_PACKED_FIXTURE = _FIXTURES_DIR / "panproto-0.74.3-packed-repository"
+_LAYER_URI = "at://did:plc:abc/pub.layers.annotation.annotationLayer/l1"
+# a record as a PDS serves it: the wire ``$type``, explicit nulls, nested empty
+# lists, non-ascii text, an integer beyond 64 bits, floats, and a dag-json link.
+_RAW_LAYER: dict[str, JsonValue] = {
+    "$type": "pub.layers.annotation.annotationLayer",
+    "kind": "token-tag",
+    "metadata": None,
+    "annotations": [
+        {"label": "NOUN", "childIds": [], "features": {"entries": []}},
+        {"label": "VERB", "text": "\u00e7al\u0131\u015ft\u0131 🎉", "confidence": None},
+    ],
+    "rank": 18446744073709551617,
+    "negative": -(2**70),
+    "scores": [0.1, 1.0, -2.5e-08, 1e300],
+    "source": {"$link": "bafyreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"},
+    "zebra": "keys stay in the order given, not sorted",
+    "alpha": {"nested": [[], {}, [None]]},
+}
+_PACKED_HISTORY: tuple[dict[str, JsonValue], ...] = (
+    {
+        "at://did:plc:abc/pub.layers.expression.expression/e1": {"text": "café"},
+        "at://did:plc:abc/pub.layers.expression.expression/e2": {"text": "keep"},
+    },
+    {
+        "at://did:plc:abc/pub.layers.annotation.annotationLayer/l1": {
+            "$type": "pub.layers.annotation.annotationLayer",
+            "kind": "token-tag",
+            "metadata": None,
+            "annotations": [
+                {"label": "NOUN", "childIds": [], "features": {"entries": []}},
+                {
+                    "label": "VERB",
+                    "text": "\u00e7al\u0131\u015ft\u0131",
+                    "confidence": None,
+                },
+            ],
+            "rank": 18446744073709551617,
+            "scores": [0.1, 1.0, -2.5e-08],
+            "source": {
+                "$link": "bafyreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy",
+            },
+        },
+        "at://did:plc:abc/pub.layers.annotation.annotationLayer/l2": {
+            "$type": "pub.layers.annotation.annotationLayer",
+            "kind": "span",
+            "annotations": [],
+        },
+        "at://did:plc:abc/pub.layers.expression.expression/e1": {"text": "café"},
+        "at://did:plc:abc/pub.layers.expression.expression/e2": {"text": "keep"},
+        "at://did:plc:abc/pub.layers.expression.expression/e3": {"text": "packed"},
+    },
+)
+
+
+class _Other(dx.Model):
+    """A second throwaway record type, for interleaving."""
+
+    n: int
+    label: str | None = None
+
+
+def _uri(collection: str, index: int) -> str:
+    return f"at://did:plc:abc/{collection}/r{index:05d}"
+
+
+def _expr_records(count: int) -> list[tuple[str, dx.Model]]:
+    return [
+        (_uri("pub.layers.expression.expression", i), _Expr(text=f"t{i} é"))
+        for i in range(count)
+    ]
+
+
+def _mixed_records(count: int) -> list[tuple[str, dx.Model]]:
+    records: list[tuple[str, dx.Model]] = []
+    for i in range(count):
+        if i % 2:
+            records.append((_uri("pub.layers.media.media", i), _Other(n=i)))
+        else:
+            records.append(
+                (_uri("pub.layers.expression.expression", i), _Expr(text=f"t{i}")),
+            )
+    return records
+
+
+class _CallCounter:
+    """Count calls through a wrapped didactic repository method."""
+
+    def __init__(self, name: str) -> None:
+        self.calls = 0
+        self._wrapped = getattr(dx.Repository, name)
+
+    def __call__(
+        self,
+        repo: dx.Repository,
+        *args: str | Path | type[dx.Model],
+        **kwargs: str | None,
+    ) -> None:
+        self.calls += 1
+        self._wrapped(repo, *args, **kwargs)
+
+
+def _count(monkeypatch: pytest.MonkeyPatch, name: str) -> _CallCounter:
+    # didactic's repository has slots, so the method is wrapped on the class;
+    # a counting function (not a callable instance) binds as a method.
+    counter = _CallCounter(name)
+
+    def counted(
+        repo: dx.Repository,
+        *args: str | Path | type[dx.Model],
+        **kwargs: str | None,
+    ) -> None:
+        counter(repo, *args, **kwargs)
+
+    monkeypatch.setattr(dx.Repository, name, counted)
+    return counter
+
+
+def test_save_many_reads_back_as_save_does(tmp_path: Path) -> None:
+    records = _mixed_records(20)
+    records.append(
+        (
+            _JUDGMENT_URI,
+            Judgment(
+                item=ObjectRef(recordRef=_EXPR_URI),
+                continuousValue=DecimalValue(coefficient=73, exponent=-2),
+            ),
+        ),
+    )
+    single = Repository.init(tmp_path / "single")
+    for uri, model in records:
+        single.save(uri, model)
+    bulk = Repository.init(tmp_path / "bulk")
+    assert bulk.save_many(records) == len(records)
+    single_content = single.content_at(single.commit("per record"))
+    bulk_content = bulk.content_at(bulk.commit("packed"))
+    assert bulk_content == single_content
+    assert json.dumps(bulk_content, sort_keys=True) == json.dumps(
+        single_content,
+        sort_keys=True,
+    )
+    assert bulk.staged_uris() == single.staged_uris()
+
+
+def test_save_many_raw_is_lossless(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    assert repo.save_many_raw([(_LAYER_URI, _RAW_LAYER)]) == 1
+    revision = repo.commit("raw snapshot")
+    for reader in (repo, Repository.open(tmp_path / "repo")):
+        stored = reader.content_at(revision)[_LAYER_URI]
+        # same keys in the same order, same nulls, same numbers and types.
+        assert json.dumps(stored, ensure_ascii=False) == json.dumps(
+            _RAW_LAYER,
+            ensure_ascii=False,
+        )
+        assert stored == _RAW_LAYER
+        assert isinstance(stored, dict)
+        assert isinstance(stored["rank"], int)
+        assert reader.load_raw(_LAYER_URI) == _RAW_LAYER
+
+
+def test_per_record_path_coerces_integers_beyond_64_bits(tmp_path: Path) -> None:
+    # documents the one known divergence between the layouts: panproto's
+    # schema-bound path turns an integer outside the 64-bit range into a float,
+    # while the packed layout keeps it exact.
+    class _Big(dx.Model):
+        n: int
+
+    repo = Repository.init(tmp_path / "repo")
+    repo.save(_EXPR_URI, _Big(n=2**64 - 1))
+    repo.save_many([(_MEDIA_URI, _Big(n=2**64 - 1))])
+    content = repo.content_at(repo.commit("big"))
+    assert content[_EXPR_URI] == {"n": float(2**64 - 1)}
+    assert content[_MEDIA_URI] == {"n": 2**64 - 1}
+
+
+def test_load_validates_a_raw_record_without_its_wire_type(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    raw: dict[str, JsonValue] = {"$type": "pub.layers.expression.expression"}
+    raw["text"] = "hi"
+    repo.save_many_raw([(_EXPR_URI, raw)])
+    assert repo.load(_EXPR_URI, _Expr) == _Expr(text="hi")
+    assert repo.load_raw(_EXPR_URI) == raw
+
+
+def test_save_many_raw_stores_unknown_collections(tmp_path: Path) -> None:
+    uri = "at://did:plc:abc/com.example.unknown/x"
+    repo = Repository.init(tmp_path / "repo")
+    repo.save_many_raw([(uri, {"$type": "com.example.unknown", "v": [1, 2]})])
+    assert repo.content_at(repo.commit("unknown")) == {
+        uri: {"$type": "com.example.unknown", "v": [1, 2]},
+    }
+
+
+def test_save_many_raw_rejects_non_finite_floats(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    with pytest.raises(ValueError, match="Out of range float"):
+        repo.save_many_raw([(_EXPR_URI, {"x": float("nan")})])
+
+
+def test_save_many_consumes_a_lazy_iterable(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    consumed: list[int] = []
+
+    def records() -> Iterator[tuple[str, dx.Model]]:
+        for i in range(10):
+            consumed.append(i)
+            yield _uri("pub.layers.expression.expression", i), _Expr(text=str(i))
+
+    generator = records()
+    assert consumed == []
+    assert repo.save_many(generator, batch_size=3) == 10
+    assert consumed == list(range(10))
+    assert len(repo.content_at(repo.commit("lazy"))) == 10
+
+
+def test_save_many_called_repeatedly_before_one_commit(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    first = _expr_records(5)
+    second = [(_uri("pub.layers.media.media", i), _Other(n=i)) for i in range(4)]
+    assert repo.save_many(first) == 5
+    assert repo.save_many(second) == 4
+    assert repo.save_many_raw([(_LAYER_URI, _RAW_LAYER)]) == 1
+    revision = repo.commit("one commit")
+    assert len(repo.log()) == 1
+    content = repo.content_at(revision)
+    assert len(content) == 10
+    assert content[second[2][0]] == {"n": 2, "label": None}
+
+
+def test_save_many_interleaves_model_types(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    records = _mixed_records(9)
+    repo.save_many(records, batch_size=2)
+    content = repo.content_at(repo.commit("mixed types"))
+    assert content == {uri: json.loads(m.model_dump_json()) for uri, m in records}
+    for uri, model in records:
+        assert repo.load(uri, type(model)) == model
+
+
+def test_save_many_keeps_the_later_value_of_a_repeated_uri(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    records: list[tuple[str, dx.Model]] = [
+        (_EXPR_URI, _Expr(text="first")),
+        (_MEDIA_URI, _Expr(text="other")),
+        (_EXPR_URI, _Expr(text="second")),
+    ]
+    repo.save_many(records, batch_size=2)
+    assert repo.load(_EXPR_URI, _Expr) == _Expr(text="second")
+    assert repo.content_at(repo.commit("dup"))[_EXPR_URI] == {"text": "second"}
+
+
+def test_save_many_of_nothing_stages_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    add_data = _count(monkeypatch, "add_data")
+    assert repo.save_many([]) == 0
+    assert repo.save_many_raw(iter(())) == 0
+    assert add_data.calls == 0
+    assert repo.staged_uris() == []
+    assert not repo.inner.has_staged()
+
+
+def test_save_many_rejects_a_non_positive_batch_size(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    with pytest.raises(ValueError, match="batch_size must be positive"):
+        repo.save_many(_expr_records(1), batch_size=0)
+
+
+def test_save_many_stages_what_it_consumed_before_an_error(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+
+    def records() -> Iterator[tuple[str, dx.Model]]:
+        yield from _expr_records(3)
+        msg = "source failed"
+        raise RuntimeError(msg)
+
+    with pytest.raises(RuntimeError, match="source failed"):
+        repo.save_many(records())
+    assert len(repo.staged_uris()) == 3
+    assert len(repo.content_at(repo.commit("partial"))) == 3
+
+
+def test_native_staging_calls_scale_with_packs_not_records(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # the per-record path made one native staging call per record, each costing
+    # more as the staged set grew. the packed path must make one call per pack
+    # and stage each schema once, however many records it is given.
+    for count, expected_packs in ((200, 2), (2000, 16)):
+        repo = Repository.init(tmp_path / f"repo-{count}")
+        add_data = _count(monkeypatch, "add_data")
+        add = _count(monkeypatch, "add")
+        repo.save_many(_mixed_records(count), batch_size=128)
+        assert add_data.calls == expected_packs
+        assert add.calls == 1
+
+
+def test_save_stages_an_unchanged_schema_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    add = _count(monkeypatch, "add")
+    for uri, model in _expr_records(5):
+        repo.save(uri, model)
+    assert add.calls == 1
+    repo.save(_MEDIA_URI, _Other(n=1))
+    repo.save(_EXPR_URI, _Expr(text="back"))
+    assert add.calls == 3
+
+
+def test_save_journals_the_index_and_commit_compacts_it(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    for uri, model in _expr_records(3):
+        repo.save(uri, model)
+    repo.save_many(_expr_records(5)[3:])
+    journal = repo.path / "index.log"
+    assert journal.exists()
+    assert not (repo.path / "index.json").exists()
+    repo.commit("snapshot")
+    assert not journal.exists()
+    index = json.loads((repo.path / "index.json").read_text(encoding="utf-8"))
+    assert sorted(index) == [uri for uri, _ in _expr_records(5)]
+    assert Repository.open(repo.path).staged_uris() == sorted(index)
+
+
+def test_index_journal_skips_a_torn_last_line(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    repo.save(_EXPR_URI, _Expr(text="kept"))
+    with (repo.path / "index.log").open("a", encoding="utf-8") as journal:
+        journal.write('{"uri": "at://did:plc:abc/c/torn", "lo')
+    reopened = Repository.open(repo.path)
+    assert reopened.staged_uris() == [_EXPR_URI]
+
+
+def test_bulk_writes_survive_reopen_before_and_after_commit(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    records = _mixed_records(6)
+    repo.save_many(records)
+    repo.save_many_raw([(_LAYER_URI, _RAW_LAYER)])
+    expected_uris = sorted([uri for uri, _ in records] + [_LAYER_URI])
+    reopened = Repository.open(tmp_path / "repo")
+    assert reopened.staged_uris() == expected_uris
+    assert reopened.load(records[1][0], _Other) == records[1][1]
+    revision = reopened.commit("after reopen")
+    again = Repository.open(tmp_path / "repo")
+    assert again.staged_uris() == expected_uris
+    assert again.load_raw(_LAYER_URI) == _RAW_LAYER
+    assert again.load(records[0][0], _Expr) == records[0][1]
+    assert len(again.content_at(revision)) == len(expected_uris)
+    assert Workspace(again).uris_of("pub.layers.media.media") == sorted(
+        uri for uri, _ in records if "media" in uri
+    )
+
+
+def test_mixed_layout_history_updates_and_forgets_across_layouts(
+    tmp_path: Path,
+) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    per_record = "at://did:plc:abc/pub.layers.expression.expression/p"
+    packed = "at://did:plc:abc/pub.layers.expression.expression/k"
+    doomed_per_record = "at://did:plc:abc/pub.layers.expression.expression/dp"
+    doomed_packed = "at://did:plc:abc/pub.layers.expression.expression/dk"
+    repo.save(per_record, _Expr(text="per-record v1"))
+    repo.save(doomed_per_record, _Expr(text="doomed"))
+    base = repo.commit("per-record base")
+    repo.save_many(
+        [(packed, _Expr(text="packed v1")), (doomed_packed, _Expr(text="doomed"))],
+    )
+    packed_rev = repo.commit("packed")
+    # update each record through the other layout, and forget one of each.
+    repo.save_many([(per_record, _Expr(text="per-record v2 packed"))])
+    repo.save(packed, _Expr(text="packed v2 per-record"))
+    repo.forget(doomed_per_record)
+    repo.forget(doomed_packed)
+    head = repo.commit("cross-layout edits")
+    repo.tag("v1", revision=packed_rev)
+
+    assert repo.content_at(head) == {
+        per_record: {"text": "per-record v2 packed"},
+        packed: {"text": "packed v2 per-record"},
+    }
+    assert repo.content_at("v1") == {
+        per_record: {"text": "per-record v1"},
+        doomed_per_record: {"text": "doomed"},
+        packed: {"text": "packed v1"},
+        doomed_packed: {"text": "doomed"},
+    }
+    assert repo.diff(base, packed_rev) == RecordDiff(
+        added=tuple(sorted((packed, doomed_packed))),
+    )
+    assert repo.diff("v1", head) == RecordDiff(
+        removed=tuple(sorted((doomed_per_record, doomed_packed))),
+        changed=tuple(sorted((per_record, packed))),
+    )
+    assert repo.staged_uris() == sorted((per_record, packed))
+    assert repo.load(per_record, _Expr) == _Expr(text="per-record v2 packed")
+    assert repo.load(packed, _Expr) == _Expr(text="packed v2 per-record")
+    assert repo.load(doomed_packed, _Expr) is None
+    # a packed record written again in packed form after a per-record write.
+    repo.save_many([(packed, _Expr(text="packed v3"))])
+    assert repo.content_at(repo.commit("v3"))[packed] == {"text": "packed v3"}
+
+
+def test_forget_of_a_packed_record_before_commit(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    repo.save(_MEDIA_URI, _Expr(text="anchor"))
+    repo.commit("base")
+    repo.save_many([(_EXPR_URI, _Expr(text="short-lived"))])
+    repo.forget(_EXPR_URI)
+    assert repo.load_raw(_EXPR_URI) is None
+    assert repo.content_at(repo.commit("gone")) == {_MEDIA_URI: {"text": "anchor"}}
+
+
+def test_init_marks_the_store_layout(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    marker = json.loads((repo.path / "layout.json").read_text(encoding="utf-8"))
+    assert marker == {"layout": repository.STORE_LAYOUT_VERSION, "store": "lairs"}
+    assert repo.layout_version() == repository.STORE_LAYOUT_VERSION == 2
+
+
+def test_unmarked_repository_is_layout_one_until_written(tmp_path: Path) -> None:
+    repo, (_, _, deleted) = _open_fixture("0.74.3", tmp_path)
+    assert repo.layout_version() == 1
+    repo.save_many([(_EXPR_URI, _Expr(text="upgraded"))])
+    assert repo.layout_version() == 2
+    head = repo.commit("packed over a layout-1 history")
+    assert repo.content_at(deleted) == {}
+    assert repo.content_at(head) == {_EXPR_URI: {"text": "upgraded"}}
+
+
+def test_open_refuses_an_unknown_store_layout(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    (repo.path / "layout.json").write_text('{"layout": 3}', encoding="utf-8")
+    with pytest.raises(panproto.VcsError, match="store layout 3"):
+        Repository.open(repo.path)
+
+
+def test_open_refuses_a_malformed_layout_marker(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    (repo.path / "layout.json").write_text('{"layout": "2"}', encoding="utf-8")
+    with pytest.raises(panproto.VcsError, match="does not name a store layout"):
+        Repository.open(repo.path)
+
+
+def test_content_at_refuses_a_pack_of_an_unknown_layout(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    repo.save_many([(_EXPR_URI, _Expr(text="known"))])
+    repo.commit("known layout")
+    future = tmp_path / "future.json"
+    future.write_text('{"layout": 3, "payload": "?"}', encoding="utf-8")
+    repo.inner.add_data(future, key="lairs:pack:3:pub.layers.expression:0")
+    revision = repo.commit("future layout")
+    with pytest.raises(panproto.VcsError, match="store layout 3"):
+        repo.content_at(revision)
+
+
+def test_packed_fixture_reads_back_pinned_values(tmp_path: Path) -> None:
+    # a store layout 2 repository committed by this release: a per-record base,
+    # a packed commit of raw and model records, and cross-layout edits. the
+    # pinned values guard the packed reader against silent drift.
+    target = tmp_path / "packed"
+    shutil.copytree(_PACKED_FIXTURE, target)
+    metadata = json.loads((target / "fixture.json").read_text(encoding="utf-8"))
+    base, packed, mixed = (str(metadata[k]) for k in ("base", "packed", "mixed"))
+    repo = Repository.open(target)
+
+    assert repo.layout_version() == 2
+    assert [entry["id"] for entry in repo.log()] == [mixed, packed, base]
+    assert repo.content_at(base) == _PACKED_HISTORY[0]
+    assert repo.content_at(packed) == _PACKED_HISTORY[1]
+    expected_mixed = dict(_PACKED_HISTORY[1])
+    del expected_mixed["at://did:plc:abc/pub.layers.annotation.annotationLayer/l2"]
+    expected_mixed["at://did:plc:abc/pub.layers.expression.expression/e1"] = {
+        "text": "naïve",
+    }
+    expected_mixed["at://did:plc:abc/pub.layers.expression.expression/e3"] = {
+        "text": "per-record over packed",
+    }
+    assert repo.content_at(mixed) == expected_mixed
+    layer = repo.content_at(packed)[_LAYER_URI]
+    assert json.dumps(layer, ensure_ascii=False) == json.dumps(
+        _PACKED_HISTORY[1][_LAYER_URI],
+        ensure_ascii=False,
+    )
+    assert repo.diff(packed, mixed) == RecordDiff(
+        removed=("at://did:plc:abc/pub.layers.annotation.annotationLayer/l2",),
+        changed=(
+            "at://did:plc:abc/pub.layers.expression.expression/e1",
+            "at://did:plc:abc/pub.layers.expression.expression/e3",
+        ),
+    )
+    assert repo.staged_uris() == sorted(expected_mixed)
+    assert repo.load_raw(_LAYER_URI) == _PACKED_HISTORY[1][_LAYER_URI]
+
+
+def test_content_at_of_a_large_packed_snapshot_is_linear(tmp_path: Path) -> None:
+    # reading folds each pack once, so ten times the records costs about ten
+    # times as long. the bound is generous, so only a quadratic read fails it.
+    timings: list[float] = []
+    for count in (500, 5000):
+        repo = Repository.init(tmp_path / f"repo-{count}")
+        repo.save_many_raw(
+            (_uri("pub.layers.expression.expression", i), {"text": f"t{i}"})
+            for i in range(count)
+        )
+        revision = repo.commit("snapshot")
+        start = time.perf_counter()
+        assert len(repo.content_at(revision)) == count
+        timings.append(max(time.perf_counter() - start, 1e-3))
+    assert timings[1] < timings[0] * 40

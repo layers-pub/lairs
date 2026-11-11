@@ -21,13 +21,22 @@ def test_exports() -> None:
         "ConlluIso",
         "CorpusFragment",
         "FragmentRecord",
+        "UdConlluCodec",
+        "UdConlluIso",
     }
 
 
 def test_reference_codecs_reachable_from_package() -> None:
     # every public codec and Iso is importable from the package surface, not
     # only from the private-looking submodules.
-    for name in ("BratCodec", "BratIso", "ConlluCodec", "ConlluIso"):
+    for name in (
+        "BratCodec",
+        "BratIso",
+        "ConlluCodec",
+        "ConlluIso",
+        "UdConlluCodec",
+        "UdConlluIso",
+    ):
         assert hasattr(codecs, name)
 
 

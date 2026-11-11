@@ -1,0 +1,30 @@
+# newdoc
+# newpar
+# archive = hand-built
+# sent_id = edge-1
+# text = Vámonos al mar.
+# translit =
+# Tectogrammatical annotation available.
+# orig_file_sentence edge#1
+# media = first
+# media = second
+1-2	Vámonos	_	_	_	_	_	_	_	_
+1	Vamos	ir	VERB	V	Mood=Imp|Number=Plur|Person=1	0	root	0:root	_
+2	nos	nosotros	PRON	P	Case=Acc,Dat|Number=Plur|Person=1	1	obj	1:obj	_
+3-4	al	_	_	_	Typo=Yes	_	_	_	MSeg=a-l|Gloss=to.the
+3	a	a	ADP	S	_	5	case	5:case	_
+4	el	el	DET	D	Definite=Def|Gender=Masc|Number=Sing	5	det	5:det	_
+5	mar	mar	NOUN	N	Gender=Masc|Number=Sing	1	obl	1:obl:a	SpaceAfter=No
+6	.	.	PUNCT	F	_	1	punct	1:punct	SpaceAfter=No
+
+# sent_id = edge-2
+# text = Hà Nội lớn
+1	Hà Nội	Hà Nội	PROPN	Np	_	2	nsubj	2:nsubj|2.1:nsubj	Translit=Ha Noi|Gloss=a=b|Lang=_|ZZ=1|AA=2|AA=3|bare|_
+2	lớn	lớn	ADJ	A	Degree=Comp|Polarity=Aff	0	root	0:root	SpaceAfter=No
+2.1	lớn	lớn	ADJ	A	Degree=Pos	_	_	2:conj	CopiedFrom=2|bare
+
+# newpar id = edge-p2
+# sent_id = edge-3
+# text = Ok
+1	Ok	ok	INTJ	I	_	0	root	0:root	SpaceAfter=No
+

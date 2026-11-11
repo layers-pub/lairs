@@ -33,6 +33,11 @@ governors to one token) is not decoded: the relation layer models exactly one
 head per token. Multiword-token range rows (``1-2``) and empty-node rows
 (``1.1``) do not become tokens. Multiword ranges are retained as metadata on
 their component words, while empty nodes are skipped.
+
+For every column, empty nodes, MISC, all comments, and records in the shape
+the Layers UD importer publishes, use the full-fidelity
+:class:`~lairs.integrations.codecs.conllu_ud.UdConlluCodec` (``conllu-ud``)
+instead; this codec's output is kept unchanged for compatibility.
 """
 
 from __future__ import annotations

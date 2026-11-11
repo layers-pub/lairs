@@ -1,7 +1,8 @@
 # Codecs: external annotation formats
 
 The `Codec` port converts external annotation formats to Layers records and
-back. lairs includes CoNLL-U and brat codecs, both of which operate through a
+back. lairs includes two CoNLL-U codecs (the lossy `conllu` and the
+full-fidelity `conllu-ud`) and a brat codec, all of which operate through a
 `CorpusFragment` and provide round-trip `Iso` fixtures.
 
 A codec is a bidirectional converter bound to the `Codec` protocol in
@@ -74,6 +75,47 @@ fragment = iso.forward(parsed_sentence)
 sentence = iso.backward(fragment)        # backward(forward(x)) == x on the subset
 ```
 
+## CoNLL-U, full fidelity
+
+`UdConlluCodec` (`conllu-ud`) keeps every column of every row and every
+comment. It is built on [`lairs.conllu`](conllu.md), and its records are in
+[the shape the Layers UD importer publishes](conllu.md#the-record-shape), so a
+treebank decoded locally and the same treebank read from the public PDS are
+interchangeable. For well-formed input the round trip is byte-exact:
+
+```python
+from lairs.integrations.codecs import UdConlluCodec
+
+codec = UdConlluCodec()
+fragment = codec.decode(text)
+assert codec.encode(fragment.records) == text
+```
+
+Decoding covers:
+
+- words, multiword ranges (`1-2`), and empty nodes (`3.1`), with all ten
+  columns of each;
+- DEPS as an `enhanced-dependency` layer over a tokenization that includes the
+  empty nodes;
+- MISC as published pairs plus the exact column, bare items and duplicates
+  included;
+- every sentence comment in order, and the `# newdoc`/`# newpar` structure as
+  document and paragraph expressions.
+
+Each `FragmentRecord.local_id` is the record's AT-URI, so a decoded fragment is
+directly a record mapping. `codec.sentences(records)` yields typed
+`ConlluSentence` values from fragment records, and `codec.encode_sentences`
+serialises typed sentences, for instance the ones `lairs.conllu.sentences`
+reads from a corpus. `decode_sentences` projects typed sentences. Pass
+`naming`, `ontology`, `created_at`, `languages`, `corpus_ref`, and `split` to
+the constructor to control how records are named and stamped.
+
+The codec needs no extra: its parser is standard-library only.
+`UdConlluIso` is the `Iso` between one sentence and its fragment.
+
+The original `ConlluCodec` is unchanged. Prefer `conllu-ud` when every column
+must survive or when local records should match the published ones.
+
 ## brat
 
 `BratCodec` parses brat standoff directly, with no third-party dependency even
@@ -98,7 +140,8 @@ Because brat is plain text, the whole codec works without any extra installed.
 
 ## Round-trip laws
 
-Each codec ships an `Iso` whose round-trip law fixtures verify
+`UdConlluIso` satisfies `backward(forward(x)) == x` for every well-formed
+sentence. Each of the other codecs ships an `Iso` whose round-trip law fixtures verify
 `backward(forward(x)) == x` on the supported subset. The CoNLL-U subset is one
 tokenization with `UPOS`/`XPOS`/lemma tags, morphological features, and a
 projective dependency tree. The brat subset is text-bound entities, binary
@@ -112,10 +155,13 @@ from.
 | Codec | Extra | Works without the extra |
 |---|---|---|
 | `conllu` | `lairs[conllu]` (the `conllu` library) | `ConlluIso` only. `ConlluCodec.decode`/`.encode` raise `ModuleNotFoundError` |
+| `conllu-ud` | none required | the full codec |
 | `brat` | none required | the full codec |
 
 ## See also
 
+- [Universal Dependencies and CoNLL-U](conllu.md) for the typed reader and the
+  record shape.
 - [Dataset API](dataset-api.md) for working with the records a codec produces.
 - [Authoring](authoring.md) for building records and layers directly.
 - [Knowledge bases](knowledge-bases.md) for grounding decoded labels.

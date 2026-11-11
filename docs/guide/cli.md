@@ -7,7 +7,8 @@ adds no command-line dependency.
 The subcommands fall into four families:
 
 - maintenance: `vendor`, `gen` (and `gen --check`)
-- corpora: `pull`, `materialize`, `publish`, `inspect`
+- corpora: `pull`, `pull-dataset`, `verify-pin`, `materialize`, `publish`,
+  `inspect`
 - judgment studies: `judgments`
 - discovery: `datasets`, `toc`, `search`, `index` (with `build`, `update`,
   `search`, `diff`)
@@ -69,6 +70,80 @@ The DID is positional, and `--endpoint` and `--into` are required. Every Layers
 collection of the account is read and staged into the Repository under its
 AT-URI. The snapshot is then committed and the commit reported. When nothing is
 pulled, no commit is made.
+
+## `pull-dataset`
+
+Pull every account a corpus depends on into one local Repository, and write a
+pin that fixes exactly what was pulled.
+
+```bash
+lairs pull-dataset at://corpus.pud.tur.ud.repo.layers.pub/pub.layers.corpus.corpus/<rkey> \
+  --into ./turkish-pud --with-annotations --tag ud-2.14
+```
+
+The corpus AT-URI is positional and `--into` is required. `--endpoint` defaults
+to the default configured source (`https://repo.layers.pub`). The authority of
+the URI may be a DID or a handle.
+
+A published dataset is spread over several accounts, one per record type, so
+this command resolves them for you:
+
+- the corpus account, which holds the corpus record and its memberships;
+- the base account under the same handle stem, which holds the dataset's
+  catalogue record;
+- every account the memberships and expressions cite for an expression or media
+  record;
+- with `--with-annotations`, the dataset's other record-type accounts
+  (`segmentation`, `annotation`, `alignment`, and the rest), found by the
+  `<record-type>.<stem>` handle convention. Annotations point at expressions,
+  so they cannot be reached from the corpus by reference;
+- with `--with-references`, every other account a pulled record cites, such as
+  ontologies and eprints. Without it those accounts are counted in the summary
+  and listed in the pin under `external_refs`.
+
+Each account is fetched as one repository archive, streamed to disk, and read
+back one record at a time, so memory use does not grow with the size of the
+account. Records are stored exactly as the PDS serves them, and each account is
+committed as its own snapshot.
+
+The pull is resumable. The pin is rewritten after every account, so running the
+same command again continues an interrupted pull: an account whose pinned commit
+is still its current commit is not fetched again. The same rerun picks up
+upstream changes, since an account that has moved is pulled again and records
+deleted upstream are removed from the new snapshot. Earlier revisions stay
+readable. `--refresh` fetches every account regardless.
+
+Two files are written next to the records:
+
+- `lairs-pin.json`: the corpus AT-URI, the PDS endpoint, each account's DID,
+  handle, signed commit, revision, record counts, and record digest, the local
+  Repository revision, and a content hash over the whole dataset. Keep a copy
+  with the analysis that used the data.
+- `lairs-pin.records.tsv.gz`: one `AT-URI <tab> CID` line per record.
+
+`--tag` names the completed snapshot in the Repository.
+
+## `verify-pin`
+
+Check a pulled dataset against its pin.
+
+```bash
+lairs verify-pin ./turkish-pud
+lairs verify-pin ./turkish-pud --pin ./analysis/lairs-pin.json --remote
+```
+
+The check needs no network access. The CID of every record is recomputed from
+its stored value and compared with the pinned listing, the per-account digests
+and counts, and the content hash, so a pass means the local records are the
+records that were pulled. Mismatches are reported as missing, unexpected, or
+changed AT-URIs. `--pin` checks against a manifest kept elsewhere, for instance
+one committed with an analysis.
+
+`--remote` also asks the PDS for each pinned account's current commit and
+reports the accounts that have moved since the pull. `--endpoint` overrides the
+endpoint the pin records, and `--json` prints the result as JSON. The exit code
+is `0` when the snapshot matches and no checked account has moved, and `1`
+otherwise.
 
 ## `materialize`
 

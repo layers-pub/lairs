@@ -1,0 +1,9 @@
+# sent_id = 002-2
+# sent_transl_ru = У Фомы 3 куницы.
+# sent_transl_en = 
+# text = ꙋ фомѣ ·г҃· кꙋници
+1	ꙋ	у	ADP	_	_	2	case	_	wf="ꙋ"|addr="002:_Внешняя_сторона:1а"|_
+2	фомѣ	Фома	PROPN	_	Case=Gen|Gender=Masc|NameType=Giv|Number=Sing	0	root	_	wf="фомѣ"|addr="002:_Внешняя_сторона:1а"|_
+3	·г҃·	·г҃·	NUM	_	NumForm=Digit|NumType=Card	4	nummod:gov	_	wf="·г҃·"|addr="002:_Внешняя_сторона:1а"|_
+4	кꙋници	куница	NOUN	_	Case=Nom|Gender=Fem|Number=Count	2	nsubj	_	wf="кꙋници"|addr="002:_Внешняя_сторона:2а"|line_id=2а|_
+

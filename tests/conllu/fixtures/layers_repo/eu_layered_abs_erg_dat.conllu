@@ -1,0 +1,10 @@
+# sent_id = test-s74
+# text = Erran iezaion Conchitari, atearen hesteko.
+1	Erran	erran	VERB	_	Aspect=Perf|VerbForm=Part	0	root	_	_
+2	iezaion	ezan	AUX	_	Gender[erg]=Fem|Mood=Imp|Number[abs]=Sing|Number[dat]=Sing|Number[erg]=Sing|Person[abs]=3|Person[dat]=3|Person[erg]=2|Polite[erg]=Infm|VerbForm=Fin	1	aux	_	ReconstructedLemma=Yes
+3	Conchitari	Conchita	PROPN	_	Case=Dat|Definite=Def|Number=Sing	1	iobj	_	SpaceAfter=No
+4	,	,	PUNCT	_	_	6	punct	_	_
+5	atearen	ate	NOUN	_	Animacy=Inan|Case=Abs|Definite=Ind	6	obj	_	_
+6	hesteko	hetsi	VERB	_	Case=Abs|Definite=Ind|VerbForm=Fin	1	xcomp	_	SpaceAfter=No
+7	.	.	PUNCT	_	_	1	punct	_	_
+

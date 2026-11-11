@@ -15,12 +15,20 @@ from lairs._codegen.manifest import load_manifest
 from lairs.atproto import auth
 from lairs.atproto.auth import Session
 from lairs.atproto.identity import IdentityError
-from lairs.atproto.pds import RepoListing
+from lairs.atproto.pds import PdsClient, RepoListing
 from lairs.author.publish import PublishPlan
 from lairs.data.acquisition import Acquisition
 from lairs.data.collection import Collection
 from lairs.data.corpus import Corpus
 from lairs.data.judgment import JudgmentStudy
+from lairs.data.snapshot import (
+    PIN_FILE,
+    AccountDrift,
+    AccountPin,
+    DatasetPin,
+    PinError,
+    PinVerification,
+)
 from lairs.discovery import CardDiff, CrawlReport, SearchHit, SearchQuery
 from lairs.discovery.cards import (
     CardFreshness,
@@ -281,6 +289,241 @@ def test_pull_with_no_records_skips_commit(
     captured = capsys.readouterr()
     assert code == 0
     assert "nothing to commit" in captured.out
+
+
+# pull-dataset and verify-pin ---------------------------------------------------
+
+
+def _pin(*, complete: bool = True, external: tuple[str, ...] = ()) -> DatasetPin:
+    """Build a small pin for the command tests."""
+    return DatasetPin(
+        corpus_uri="at://did:plc:corpus/pub.layers.corpus.corpus/main",
+        endpoint="https://pds.example",
+        complete=complete,
+        accounts=(
+            AccountPin(
+                did="did:plc:corpus",
+                handle="corpus.tb.example",
+                role="corpus",
+                commit="bafycommit",
+                rev="3kaaa",
+                data="bafydata",
+                record_count=2,
+                records_sha256="a" * 64,
+                revision="rev-1",
+            ),
+        ),
+        external_refs=external,
+        record_count=2,
+        content_sha256="b" * 64,
+        revision="rev-1",
+        created_at="2026-11-10T00:00:00+00:00",
+    )
+
+
+def test_pull_dataset_reports_the_pin(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen: dict[str, str | bool] = {}
+
+    def fake_pull(uri: str, **options: Path | str | bool | PdsClient) -> DatasetPin:
+        seen["uri"] = uri
+        for key in ("endpoint", "with_annotations", "with_references", "refresh"):
+            value = options[key]
+            assert isinstance(value, (str, bool))
+            seen[key] = value
+        return _pin(external=("did:plc:onto",))
+
+    monkeypatch.setattr("lairs.data.snapshot.pull_dataset", fake_pull)
+    into = tmp_path / "tb"
+    code = cli.main(
+        [
+            "pull-dataset",
+            "at://did:plc:corpus/pub.layers.corpus.corpus/main",
+            "--into",
+            str(into),
+            "--endpoint",
+            "https://pds.example",
+            "--with-annotations",
+        ],
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert seen == {
+        "uri": "at://did:plc:corpus/pub.layers.corpus.corpus/main",
+        "endpoint": "https://pds.example",
+        "with_annotations": True,
+        "with_references": False,
+        "refresh": False,
+    }
+    assert "pinned 2 record(s) from 1 account(s)" in out
+    assert "b" * 64 in out
+    assert "1 cited account(s) not pulled" in out
+
+
+def test_pull_dataset_defaults_to_the_configured_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    endpoints: list[str] = []
+
+    def fake_pull(_uri: str, **options: Path | str | bool | PdsClient) -> DatasetPin:
+        endpoints.append(str(options["endpoint"]))
+        return _pin()
+
+    monkeypatch.setattr("lairs.data.snapshot.pull_dataset", fake_pull)
+    code = cli.main(["pull-dataset", "at://x/y/z", "--into", str(tmp_path / "tb")])
+    assert code == 0
+    assert endpoints == ["https://repo.layers.pub"]
+
+
+def test_pull_dataset_needs_an_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr("lairs.discovery.default_source", lambda: None)
+    code = cli.main(["pull-dataset", "at://x/y/z", "--into", str(tmp_path / "tb")])
+    assert code == 1
+    assert "no PDS endpoint" in capsys.readouterr().err
+
+
+def test_pull_dataset_reports_a_failure_as_resumable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_pull(_uri: str, **_options: Path | str | bool | PdsClient) -> DatasetPin:
+        msg = "connection reset"
+        raise httpx.ConnectError(msg)
+
+    monkeypatch.setattr("lairs.data.snapshot.pull_dataset", fake_pull)
+    code = cli.main(["pull-dataset", "at://x/y/z", "--into", str(tmp_path / "tb")])
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "connection reset" in err
+    assert "rerun the same command to resume" in err
+
+
+def test_pull_dataset_tags_the_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    into = tmp_path / "tb"
+    repo = _make_repo(into)
+    revision = repo.head()
+    assert revision is not None
+
+    def fake_pull(_uri: str, **_options: Path | str | bool | PdsClient) -> DatasetPin:
+        return _pin().with_(revision=revision)
+
+    monkeypatch.setattr("lairs.data.snapshot.pull_dataset", fake_pull)
+    code = cli.main(
+        ["pull-dataset", "at://x/y/z", "--into", str(into), "--tag", "ud-2.14"],
+    )
+    assert code == 0
+    assert "tagged          ud-2.14" in capsys.readouterr().out
+    assert ("ud-2.14", revision) in Repository.open(into).tags()
+
+
+def _write_pin(directory: Path, pin: DatasetPin) -> Path:
+    """Write a pin manifest into ``directory`` and return its path."""
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / PIN_FILE
+    path.write_text(pin.model_dump_json(), encoding="utf-8")
+    return path
+
+
+def test_verify_pin_passes_and_fails_by_exit_code(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_pin(tmp_path, _pin())
+    outcomes = [
+        PinVerification(ok=True, record_count=2),
+        PinVerification(
+            ok=False,
+            record_count=2,
+            missing=("at://a/b/c",),
+            unexpected=("at://a/b/d",),
+            changed=("at://a/b/e",),
+            problems=("did:plc:corpus: record digest differs from the pin",),
+        ),
+    ]
+
+    def fake_verify(_path: Path, *, pin: DatasetPin) -> PinVerification:
+        assert pin == _pin()
+        return outcomes.pop(0)
+
+    monkeypatch.setattr("lairs.data.snapshot.verify_pin", fake_verify)
+    assert cli.main(["verify-pin", str(tmp_path)]) == 0
+    assert "ok: 2 record(s) checked" in capsys.readouterr().out
+    assert cli.main(["verify-pin", str(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    assert "MISMATCH" in out
+    for expected in ("missing: 1", "unexpected: 1", "changed: 1", "at://a/b/e"):
+        assert expected in out
+    assert "record digest differs" in out
+
+
+def test_verify_pin_reads_an_external_pin_and_checks_the_remote(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    kept = _write_pin(tmp_path / "analysis", _pin())
+    checked: list[DatasetPin] = []
+
+    def fake_verify(_path: Path, *, pin: DatasetPin) -> PinVerification:
+        checked.append(pin)
+        return PinVerification(ok=True, record_count=2)
+
+    drift = AccountDrift(
+        did="did:plc:corpus",
+        handle="corpus.tb.example",
+        pinned_commit="bafycommit",
+        remote_commit="bafynewer",
+        moved=True,
+    )
+    monkeypatch.setattr("lairs.data.snapshot.verify_pin", fake_verify)
+    monkeypatch.setattr("lairs.data.snapshot.check_remote", lambda _pin, _c: (drift,))
+    args = ["verify-pin", str(tmp_path / "store"), "--pin", str(kept), "--remote"]
+    # the snapshot matches, but an account moved upstream, so the check fails.
+    assert cli.main(args) == 1
+    assert "corpus.tb.example: moved upstream" in capsys.readouterr().out
+    assert checked == [_pin()]
+    assert cli.main([*args, "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["verification"]["ok"] is True
+    assert payload["remote"][0]["moved"] is True
+    monkeypatch.setattr(
+        "lairs.data.snapshot.check_remote",
+        lambda _pin, _c: (drift.with_(moved=False, remote_commit="bafycommit"),),
+    )
+    assert cli.main(args) == 0
+    assert "corpus.tb.example: current" in capsys.readouterr().out
+
+
+def test_verify_pin_reports_a_missing_or_unusable_pin(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert cli.main(["verify-pin", str(tmp_path)]) == 1
+    assert f"no {PIN_FILE}" in capsys.readouterr().err
+    _write_pin(tmp_path, _pin(complete=False))
+
+    def fake_verify(_path: Path, *, pin: DatasetPin) -> PinVerification:
+        msg = f"the pin is not complete ({pin.complete})"
+        raise PinError(msg)
+
+    monkeypatch.setattr("lairs.data.snapshot.verify_pin", fake_verify)
+    assert cli.main(["verify-pin", str(tmp_path)]) == 1
+    assert "not complete" in capsys.readouterr().err
 
 
 # publish --------------------------------------------------------------------

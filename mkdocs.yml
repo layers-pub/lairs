@@ -75,6 +75,7 @@ nav:
     - Authoring and publishing: guide/authoring.md
     - The dataset API: guide/dataset-api.md
     - Format codecs: guide/codecs.md
+    - Universal Dependencies: guide/conllu.md
     - Knowledge bases: guide/knowledge-bases.md
     - Exporters: guide/exporters.md
     - Experiment tracking: guide/tracking.md
@@ -102,6 +103,7 @@ nav:
     - Integration ports: reference/ports.md
     - Adapter registry: reference/registry.md
     - Format codecs: reference/codecs.md
+    - CoNLL-U: reference/conllu.md
     - Knowledge bases: reference/kb.md
     - Exporters: reference/exporters.md
     - Experiment tracking: reference/tracking.md

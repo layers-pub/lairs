@@ -94,6 +94,7 @@ lairs = "lairs.cli:main"
 
 [project.entry-points."lairs.codecs"]
 conllu = "lairs.integrations.codecs.conllu:ConlluCodec"
+conllu-ud = "lairs.integrations.codecs.conllu_ud:UdConlluCodec"
 brat = "lairs.integrations.codecs.brat:BratCodec"
 
 [project.entry-points."lairs.exporters"]
