@@ -1300,17 +1300,10 @@ class _Shape:
                     annotation["ontologyTypeRef"] = type_ref
             annotations.append(annotation)
         uuid = self.uuid_enhanced if empty else None
-        if subkind == _SUBKIND_POS and not empty:
-            return self._layer(
-                _TAG_KIND,
-                subkind,
-                "universal-pos",
-                annotations,
-                ontology=self.p.ontology.ontology("pos"),
-            )
-        if not annotations:
-            return None
         if subkind == _SUBKIND_POS:
+            # the words always get a UPOS layer; the empty nodes only when tagged.
+            if empty and not annotations:
+                return None
             return self._layer(
                 _TAG_KIND,
                 subkind,
@@ -1319,6 +1312,8 @@ class _Shape:
                 ontology=self.p.ontology.ontology("pos"),
                 uuid=uuid,
             )
+        if not annotations:
+            return None
         label_set = "language-specific-pos" if subkind == _SUBKIND_XPOS else "lemma"
         return self._layer(_TAG_KIND, subkind, label_set, annotations, uuid=uuid)
 
