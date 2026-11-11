@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Repository.layout_version()` and `STORE_LAYOUT_VERSION` expose it. A
   repository or pack written under a newer layout is refused with
   `panproto.VcsError` instead of being misread.
+- **Dataset-level pull with a verifiable pin.** `lairs pull-dataset <corpus
+  AT-URI> --into <dir>` resolves every account a corpus spans, downloads each
+  account's repository archive once, streams it from disk a record at a time,
+  and stages the raw records in bulk. It writes `lairs-pin.json`, which records
+  each account's commit, each record's CID, and a content hash, and a rerun
+  resumes without refetching accounts that are current. `lairs verify-pin`
+  recomputes every record CID offline from the stored values, and `--remote`
+  reports accounts that have moved since the pin. `load_corpus(source="repo")`
+  reads a pulled snapshot without network access.
 - **Typed, exact CoNLL-U.** The new `lairs.conllu` package models a CoNLL-U
   sentence and its rows (words, multiword ranges, and empty nodes) as typed
   `ConlluSentence` and `ConlluRow` values, with `RowId`, `Feat`, `Dep`, and
