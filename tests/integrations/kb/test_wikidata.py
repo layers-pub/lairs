@@ -136,6 +136,71 @@ def test_resolve_is_cached() -> None:
     assert calls["n"] == 1
 
 
+def test_all_endpoints_follow_temporary_redirects() -> None:
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        paths.append(path)
+        if not path.startswith("/redirected/"):
+            return httpx.Response(307, headers={"Location": f"/redirected{path}"})
+        if path.endswith("/Q42.json"):
+            return httpx.Response(200, json=_ENTITY_DATA)
+        if path.endswith("/api.php"):
+            return httpx.Response(200, json=_SEARCH_RESPONSE)
+        return httpx.Response(200, json=_SPARQL_RESPONSE)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with WikidataKB(client=client) as kb:
+            assert kb.resolve("Q42").label == "Douglas Adams"
+            assert kb.resolve("Q42").label == "Douglas Adams"
+            assert kb.search("Douglas Adams")[0].ref == "Q42"
+            assert kb.neighbors("Q42") == [
+                Edge(source="Q42", relation="P31", target="Q5"),
+            ]
+        assert not client.is_closed
+        assert not client.follow_redirects
+    assert paths == [
+        "/wiki/Special:EntityData/Q42.json",
+        "/redirected/wiki/Special:EntityData/Q42.json",
+        "/w/api.php",
+        "/redirected/w/api.php",
+        "/sparql",
+        "/redirected/sparql",
+    ]
+
+
+def test_resolve_raises_for_redirected_http_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/missing":
+            return httpx.Response(404)
+        return httpx.Response(307, headers={"Location": "/missing"})
+
+    with (
+        _kb(handler) as kb,
+        pytest.raises(httpx.HTTPStatusError) as exc,
+    ):
+        kb.resolve("Q42")
+    assert exc.value.response.status_code == httpx.codes.NOT_FOUND
+    assert exc.value.request.url.path == "/missing"
+
+
+def test_resolve_redirect_loop_respects_client_limit() -> None:
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return httpx.Response(307, headers={"Location": str(request.url)})
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(handler), max_redirects=2) as client,
+        WikidataKB(client=client) as kb,
+        pytest.raises(httpx.TooManyRedirects),
+    ):
+        kb.resolve("Q42")
+    assert len(paths) == 3
+
+
 def test_search_ranks_candidates() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.params["action"] == "wbsearchentities"
