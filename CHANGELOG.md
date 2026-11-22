@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Catalog and acquisition record coverage.** Publishing and pulling now
+  include catalog collections and memberships, acquisition participants, and
+  acquisition sessions. Unchanged records are recognized by CID, local
+  deletions are planned against the PDS, and dependent records follow their
+  references in the write order. The TUI registry includes the same types,
+  with tests checking both registries against the vendored record lexicons.
+
 ## [0.10.2] - 2026-11-22
 
 ### Fixed
