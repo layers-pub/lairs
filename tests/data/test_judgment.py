@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from typing import TYPE_CHECKING
 
 import pyarrow.parquet as pq
@@ -248,6 +248,119 @@ def test_continuous_judgment_loads_and_flattens_losslessly() -> None:
     assert table.column("continuous_value").to_pylist() == ["0.73", None]
     dumped = rows[0].model_dump_json()
     assert rows[0].model_validate_json(dumped).continuous_value == Decimal("0.73")
+
+
+def _study_with_responses(judgments: tuple[Judgment, ...]) -> JudgmentStudy:
+    study = JudgmentStudy.new()
+    study.add_record(
+        _EXPERIMENT,
+        ExperimentDef(name="Slider", taskType="continuous", createdAt=_NOW),
+    )
+    study.add_record(
+        _SET_A,
+        JudgmentSet(
+            agent=AgentRef(id="participant-1"),
+            judgments=judgments,
+            experimentRef=_EXPERIMENT,
+            createdAt=_NOW,
+        ),
+    )
+    return study
+
+
+def test_continuous_distribution_counts_and_summarizes_responses() -> None:
+    study = _study_with_responses(
+        tuple(
+            Judgment(
+                item=ObjectRef(recordRef=_ITEM_1),
+                continuousValue=DecimalValue(coefficient=value, exponent=-2),
+            )
+            for value in (25, 75)
+        ),
+    )
+    distribution = next(iter(study.item_distributions()))
+    assert distribution.count == 2
+    assert distribution.continuous_mean == Decimal("0.5")
+    assert distribution.continuous_minimum == Decimal("0.25")
+    assert distribution.continuous_maximum == Decimal("0.75")
+    assert distribution.mean is None
+    assert distribution.minimum is None
+    assert distribution.maximum is None
+    dumped = distribution.model_dump_json()
+    assert distribution.model_validate_json(dumped) == distribution
+
+
+def test_mixed_distribution_keeps_response_kinds_and_counts_rows_once() -> None:
+    study = _study_with_responses(
+        (
+            _item(_ITEM_1, 2),
+            Judgment(
+                item=ObjectRef(recordRef=_ITEM_1),
+                continuousValue=DecimalValue(coefficient=25, exponent=-2),
+            ),
+            Judgment(
+                item=ObjectRef(recordRef=_ITEM_1),
+                continuousValue=DecimalValue(coefficient=75, exponent=-2),
+                categoricalValue="yes",
+            ),
+            Judgment(item=ObjectRef(recordRef=_ITEM_1), categoricalValue="no"),
+            Judgment(item=ObjectRef(recordRef=_ITEM_1), responseTimeMs=100),
+        ),
+    )
+    distribution = next(iter(study.item_distributions()))
+    assert distribution.count == 5
+    assert (distribution.mean, distribution.minimum, distribution.maximum) == (2, 2, 2)
+    assert distribution.continuous_mean == Decimal("0.5")
+    assert distribution.continuous_minimum == Decimal("0.25")
+    assert distribution.continuous_maximum == Decimal("0.75")
+    assert {label.label: label.count for label in distribution.label_counts} == {
+        "yes": 1,
+        "no": 1,
+    }
+
+
+def test_continuous_mean_rounds_only_after_exact_summation() -> None:
+    study = _study_with_responses(
+        tuple(
+            Judgment(
+                item=ObjectRef(recordRef=_ITEM_1),
+                continuousValue=value,
+            )
+            for value in (
+                DecimalValue(coefficient=1, exponent=28),
+                DecimalValue(coefficient=1, exponent=0),
+                DecimalValue(coefficient=-1, exponent=28),
+            )
+        ),
+    )
+    with localcontext() as context:
+        context.prec = 8
+        distribution = next(iter(study.item_distributions()))
+    assert distribution.continuous_mean == Decimal("0.33333333")
+    assert distribution.continuous_minimum == Decimal("-1e28")
+    assert distribution.continuous_maximum == Decimal("1e28")
+
+
+def test_continuous_distribution_materializes_decimal_text(tmp_path: Path) -> None:
+    study = _study_with_responses(
+        (
+            Judgment(
+                item=ObjectRef(recordRef=_ITEM_1),
+                continuousValue=DecimalValue(
+                    coefficient=123456789012345678901234567890123456789,
+                    exponent=-40,
+                ),
+            ),
+        ),
+    )
+    study.materialize(tmp_path)
+    row = pq.read_table(tmp_path / "items.parquet").to_pylist()[0]
+    assert row["count"] == 1
+    assert row["continuous_minimum"] == "0.0123456789012345678901234567890123456789"
+    assert row["continuous_maximum"] == row["continuous_minimum"]
+    assert row["mean"] is None
+    assert row["minimum"] is None
+    assert row["maximum"] is None
 
 
 def test_materialize_writes_queryable_views(tmp_path: Path) -> None:

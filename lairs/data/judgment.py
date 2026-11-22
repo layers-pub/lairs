@@ -24,6 +24,7 @@ from __future__ import annotations
 import tempfile
 from decimal import Decimal
 from pathlib import Path
+from statistics import mean as arithmetic_mean
 from typing import TYPE_CHECKING
 
 import didactic.api as dx
@@ -100,6 +101,9 @@ _ITEMS_SCHEMA = pa.schema(
         ("mean", pa.float64()),
         ("minimum", pa.int64()),
         ("maximum", pa.int64()),
+        ("continuous_mean", pa.string()),
+        ("continuous_minimum", pa.string()),
+        ("continuous_maximum", pa.string()),
     ],
 )
 _PARTICIPANTS_SCHEMA = pa.schema(
@@ -335,6 +339,13 @@ class ItemDistribution(dx.Model):
         The least scalar response, when scalar.
     maximum : int or None
         The greatest scalar response, when scalar.
+    continuous_mean : decimal.Decimal or None
+        The mean continuous response. Summation is exact; the final mean is
+        rounded under the active decimal context.
+    continuous_minimum : decimal.Decimal or None
+        The exact least continuous response.
+    continuous_maximum : decimal.Decimal or None
+        The exact greatest continuous response.
     label_counts : tuple of LabelCount
         Per-label counts, when the item drew categorical responses.
     """
@@ -356,6 +367,18 @@ class ItemDistribution(dx.Model):
     maximum: int | None = dx.field(
         default=None,
         description="greatest scalar response, when scalar",
+    )
+    continuous_mean: Decimal | None = dx.field(
+        default=None,
+        description="mean continuous response under the active decimal context",
+    )
+    continuous_minimum: Decimal | None = dx.field(
+        default=None,
+        description="exact least continuous response",
+    )
+    continuous_maximum: Decimal | None = dx.field(
+        default=None,
+        description="exact greatest continuous response",
     )
     label_counts: tuple[dx.Embed[LabelCount], ...] = dx.field(
         default_factory=tuple,
@@ -596,38 +619,25 @@ class JudgmentStudy:
     def item_distributions(self) -> Dataset[ItemDistribution]:
         """Return the distribution of judgments over each item.
 
-        Items are grouped by their AT-URI. Scalar responses report ``count``,
-        ``mean``, ``minimum``, and ``maximum``; categorical responses report
-        per-label counts. An item drawing both kinds reports each over its own
-        responses.
+        Items are grouped by their AT-URI, and ``count`` counts each judgment
+        once, including judgments without a scalar or categorical response.
+        Scalar responses report ``mean``, ``minimum``, and ``maximum``;
+        continuous responses report the corresponding ``continuous_*`` decimal
+        summaries; categorical responses report per-label counts. An item
+        drawing several kinds reports each over its own responses. Continuous
+        summation and extrema are exact; the final mean is rounded under the
+        active decimal context, including for repeating decimal means.
 
         Returns
         -------
         lairs.data.dataset.Dataset
             A dataset of per-item distributions, in first-seen item order.
         """
-        scalars: dict[str, list[int]] = {}
-        labels: dict[str, dict[str, int]] = {}
-        texts: dict[str, str | None] = {}
-        order: list[str] = []
+        responses: dict[str, list[JudgmentRow]] = {}
         for row in self.judgments():
-            item_ref = row.item_ref
-            if item_ref not in texts:
-                texts[item_ref] = row.item_text
-                order.append(item_ref)
-            if row.scalar_value is not None:
-                scalars.setdefault(item_ref, []).append(row.scalar_value)
-            if row.categorical_value is not None:
-                bucket = labels.setdefault(item_ref, {})
-                bucket[row.categorical_value] = bucket.get(row.categorical_value, 0) + 1
+            responses.setdefault(row.item_ref, []).append(row)
         distributions = [
-            _distribution_for(
-                item_ref,
-                texts[item_ref],
-                scalars.get(item_ref, []),
-                labels.get(item_ref, {}),
-            )
-            for item_ref in order
+            _distribution_for(item_ref, rows) for item_ref, rows in responses.items()
         ]
         return Dataset(distributions, model=ItemDistribution)
 
@@ -704,6 +714,15 @@ class JudgmentStudy:
                 "mean": item.mean,
                 "minimum": item.minimum,
                 "maximum": item.maximum,
+                "continuous_mean": str(item.continuous_mean)
+                if item.continuous_mean is not None
+                else None,
+                "continuous_minimum": str(item.continuous_minimum)
+                if item.continuous_minimum is not None
+                else None,
+                "continuous_maximum": str(item.continuous_maximum)
+                if item.continuous_maximum is not None
+                else None,
             }
             for item in self.item_distributions()
         ]
@@ -782,12 +801,18 @@ class JudgmentStudy:
 
 def _distribution_for(
     item_ref: str,
-    item_text: str | None,
-    scalars: list[int],
-    labels: dict[str, int],
+    rows: list[JudgmentRow],
 ) -> ItemDistribution:
-    """Build an item distribution from its scalar and categorical responses."""
-    count = len(scalars) + sum(labels.values())
+    """Summarize each response kind separately and count each judgment once."""
+    scalars = [row.scalar_value for row in rows if row.scalar_value is not None]
+    continuous = [
+        row.continuous_value for row in rows if row.continuous_value is not None
+    ]
+    labels: dict[str, int] = {}
+    for row in rows:
+        if row.categorical_value is not None:
+            label = row.categorical_value
+            labels[label] = labels.get(label, 0) + 1
     mean = sum(scalars) / len(scalars) if scalars else None
     minimum = min(scalars) if scalars else None
     maximum = max(scalars) if scalars else None
@@ -796,11 +821,14 @@ def _distribution_for(
     )
     return ItemDistribution(
         item_ref=item_ref,
-        item_text=item_text,
-        count=count,
+        item_text=rows[0].item_text,
+        count=len(rows),
         mean=mean,
         minimum=minimum,
         maximum=maximum,
+        continuous_mean=arithmetic_mean(continuous) if continuous else None,
+        continuous_minimum=min(continuous) if continuous else None,
+        continuous_maximum=max(continuous) if continuous else None,
         label_counts=label_counts,
     )
 

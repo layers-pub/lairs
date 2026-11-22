@@ -28,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   record hashing paths. Fresh installs no longer select libipld 4, which made
   repository reads appear empty and changed the CIDs of blob-bearing records.
 
+- **Continuous judgment distributions.** `JudgmentStudy.item_distributions`
+  now counts each judgment once and reports continuous responses through
+  `continuous_mean`, `continuous_minimum`, and `continuous_maximum` decimal
+  fields. Summation and extrema are exact; the mean's final division uses the
+  active decimal context. The CLI displays these summaries, and JSON and
+  Parquet preserve them as decimal text alongside the existing scalar fields.
+
 ## [0.10.2] - 2026-11-22
 
 ### Fixed
