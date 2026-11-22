@@ -1175,6 +1175,15 @@ def _print_judgment_study(
                     "mean": item.mean,
                     "min": item.minimum,
                     "max": item.maximum,
+                    "continuousMean": str(item.continuous_mean)
+                    if item.continuous_mean is not None
+                    else None,
+                    "continuousMin": str(item.continuous_minimum)
+                    if item.continuous_minimum is not None
+                    else None,
+                    "continuousMax": str(item.continuous_maximum)
+                    if item.continuous_maximum is not None
+                    else None,
                     "labelCounts": {lc.label: lc.count for lc in item.label_counts},
                 }
                 for item in shown_items
@@ -1204,16 +1213,21 @@ def _print_judgment_study(
     print("\nitems (response distribution):")
     for item in shown_items:
         label = _truncate(item.item_text or item.item_ref, 60)
+        summaries: list[str] = []
         if item.mean is not None:
-            print(
-                f"  n={item.count:<4d} mean={item.mean:5.2f} "
-                f"[{item.minimum}..{item.maximum}]  {label}",
+            summaries.append(
+                f"mean={item.mean:5.2f} [{item.minimum}..{item.maximum}]",
             )
-        elif item.label_counts:
+        if item.continuous_mean is not None:
+            summaries.append(
+                f"continuous mean={item.continuous_mean} "
+                f"[{item.continuous_minimum}..{item.continuous_maximum}]",
+            )
+        if item.label_counts:
             counts = ", ".join(f"{lc.label}:{lc.count}" for lc in item.label_counts)
-            print(f"  n={item.count:<4d} {counts}  {label}")
-        else:
-            print(f"  n={item.count:<4d} {label}")
+            summaries.append(counts)
+        summary = " ".join(summaries)
+        print(f"  n={item.count:<4d} {summary}  {label}")
     print("\nparticipants:")
     for summary in shown_participants:
         who = summary.name or summary.participant_id
