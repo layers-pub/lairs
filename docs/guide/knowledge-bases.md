@@ -104,13 +104,17 @@ also serves as a SemLink lookup. `neighbors` folds a sub-one
 confidence into the edge relation (for instance `verbnet_classes@0.85`). The
 `lang` argument is ignored, since glazing's resources are English-only.
 
-glazing requires the `lairs[lexical]` extra (`glazing>=0.2`) at runtime and is
+glazing requires the `lairs[lexical]` extra (`glazing>=0.3.0`) at runtime and is
 imported lazily inside the connector, never at module import. The first
 glazing-backed method call raises `GlazingNotInstalledError` (a subclass of
 `ImportError`) when the extra is absent, with a hint to install
 `lairs[lexical]` and run `glazing init` to download the FrameNet, PropBank,
 VerbNet, and WordNet data. The data download is a glazing step, separate from
 installing the package.
+
+Glazing 0.3.0 fixes WordNet search with string offsets and gives each synset a
+key containing its offset and part of speech. After upgrading from 0.2.3, run
+`glazing init` again to rebuild converted data with adjective satellites included.
 
 ## Requirements
 

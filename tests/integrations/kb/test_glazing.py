@@ -276,3 +276,37 @@ def test_search_with_real_glazing_data(
     monkeypatch.setenv("GLAZING_DATA_DIR", str(tmp_path))
     candidates = GlazingKB().search("give")
     assert candidates == [Candidate(ref="propbank:give", label="give", score=1.0)]
+
+
+@pytest.mark.parametrize(
+    ("pos", "lex_filename", "key"),
+    [
+        ("n", "noun.Tops", "00001740n"),
+        ("v", "verb.possession", "00001740v"),
+        ("s", "adj.all", "00001740a"),
+    ],
+)
+def test_search_with_real_wordnet_string_offsets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pos: str,
+    lex_filename: str,
+    key: str,
+) -> None:
+    # wordnet offsets are strings; search must preserve their zero padding and
+    # use the canonical part-of-speech key, including adjective satellites.
+    models = pytest.importorskip("glazing.wordnet.models")
+    converted = tmp_path / "converted"
+    converted.mkdir()
+    synset = models.Synset(
+        offset="00001740",
+        lex_filenum=0,
+        lex_filename=lex_filename,
+        ss_type=pos,
+        words=[models.Word(lemma="give", lex_id=0)],
+        gloss="a test synset",
+    )
+    (converted / "wordnet.jsonl").write_text(synset.model_dump_json() + "\n")
+    monkeypatch.setenv("GLAZING_DATA_DIR", str(tmp_path))
+    candidates = GlazingKB().search("give", types=["wordnet"])
+    assert candidates == [Candidate(ref=f"wordnet:{key}", label=key, score=1.0)]
