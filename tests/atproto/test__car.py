@@ -138,6 +138,24 @@ def test_record_cid_changes_with_the_value() -> None:
     assert record_cid({"text": "a", "x": None}) != record_cid({"text": "a"})
 
 
+def test_blob_record_cid_matches_fixed_dag_cbor_encoding() -> None:
+    # the expected cid includes a tag-42 link, not a plain cbor byte string.
+    record: JsonValue = {
+        "$type": "x.y.z",
+        "blob": {
+            "$type": "blob",
+            "mimeType": "text/plain",
+            "size": 3,
+            "ref": {
+                "$link": "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku",
+            },
+        },
+    }
+    assert record_cid(record) == (
+        "bafyreifoagcnavdl3jnkbu6dikcxny4gkxm5iarcmbg2l6qshdtoflgs3q"
+    )
+
+
 def _varint(value: int) -> bytes:
     """Encode an unsigned integer as an LEB128 varint for CAR framing."""
     out = bytearray()
