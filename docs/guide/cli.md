@@ -212,8 +212,10 @@ lairs judgments at://did:plc:author/pub.layers.judgment.experimentDef/abc \
 ```
 
 The experiment (or study-account) AT-URI is positional and `--endpoint` is
-required. Each item row shows how many judgments it drew and, for a scalar task,
-the mean and range; for a categorical task, the per-label counts. Item text is
+required. Each item row shows how many judgments it drew and, for a scalar or
+continuous task, the mean and range; for a categorical task, the per-label counts.
+Scalar, continuous, and categorical summaries remain separate when an item drew
+several response kinds, and each judgment is counted once. Item text is
 resolved by bulk-loading the stimulus expression accounts the judgments
 reference; pass `--no-follow-refs` to skip that and read only the study's own
 records (item text is then left unresolved). `--limit` caps the items and
@@ -228,6 +230,15 @@ queryable with DuckDB or the explorer's Query tab (`lairs tui --data <dir>`).
 The judgment matrix keeps integer responses in `scalar_value` and exact
 continuous responses in `continuous_value`, serialized as decimal text without
 binary floating-point conversion.
+
+`JudgmentStudy.item_distributions()` exposes continuous summaries as
+`continuous_mean`, `continuous_minimum`, and `continuous_maximum`, leaving
+`mean`, `minimum`, and `maximum` for integer scalar responses. The minimum and
+maximum preserve the exact decimal responses; the mean uses exact summation
+and rounds the final division under the active Python decimal context (including
+when the mean repeats). `items.parquet` stores the three `continuous_*` fields as
+decimal text. The JSON output uses `continuousMean`, `continuousMin`, and
+`continuousMax`, also as decimal text.
 
 ## `datasets`
 

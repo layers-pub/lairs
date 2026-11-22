@@ -737,6 +737,73 @@ def test_judgments_command_prints_study(
     assert "mturk/1" in captured.out
 
 
+@pytest.mark.parametrize("as_json", [False, True])
+def test_judgments_command_prints_continuous_distributions(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    as_json: bool,
+) -> None:
+    experiment_uri = "at://did:plc:s/pub.layers.judgment.experimentDef/slider"
+    item_uri = "at://did:plc:i/pub.layers.expression.expression/i1"
+    study = JudgmentStudy.new()
+    study.add_record(
+        experiment_uri,
+        judgment_records.ExperimentDef(
+            name="Slider",
+            taskType="continuous",
+            createdAt=_NOW,
+        ),
+    )
+    study.add_record(
+        "at://did:plc:s/pub.layers.judgment.judgmentSet/a",
+        judgment_records.JudgmentSet(
+            agent=AgentRef(id="participant-1"),
+            judgments=tuple(
+                judgment_records.Judgment(
+                    item=ObjectRef(recordRef=item_uri),
+                    continuousValue=judgment_records.DecimalValue(
+                        coefficient=value,
+                        exponent=-2,
+                    ),
+                )
+                for value in (25, 75)
+            ),
+            experimentRef=experiment_uri,
+            createdAt=_NOW,
+        ),
+    )
+
+    def fake_load(
+        _uri: str,
+        *,
+        source: str = "auto",
+        pds_client: PdsClient | None = None,
+        follow_refs: bool = True,
+    ) -> JudgmentStudy:
+        assert source == "pds"
+        assert pds_client is not None
+        assert follow_refs is True
+        return study
+
+    monkeypatch.setattr("lairs.data.load_judgment_study", fake_load)
+    args = ["judgments", experiment_uri, "--endpoint", "https://pds.example"]
+    if as_json:
+        args.append("--json")
+    assert cli.main(args) == 0
+    output = capsys.readouterr().out
+    if as_json:
+        item = json.loads(output)["items"][0]
+        assert item["count"] == 2
+        assert item["mean"] is None
+        assert item["continuousMean"] == "0.5"
+        assert item["continuousMin"] == "0.25"
+        assert item["continuousMax"] == "0.75"
+    else:
+        assert "judgments: 2" in output
+        assert "continuous mean=0.5 [0.25..0.75]" in output
+
+
 def test_judgments_command_materializes_with_out(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
