@@ -39,7 +39,9 @@ dependencies = [
     # HTTP well-known method, so DNS is part of the shipped resolver, not optional.
     "dnspython>=2",
     "pyarrow",
-    "libipld",
+    # libipld 4 changes cid links from bytes to CID objects and changes how
+    # bytes are encoded; the CAR and publish paths use the 3.x representation.
+    "libipld>=3.4,<4",
     "multiformats",
     # the firehose consumer and the discovery index's query accelerator are
     # part of the shipped feature set, so their runtime deps are not optional.

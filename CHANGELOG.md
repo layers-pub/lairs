@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Compatible IPLD dependency for repository reads and publishing.** Require
+  `libipld>=3.4,<4`, whose byte-based CID links match the CAR, firehose, and
+  record hashing paths. Fresh installs no longer select libipld 4, which made
+  repository reads appear empty and changed the CIDs of blob-bearing records.
+
 ## [0.10.2] - 2026-11-22
 
 ### Fixed

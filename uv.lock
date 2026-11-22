@@ -1795,7 +1795,7 @@ requires-dist = [
     { name = "lairs", extras = ["fsspec"], marker = "extra == 'ml'" },
     { name = "lairs", extras = ["hf"], marker = "extra == 'ml'" },
     { name = "lairs", extras = ["torch"], marker = "extra == 'ml'" },
-    { name = "libipld" },
+    { name = "libipld", specifier = ">=3.4,<4" },
     { name = "librosa", marker = "extra == 'audio'" },
     { name = "mlflow", marker = "extra == 'tracking'" },
     { name = "mne", marker = "extra == 'neural'" },
