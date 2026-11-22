@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Compatible IPLD dependency for repository reads and publishing.** Require
+  `libipld>=3.4,<4`, whose byte-based CID links match the CAR, firehose, and
+  record hashing paths. Fresh installs no longer select libipld 4, which made
+  repository reads appear empty and changed the CIDs of blob-bearing records.
+
 - **Continuous judgment distributions.** `JudgmentStudy.item_distributions`
   now counts each judgment once and reports continuous responses through
   `continuous_mean`, `continuous_minimum`, and `continuous_maximum` decimal
