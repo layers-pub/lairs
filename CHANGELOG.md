@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   temporary redirect to entity JSON. Injected clients retain their settings
   and ownership, and their redirect limit bounds each request.
 
+## [0.10.1] - 2026-11-22
+
+### Fixed
+
+- **WordNet search through Glazing.** The `lexical` extra now requires
+  `glazing>=0.3.0`, which fixes the string-offset formatting error raised by
+  `GlazingKB.search` when WordNet data are loaded. Synset identifiers preserve
+  leading zeros and include the part of speech, with adjective satellites
+  using the canonical adjective key. Run `glazing init` after upgrading from
+  0.2.3 to rebuild converted data with adjective satellites included.
+
 ## [0.10.0] - 2026-11-22
 
 ### Added
@@ -469,7 +480,8 @@ didactic model.
   repositories, discovering datasets, building and searching the index, managing
   sessions, and launching the explorer.
 
-[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/layers-pub/lairs/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/layers-pub/lairs/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/layers-pub/lairs/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/layers-pub/lairs/compare/v0.8.0...v0.8.1

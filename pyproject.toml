@@ -1,6 +1,6 @@
 [project]
 name = "lairs"
-version = "0.10.0"
+version = "0.10.1"
 description = "A read/write dataset client for the Layers format, built on didactic."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -69,7 +69,7 @@ amr = ["penman"]
 spacy = ["spacy"]
 labelstudio = ["label-studio-sdk"]
 wikidata = ["qwikidata", "SPARQLWrapper"]
-lexical = ["glazing>=0.2.3"]
+lexical = ["glazing>=0.3.0"]
 reconciliation = ["httpx"]
 scholarly = ["pyalex", "habanero"]
 geo = ["shapely", "geopandas"]
