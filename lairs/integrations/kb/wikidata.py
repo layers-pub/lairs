@@ -6,7 +6,8 @@ to. The transport is the public Wikidata REST, action, and SPARQL endpoints over
 its own :class:`httpx.Client` with a descriptive ``User-Agent`` so the public
 Wikidata Query Service and action API (which return HTTP 403 for requests with a
 default user agent) accept it; inject a client to override headers or supply a
-mock transport.
+mock transport. Requests follow redirects, including the EntityData endpoint's
+redirect to the entity JSON, within the client's redirect limit.
 
 The ``lairs[wikidata]`` extra (``qwikidata`` / ``SPARQLWrapper``) is declared
 for callers who prefer those clients in their own code. This connector does not
@@ -334,7 +335,10 @@ class WikidataKB:
         cached = self._entity_cache.get(qid)
         if cached is not None:
             return cached
-        response = self._client.get(f"{self.entity_endpoint}/{qid}.json")
+        response = self._client.get(
+            f"{self.entity_endpoint}/{qid}.json",
+            follow_redirects=True,
+        )
         response.raise_for_status()
         entity = self._entity_from_data(qid, _as_object(response.json()))
         self._entity_cache[qid] = entity
@@ -485,7 +489,11 @@ class WikidataKB:
             "limit": self.limit,
             "format": "json",
         }
-        response = self._client.get(self.api_endpoint, params=params)
+        response = self._client.get(
+            self.api_endpoint,
+            params=params,
+            follow_redirects=True,
+        )
         response.raise_for_status()
         body = _as_object(response.json())
         candidates: list[Candidate] = []
@@ -535,6 +543,7 @@ class WikidataKB:
             self.endpoint,
             params={"query": query, "format": "json"},
             headers={"Accept": "application/sparql-results+json"},
+            follow_redirects=True,
         )
         response.raise_for_status()
         body = _as_object(response.json())
