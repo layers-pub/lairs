@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Generated-model validation guarantees.** The documentation now states
+  which checks generated models and authoring builders perform, distinguishes
+  metadata-only and unretained lexicon constraints, and points to the ATProto
+  strict validator for full lexicon validation.
+
 ## [0.10.2] - 2026-11-22
 
 ### Fixed
