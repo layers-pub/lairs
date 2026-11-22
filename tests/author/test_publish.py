@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import secrets
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+import didactic.api as dx
 import httpx
 import libipld
 import pytest
@@ -15,6 +17,8 @@ from multiformats import CID, multihash
 from lairs.atproto.pds import PdsClient, decode
 from lairs.author import publish
 from lairs.records import changelog as changelog_records
+from lairs.records._generated import acquisition as acquisition_records
+from lairs.records._generated import catalog as catalog_records
 from lairs.records._generated.expression import Expression
 from lairs.records._generated.media import Media
 from lairs.records.blobref import BlobRef
@@ -22,7 +26,6 @@ from lairs.store.repository import Repository
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from conftest import PdsServer
 
@@ -60,6 +63,25 @@ def test_collection_of_handles_short_uri() -> None:
     assert publish.collection_of("at://did:plc:abc") == ""
 
 
+def test_record_registry_matches_every_vendored_record_model() -> None:
+    root = Path(publish.__file__).parents[1] / "lexicons"
+    expected: dict[str, tuple[str, str]] = {}
+    for path in root.rglob("*.json"):
+        lexicon = json.loads(path.read_text())
+        if lexicon.get("defs", {}).get("main", {}).get("type") != "record":
+            continue
+        nsid = lexicon["id"]
+        namespace, name = nsid.rsplit(".", 1)
+        expected[nsid] = (namespace.rsplit(".", 1)[-1], name[0].upper() + name[1:])
+    assert expected == publish._RECORD_MODELS
+    assert set(publish._DEPENDENCY_TIERS) == set(expected)
+    for nsid, (_namespace, name) in expected.items():
+        model = publish._model_for(nsid)
+        assert model is not None
+        assert issubclass(model, dx.Model)
+        assert model.__name__ == name
+
+
 def test_content_address_changes_with_bytes() -> None:
     assert publish.content_address(b"a") != publish.content_address(b"b")
 
@@ -91,6 +113,40 @@ def test_order_writes_publishes_targets_before_referrers() -> None:
         "pub.layers.expression.expression",
         "pub.layers.segmentation.segmentation",
         "pub.layers.annotation.annotationLayer",
+    ]
+
+
+def test_order_writes_places_catalog_and_acquisition_referrers_last() -> None:
+    collections = [
+        "pub.layers.catalog.membership",
+        "pub.layers.acquisition.session",
+        "pub.layers.catalog.collection",
+        "pub.layers.judgment.experimentDef",
+        "pub.layers.acquisition.participant",
+        "pub.layers.media.media",
+    ]
+    writes = [_op(collection, "record") for collection in collections]
+    ordered = publish.order_writes(writes)
+    positions = {op.collection: index for index, op in enumerate(ordered)}
+    session = positions["pub.layers.acquisition.session"]
+    membership = positions["pub.layers.catalog.membership"]
+    assert positions["pub.layers.media.media"] < session
+    assert positions["pub.layers.acquisition.participant"] < session
+    assert positions["pub.layers.judgment.experimentDef"] < session
+    assert positions["pub.layers.catalog.collection"] < membership
+    assert session < membership
+    plan = publish.PublishPlan(
+        repo="did:plc:me",
+        revision="revision",
+        deletes=tuple(
+            publish.WriteOp(
+                action="delete", collection=op.collection, rkey=op.rkey, uri=op.uri
+            )
+            for op in writes
+        ),
+    )
+    assert [op.collection for op in plan.ordered_writes()] == [
+        op.collection for op in reversed(ordered)
     ]
 
 
@@ -486,6 +542,124 @@ def _seed_repo(path: Path) -> tuple[Repository, str, str, str]:
     repo.save(media_uri, Media(kind="audio", createdAt=now))
     revision = repo.commit("seed")
     return repo, revision, expr_uri, media_uri
+
+
+def _catalog_acquisition_records(did: str) -> dict[str, dx.Model]:
+    prefix = f"at://{did}/pub.layers"
+    created = "2026-01-01T00:00:00Z"
+    participant_uri = f"{prefix}.acquisition.participant/p1"
+    session_uri = f"{prefix}.acquisition.session/s1"
+    catalog_uri = f"{prefix}.catalog.collection/c1"
+    membership_uri = f"{prefix}.catalog.membership/m1"
+    return {
+        participant_uri: acquisition_records.Participant.model_validate_json(
+            json.dumps(
+                {
+                    "participantId": "p1",
+                    "consent": {
+                        "status": "granted",
+                        "scope": "public",
+                        "identifiability": "anonymous",
+                    },
+                    "createdAt": created,
+                },
+            ),
+        ),
+        session_uri: acquisition_records.Session.model_validate_json(
+            json.dumps(
+                {
+                    "sessionId": "s1",
+                    "participantRefs": [participant_uri],
+                    "streams": [
+                        {"uuid": {"value": "0190c1c2-0000-7000-8000-000000000000"}},
+                    ],
+                    "createdAt": created,
+                },
+            ),
+        ),
+        catalog_uri: catalog_records.Collection.model_validate_json(
+            json.dumps(
+                {"name": "study", "kind": "judgment-study", "createdAt": created}
+            ),
+        ),
+        membership_uri: catalog_records.Membership.model_validate_json(
+            json.dumps(
+                {
+                    "catalogRef": catalog_uri,
+                    "member": {
+                        "ref": {"recordRef": session_uri},
+                        "memberType": "pub.layers.acquisition.session",
+                    },
+                    "role": "produce",
+                    "createdAt": created,
+                },
+            ),
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    "collection",
+    [
+        "pub.layers.catalog.collection",
+        "pub.layers.catalog.membership",
+        "pub.layers.acquisition.participant",
+        "pub.layers.acquisition.session",
+    ],
+)
+def test_publish_and_pull_catalog_and_acquisition_records(
+    tmp_path: Path,
+    collection: str,
+) -> None:
+    did = "did:plc:me"
+    uri, record = next(
+        (uri, record)
+        for uri, record in _catalog_acquisition_records(did).items()
+        if publish.collection_of(uri) == collection
+    )
+    repo = Repository.init(tmp_path / "local")
+    repo.save(uri, record)
+    revision = repo.commit("seed")
+    cid = publish._pds_state(repo, revision)[uri]
+    value = json.loads(record.model_dump_json())
+    value["$type"] = collection
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("listRecords")
+        records = (
+            [{"uri": uri, "cid": cid, "value": value}]
+            if request.url.params["collection"] == collection
+            else []
+        )
+        return httpx.Response(200, json={"records": records})
+
+    with _mock_client(handler) as client:
+        assert publish.publish(
+            repo,
+            revision,
+            to=did,
+            endpoint="https://pds.example",
+            client=client,
+            dry_run=True,
+        ).is_empty()
+        repo.forget(uri)
+        deleted = repo.commit("remove")
+        plan = publish.publish(
+            repo,
+            deleted,
+            to=did,
+            endpoint="https://pds.example",
+            client=client,
+            dry_run=True,
+        )
+        assert not plan.creates
+        assert not plan.updates
+        assert [op.uri for op in plan.deletes] == [uri]
+        pulled = Repository.init(tmp_path / "pulled")
+        publish.pull(did, endpoint="https://pds.example", into=pulled, client=client)
+    assert pulled.staged_uris() == [uri]
+    pulled.commit("pull")
+    assert pulled.load(uri, type(record)) == record
 
 
 def test_plan_publish_creates_everything_for_empty_pds(tmp_path: Path) -> None:
@@ -1184,6 +1358,57 @@ def _fresh_account(server: PdsServer) -> tuple[str, str]:
     response.raise_for_status()
     body = response.json()
     return str(body["did"]), str(body["accessJwt"])
+
+
+@pytest.mark.integration
+def test_catalog_and_acquisition_publish_pull_and_delete_live(
+    pds_server: PdsServer,
+    tmp_path: Path,
+) -> None:
+    did, jwt = _fresh_account(pds_server)
+    records = _catalog_acquisition_records(did)
+    repo = Repository.init(tmp_path / "local")
+    repo.save_many(records.items())
+    revision = repo.commit("seed catalog and acquisition")
+    with httpx.Client(headers={"Authorization": f"Bearer {jwt}"}) as client:
+        first = publish.publish(
+            repo,
+            revision,
+            to=did,
+            endpoint=pds_server.endpoint,
+            client=client,
+            dry_run=False,
+        )
+        assert {op.uri for op in first.creates} == set(records)
+        assert publish.publish(
+            repo,
+            revision,
+            to=did,
+            endpoint=pds_server.endpoint,
+            client=client,
+            dry_run=True,
+        ).is_empty()
+        pulled = Repository.init(tmp_path / "pulled")
+        publish.pull(did, endpoint=pds_server.endpoint, into=pulled, client=client)
+        assert set(pulled.staged_uris()) == set(records)
+        pulled.commit("pull catalog and acquisition")
+        for uri, record in records.items():
+            assert pulled.load(uri, type(record)) == record
+            repo.forget(uri)
+        removed = repo.commit("remove catalog and acquisition")
+        deleted = publish.publish(
+            repo,
+            removed,
+            to=did,
+            endpoint=pds_server.endpoint,
+            client=client,
+            dry_run=False,
+        )
+        assert {op.uri for op in deleted.deletes} == set(records)
+        assert (
+            publish._fetch_pds_cids(did, endpoint=pds_server.endpoint, client=client)
+            == {}
+        )
 
 
 @pytest.mark.integration

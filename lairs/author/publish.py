@@ -97,8 +97,9 @@ _DEPENDENCY_TIERS: dict[str, int] = {
     "pub.layers.eprint.eprint": 0,
     "pub.layers.eprint.dataLink": 0,
     "pub.layers.media.media": 0,
-    # tier 1: expressions, which segmentations and annotations anchor into.
+    # tier 1: expressions and participants, cited by dependent records.
     "pub.layers.expression.expression": 1,
+    "pub.layers.acquisition.participant": 1,
     # tier 2: token-level structure over expressions.
     "pub.layers.segmentation.segmentation": 2,
     # tier 3: annotations over expressions and tokens; graph nodes; standalone
@@ -109,6 +110,7 @@ _DEPENDENCY_TIERS: dict[str, int] = {
     "pub.layers.corpus.corpus": 3,
     "pub.layers.resource.collection": 3,
     "pub.layers.resource.template": 3,
+    "pub.layers.catalog.collection": 3,
     # tier 4: records over tier-3 records. cluster sets cite annotations; edges
     # cite nodes; resource members cite their container or template.
     "pub.layers.annotation.clusterSet": 4,
@@ -122,21 +124,28 @@ _DEPENDENCY_TIERS: dict[str, int] = {
     "pub.layers.judgment.judgmentSet": 4,
     "pub.layers.changelog.entry": 4,
     # tier 5: records over tier-4 records. edge sets cite edges; agreement
-    # reports cite judgment sets.
+    # reports cite judgment sets; acquisition sessions cite experiments.
     "pub.layers.graph.graphEdgeSet": 5,
     "pub.layers.judgment.agreementReport": 5,
+    "pub.layers.acquisition.session": 5,
+    # tier 6: catalog memberships may cite any of the record types above.
+    "pub.layers.catalog.membership": 6,
 }
 
 _DEFAULT_TIER = 3
 """The dependency tier used for a collection not in the explicit table."""
 
 # collection NSID -> (generated namespace module, record model class name). the
-# registry mirrors the 26 vendored record types; it is used to decode pulled
+# registry mirrors the vendored record types; it is used to decode pulled
 # records back into the generated models before staging them in a Repository.
 _RECORD_MODELS: dict[str, tuple[str, str]] = {
+    "pub.layers.acquisition.participant": ("acquisition", "Participant"),
+    "pub.layers.acquisition.session": ("acquisition", "Session"),
     "pub.layers.alignment.alignment": ("alignment", "Alignment"),
     "pub.layers.annotation.annotationLayer": ("annotation", "AnnotationLayer"),
     "pub.layers.annotation.clusterSet": ("annotation", "ClusterSet"),
+    "pub.layers.catalog.collection": ("catalog", "Collection"),
+    "pub.layers.catalog.membership": ("catalog", "Membership"),
     "pub.layers.changelog.entry": ("changelog", "Entry"),
     "pub.layers.corpus.corpus": ("corpus", "Corpus"),
     "pub.layers.corpus.membership": ("corpus", "Membership"),
@@ -161,7 +170,7 @@ _RECORD_MODELS: dict[str, tuple[str, str]] = {
     "pub.layers.resource.templateComposition": ("resource", "TemplateComposition"),
     "pub.layers.segmentation.segmentation": ("segmentation", "Segmentation"),
 }
-"""The 26 Layers record collections and their generated model classes."""
+"""The Layers record collections and their generated model classes."""
 
 
 def _model_for(collection: str) -> type[dx.Model] | None:

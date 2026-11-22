@@ -12,8 +12,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from lairs.records._generated import (
+    acquisition,
     alignment,
     annotation,
+    catalog,
     changelog,
     corpus,
     eprint,
@@ -34,6 +36,10 @@ __all__ = ["RECORD_MODELS", "label_of", "namespace_of"]
 
 # every pub.layers.* record type, mapped to its generated model class.
 RECORD_MODELS: dict[str, type[dx.Model]] = {
+    "pub.layers.catalog.collection": catalog.Collection,
+    "pub.layers.catalog.membership": catalog.Membership,
+    "pub.layers.acquisition.participant": acquisition.Participant,
+    "pub.layers.acquisition.session": acquisition.Session,
     "pub.layers.corpus.corpus": corpus.Corpus,
     "pub.layers.corpus.membership": corpus.Membership,
     "pub.layers.expression.expression": expression.Expression,
