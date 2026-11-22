@@ -52,6 +52,9 @@ follows one corpus through reading, materialization, and authoring.
   Layers records and encode them back through the `Codec` port, with the
   bundled CoNLL-U and brat codecs resolved by name through the registry.
   Use codecs to move between Layers and an existing annotation format.
+- [Universal Dependencies and CoNLL-U](conllu.md): read treebanks from
+  Layers records as typed CoNLL-U rows, parse and write CoNLL-U exactly, and
+  the lossless carrier encoding behind the `conllu-ud` codec.
 - [Exporters](exporters.md): turn a flattened Arrow view into a
   framework-native dataset through the `Exporter` port, with the bundled
   HuggingFace `datasets`, PyTorch, tf.data, and WebDataset exporters

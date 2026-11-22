@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Bulk ingestion into the record store.** `Repository.save_many` stages an
+  iterable of `(uri, model)` pairs and `Repository.save_many_raw` an iterable of
+  `(uri, raw JSON value)` pairs, lazily, in a new packed layout: up to
+  `batch_size` records of one collection (4,096 by default) per committed data
+  set, so staging costs one native panproto call per pack instead of one per
+  record. A 5,000-record treebank pull now writes about fifteen files instead of
+  thousands, and raw staging plus commit runs at several thousand
+  annotation-layer records a second (see the store guide for measurements).
+  `save_many_raw` performs no model validation and stores each value exactly as
+  given, including the wire `$type`, explicit nulls, key order, DAG-JSON links,
+  and integers beyond 64 bits, so `content_at` returns the published record
+  unchanged.
+- **Versioned store layout.** Packed data sets carry the store layout version in
+  their key and envelope, the working tree carries a `layout.json` marker, and
+  `Repository.layout_version()` and `STORE_LAYOUT_VERSION` expose it. A
+  repository or pack written under a newer layout is refused with
+  `panproto.VcsError` instead of being misread.
+- **Dataset-level pull with a verifiable pin.** `lairs pull-dataset <corpus
+  AT-URI> --into <dir>` resolves every account a corpus spans, downloads each
+  account's repository archive once, streams it from disk a record at a time,
+  and stages the raw records in bulk. It writes `lairs-pin.json`, which records
+  each account's commit, each record's CID, and a content hash, and a rerun
+  resumes without refetching accounts that are current. `lairs verify-pin`
+  recomputes every record CID offline from the stored values, and `--remote`
+  reports accounts that have moved since the pin. `load_corpus(source="repo")`
+  reads a pulled snapshot without network access.
+- **Typed, exact CoNLL-U.** The new `lairs.conllu` package models a CoNLL-U
+  sentence and its rows (words, multiword ranges, and empty nodes) as typed
+  `ConlluSentence` and `ConlluRow` values, with `RowId`, `Feat`, `Dep`, and
+  `MiscItem` for the structured columns. Layered and multi-valued features,
+  bare and duplicate MISC items, and every comment survive. `parse` streams
+  sentences from text or a file and `serialize` writes them back byte for byte;
+  a malformed line raises `ConlluSyntaxError` with its line number. Over the
+  573 released files of the mirrored UD 2.14 treebanks, 1,906,050 sentences,
+  the text round trip is exact.
+- **One projection between CoNLL-U and Layers records.**
+  `lairs.conllu.Projector` maps sentences to records in the shape the Layers
+  UD importer publishes, as its reader contract states it: sentence, document,
+  and paragraph expressions with the comment block verbatim in `ud_comment`
+  entries; surface, word, and enhanced tokenizations; the multiword-token
+  alignment with each range line's FEATS and MISC; and the UPOS, XPOS, lemma,
+  morph, MISC, dependency, and enhanced-dependency layers, including the
+  layers over empty nodes. Naming, ontology references, timestamps,
+  languages, and memberships are injectable. `sentence_from_json` inverts it
+  exactly for records in that shape, which is tested against records the
+  importer built. For records published before that shape it reconstructs
+  what it can and names the reconstructed fields in `ConlluSentence.lossy`.
+  Input that parses as CoNLL-U but is not valid UD keeps an exact local round
+  trip through residual `conllu:` carriers.
+- **A typed reader over corpora.** `lairs.conllu.sentences(source, corpus=...,
+  split=...)` yields `ConlluSentence` values in membership order from a
+  `Corpus` or from a raw AT-URI to JSON mapping such as
+  `Repository.content_at` returns, working on record JSON without validating
+  models.
+- **The `conllu-ud` codec.** `UdConlluCodec` decodes CoNLL-U into those
+  records and encodes them back exactly, documents and paragraphs included,
+  and `UdConlluIso` is its single-sentence round trip. The existing `conllu`
+  codec is unchanged.
+
+### Changed
+
+- **`Repository.save` no longer rereads and rewrites the whole working-tree
+  index, or re-stages an unchanged schema, on every call.** Index updates are
+  appended to an `index.log` journal that `commit` folds into `index.json`, and
+  a handle stages a record type's schema only when it differs from the one it
+  staged last. The per-record layout `save` writes is unchanged, and existing
+  repositories, including those committed under panproto 0.71, 0.72.1, and
+  0.74.3, read back exactly as before. A loop of `save` calls remains quadratic
+  in the staged record count because panproto rewrites its own staging index on
+  every staging call; use `save_many` for more than a few records.
+
 ## [0.9.0] - 2026-10-11
 
 ### Added

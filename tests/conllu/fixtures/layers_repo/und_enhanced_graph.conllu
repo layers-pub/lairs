@@ -1,0 +1,24 @@
+# newdoc id = enh-doc
+# sent_id = enh-1
+# text = Mary ate apples and John pears.
+# comment_with_empty_value =
+# note = first
+# note = second
+1	Mary	Mary	PROPN	NNP	Number=Sing	2	nsubj	2:nsubj|5.1:nsubj	_
+2	ate	eat	VERB	VBD	Mood=Ind|Tense=Past|VerbForm=Fin	0	root	0:root	_
+3	apples	apple	NOUN	NNS	Number=Plur	2	obj	2:obj	_
+4	and	and	CCONJ	CC	_	5	cc	5.1:cc	_
+5	John	John	PROPN	NNP	Number=Sing	2	conj	5.1:nsubj	_
+5.1	ate	eat	VERB	VBD	Mood=Ind|Tense=Past|VerbForm=Fin	_	_	2:conj:and|5.2:dep	CopiedFrom=2|Gloss=x=y
+5.2	ate	eat	VERB	VBD	_	_	_	2:conj:and	CopiedFrom=2
+6	pears	pear	NOUN	NNS	Number=Plur	5	orphan	5.1:obj	SpaceAfter=No
+7	.	.	PUNCT	.	_	2	punct	2:punct	_
+
+# newdoc id = enh-doc
+# sent_id = enh-2
+# text = Evin kapısına gittik
+1	Evin	ev	NOUN	Noun	Case=Gen|Number=Sing|Number[psor]=sing|Person=3	2	nmod:poss	2:nmod:poss	_
+2	kapısına	kapı	NOUN	Noun	Case=Dat|Clusivity[obj]=In|Gender=masc|Number=Sing|Number[psor]=Sing|Person[psor]=3|Polite[xyz]=Form	3	obl:arg	3:obl:arg	_
+3	gittik	git	VERB	Verb	Mood=Ind|Number=Plur|Person=1|Tense=Past	0	root	0:root	SpaceAfter=No
+3.1	_	_	PRON	_	PronType=Prs	_	_	3:nsubj	Implicit=Yes
+

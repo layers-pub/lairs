@@ -46,7 +46,9 @@ exceptions, or return type. For task-oriented walk-throughs, see the
 - [Adapter registry](registry.md): the registry and the top-level
   `get_codec`, `get_exporter`, and `get_knowledge_base` lookups by name.
 - [Format codecs](codecs.md): the shared corpus-fragment models and the
-  CoNLL-U and brat codecs.
+  CoNLL-U (lossy and full-fidelity) and brat codecs.
+- [CoNLL-U](conllu.md): typed CoNLL-U sentences and rows, exact text
+  input and output, the projection onto Layers records, and the reader.
 - [Knowledge bases](kb.md): the entity, candidate, and edge models and
   the Wikidata, reconciliation, and glazing connectors.
 - [Exporters](exporters.md): the framework-native exporters over an Arrow

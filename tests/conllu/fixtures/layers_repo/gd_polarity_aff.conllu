@@ -1,0 +1,12 @@
+# sent_id = p04_006b
+# speaker = [1]
+# text = an e daoine mòra brùideil no dè?
+1	an	is	AUX	Wpdqa	Mood=Int|Polarity=Aff|Tense=Pres	3	cop	_	_
+2	e	e	PRON	Pp3sm	Gender=Masc|Number=Sing|Person=3	1	fixed	_	_
+3	daoine	duine	NOUN	Ncpmn	Case=Nom|Gender=Masc|Number=Plur	0	root	_	_
+4	mòra	mòr	ADJ	Aq-pmn	Case=Nom|Gender=Masc|Number=Plur	3	amod	_	_
+5	brùideil	brùideil	ADJ	Aq-pmn	Case=Nom|Gender=Masc|Number=Plur	3	amod	_	_
+6	no	no	CCONJ	Cc	_	7	cc	_	_
+7	dè	dè	PRON	Uq	PronType=Int	3	conj	_	SpaceAfter=No
+8	?	?	PUNCT	Fg	_	3	punct	_	_
+

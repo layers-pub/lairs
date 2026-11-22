@@ -12,6 +12,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _distribution_version
 from typing import TYPE_CHECKING
 
+from lairs import conllu
 from lairs.atproto.auth import Session, authed_client, login
 from lairs.data import Corpus, load_corpus
 from lairs.discovery import (
@@ -46,6 +47,7 @@ __all__ = [
     "__version__",
     "authed_client",
     "codec",
+    "conllu",
     "discover_datasets",
     "exporter",
     "knowledge_base",

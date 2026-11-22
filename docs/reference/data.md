@@ -12,6 +12,10 @@ field specs. For usage, see [Guides > The dataset API](../guide/dataset-api.md).
 
 ::: lairs.data.corpus
 
+## Dataset pull and pin
+
+::: lairs.data.snapshot
+
 ## Acquisition
 
 ::: lairs.data.acquisition

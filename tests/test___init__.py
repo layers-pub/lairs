@@ -48,6 +48,7 @@ def test_public_surface() -> None:
         "__version__",
         "authed_client",
         "codec",
+        "conllu",
         "discover_datasets",
         "exporter",
         "knowledge_base",

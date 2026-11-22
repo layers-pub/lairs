@@ -24,18 +24,48 @@ as JSON under `records/`, stages that value as committed data under its
 AT-URI, and stages the record type's Model schema alongside it. A commit
 captures both: the values, as committed data, and their structure, in the
 schema history. The values
-committed at a revision are read back through `data_at` under their AT-URI
-keys, so a tag pins an exact, byte-reproducible set of record values.
+committed at a revision are read back through panproto's schema-aware
+`decoded_data_at` under their AT-URI keys, so a tag pins an exact,
+reproducible set of record values.
 
 didactic 0.9.0 exposes tag creation, the committed-data write, and the
 committed-data read on the public Repository surface, all of which the
 wrapper uses directly. A revision-to-revision diff reconstructs the value
-set at each revision by folding `data_at` over the revision's commit
+set at each revision by folding `decoded_data_at` over the revision's commit
 ancestry, keyed by AT-URI, then compares the two sets by content.
 Structural diffs across two record-type schemas (a Layers version bump,
 say) go through didactic's schema diff. The reproducibility the data needs
 is backed by committed data, read back at any revision, rather than
 reconstructed from loose files.
+
+## Layouts and compatibility
+
+Committed data is written in one of two layouts. The per-record layout, which
+`save` writes, commits one data set per AT-URI. The packed layout, which
+`save_many` and `save_many_raw` write, commits many records of one collection as
+one data set with a versioned key and envelope, so a bulk ingest costs one
+native staging call and one stored object per few thousand records rather than
+per record. A history may mix the two, and reading folds them in commit and
+staging order, so the latest write of a record wins whichever layout made it.
+The [store reference](../reference/store.md) gives the on-disk format.
+
+The layouts are additive, which keeps existing pins valid. A repository written
+only by `save` carries no layout marker, its commits keep their ids, and
+`content_at` returns the same values for them as before: the store's tests read
+repositories committed under panproto 0.71, 0.72.1, and 0.74.3 and pin their
+values at every revision, alongside a packed-layout repository with a
+cross-layout history. A repository is marked layout 2 on its first write by a
+lairs that knows the packed layout, and a lairs that meets a newer layout, in the
+working-tree marker or in a committed pack, refuses it with an error instead of
+misreading it.
+
+`content_at` returns the same JSON value for a record whichever layout wrote it,
+with one exception inherited from panproto. The per-record layout passes values
+through panproto's schema-bound data path, which turns an integer outside the
+signed 64-bit range into a float. The packed layout stores each value's JSON
+text inside an opaque compressed payload and returns it exactly, so a raw PDS
+record staged by `save_many_raw` keeps every key, null, list order, and number,
+and a CID recomputed from it matches the published one.
 
 ## Content addressing
 

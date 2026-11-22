@@ -555,6 +555,39 @@ def test_load_corpus_skips_non_dict_value() -> None:
     assert len(loaded.expressions) == 0
 
 
+def test_load_corpus_from_a_local_repository(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "store")
+    repo.save(_E1, _expr("d1"))
+    repo.save(_E2, _expr("d2"))
+    repo.save(_C1, CorpusRecord(name="demo", createdAt=_NOW))
+    repo.save(_MEM1, _member(_C1, _E1, split="train"))
+    first = repo.commit("first")
+    repo.save(_MEM2, _member(_C1, _E2, split="test"))
+    repo.commit("second")
+    # the head holds both memberships; no client is involved.
+    loaded = load_corpus(_C1, source="repo", cache_dir=str(tmp_path / "store"))
+    assert {record.id for record in loaded.expressions} == {"d1", "d2"}
+    assert loaded.corpus_record is not None
+    # an earlier revision pins the earlier membership set.
+    earlier = load_corpus(
+        _C1,
+        source="repo",
+        cache_dir=str(tmp_path / "store"),
+        revision=first,
+    )
+    assert {record.id for record in earlier.expressions} == {"d1"}
+
+
+def test_load_corpus_from_a_repository_needs_a_directory_and_a_commit(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="needs cache_dir"):
+        load_corpus(_C1, source="repo")
+    Repository.init(tmp_path / "empty")
+    with pytest.raises(ValueError, match="no committed snapshot"):
+        load_corpus(_C1, source="repo", cache_dir=str(tmp_path / "empty"))
+
+
 def test_load_corpus_rejects_unknown_source() -> None:
     with pytest.raises(ValueError, match="unknown corpus source"):
         load_corpus(_C1, source="bogus")

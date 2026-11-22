@@ -12,7 +12,10 @@ can reach the whole public codec surface from the package:
 - :class:`~lairs.integrations.codecs.brat.BratCodec` /
   :class:`~lairs.integrations.codecs.brat.BratIso` (brat standoff).
 - :class:`~lairs.integrations.codecs.conllu.ConlluCodec` /
-  :class:`~lairs.integrations.codecs.conllu.ConlluIso` (CoNLL-U).
+  :class:`~lairs.integrations.codecs.conllu.ConlluIso` (CoNLL-U, lossy).
+- :class:`~lairs.integrations.codecs.conllu_ud.UdConlluCodec` /
+  :class:`~lairs.integrations.codecs.conllu_ud.UdConlluIso` (CoNLL-U, full
+  fidelity, in the published Layers UD shape).
 
 Importing this package does not import either codec's optional third-party
 extra: each codec module only requires its extra inside its own methods.
@@ -29,6 +32,8 @@ __all__ = [
     "ConlluIso",
     "CorpusFragment",
     "FragmentRecord",
+    "UdConlluCodec",
+    "UdConlluIso",
 ]
 
 
@@ -80,3 +85,4 @@ class CorpusFragment(dx.Model):
 # they are imported only after those models are defined to break the cycle.
 from lairs.integrations.codecs.brat import BratCodec, BratIso  # noqa: E402
 from lairs.integrations.codecs.conllu import ConlluCodec, ConlluIso  # noqa: E402
+from lairs.integrations.codecs.conllu_ud import UdConlluCodec, UdConlluIso  # noqa: E402

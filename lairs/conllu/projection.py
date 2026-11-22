@@ -1,0 +1,2300 @@
+"""The projection between CoNLL-U sentences and Layers records.
+
+This module is the single place the CoNLL-U to ``pub.layers.*`` mapping lives.
+:class:`Projector` maps sentences forward to records, and
+:func:`sentence_from_json` maps one sentence's records back. The local codec
+(:class:`~lairs.integrations.codecs.conllu_ud.UdConlluCodec`) and the reader
+(:func:`lairs.conllu.sentences`) both go through it, so a corpus encoded
+locally and the same corpus as published by the Layers UD importer have one
+shape.
+
+The record shape
+----------------
+The shape is the one the Layers UD importer publishes, as its reader contract
+states it (``docs/ud-reader-contract.md`` in ``layers-repo``). Per sentence:
+
+- a sentence ``Expression`` (``kind="sentence"``, ``id`` = ``sent_id``, the
+  sentence text, ``parentRef`` to the enclosing paragraph or document), plus a
+  document or paragraph ``Expression`` the first time a ``# newdoc`` or
+  ``# newpar`` opens one. Its ``features`` start with ``ud_comment_lines``
+  (the number of comment lines) and one ``ud_comment`` entry per comment line,
+  verbatim and in order. The ``key = value`` comments follow as a key-sorted
+  queryable view that a reader ignores;
+- a ``Segmentation`` holding a surface tokenization (a multiword token is one
+  token) and a syntactic-word tokenization, with UTF-8 byte spans into the
+  sentence text (the words of a multiword token share its span);
+- when the sentence has a multiword token, an ``Alignment``
+  (``tokenization-to-tokenization``, ``word-to-word``) from surface tokens to
+  words. A ``multiword-token`` link carries the range line's FEATS and MISC
+  verbatim in ``ud_feats`` and ``ud_misc``, after a queryable view of both;
+- token-tag layers on the words: ``pos`` (UPOS), ``xpos``, ``lemma``,
+  ``morph`` (one annotation per value, labelled with the full FEATS key,
+  layer included, and carrying ``ud_feats_original`` when the resolver
+  normalised the pair), and ``misc`` (the MISC column verbatim in ``value``);
+- a ``dependency`` relation layer (``headIndex`` 0-based, ``-1`` at the root,
+  with ``ud_relation``, ``ud_subtype``, and a queryable view of MISC);
+- when the sentence has DEPS or empty nodes, a second ``Segmentation`` with an
+  enhanced tokenization (the words, then the empty nodes in file order), and
+  an ``enhanced-dependency`` layer with one annotation per arc;
+- for the empty nodes, ``pos``, ``xpos``, ``lemma``, ``morph``, and ``misc``
+  layers over the enhanced tokenization. Every annotation on an empty node
+  carries ``ud_empty_node`` with the node's ``n.m`` id, and every empty node
+  has a ``misc`` annotation (``_`` when it has no MISC);
+- when a corpus reference is configured, a ``Membership`` with the ordinal and
+  split.
+
+A value longer than the 4096-byte limit is split at character boundaries into
+an entry ``K`` followed by entries ``K+``, and an over-long MISC column into
+the annotation ``value`` followed by ``ud_misc+`` entries.
+
+Residual carriers
+-----------------
+That shape holds every valid UD sentence exactly, so a valid sentence projects
+to records with nothing added. It cannot hold some input that still parses as
+CoNLL-U: rows out of canonical order, a HEAD with no DEPREL, or a FEATS key
+that recurs after another key. For those, and only those, the forward
+projection adds residual carriers, which never change the meaning of a
+published field:
+
+- on the sentence ``Expression``'s ``features``, ``conllu:scheme`` = ``1``,
+  then ``conllu:order`` (the row ids in source order, space-separated) when
+  the rows are not in canonical order, and ``conllu:rows`` (the number of
+  annotations in the carrier layer) when it is not zero;
+- a carrier layer (``kind="token-tag"``, ``subkind="conllu"``) with one
+  annotation per row the shape does not restore. Its ``label`` is the row id,
+  and its features are ``conllu:<column>`` = the column's exact text for each
+  such column, or ``conllu:drop`` = ``true`` for a row the shape implies but
+  the source lacks. A long value continues in ``conllu:more`` entries.
+
+The forward projection decides what needs a carrier by reading its own records
+back and comparing the result with the source, so the round trip is exact by
+construction.
+
+The inverse
+-----------
+:func:`sentence_from_json` reads one sentence's records as JSON (wire JSON with
+``$type`` keys and explicit nulls, or model-dumped JSON; an absent key and a
+null are the same) and rebuilds the sentence. Records in the shape above (the
+expression carries ``ud_comment_lines``) are read by the reader contract and
+the result is exact. Records published before that shape existed are
+reconstructed from what they hold: MISC from the sorted pairs plus
+``SpaceAfter=No`` from adjacent byte spans, FEATS regrouped from the morph
+annotations, empty nodes from ``ud_empty_node`` and the enhanced tokenization,
+multiword ranges from the alignment or from shared spans, and comments from
+the expression's fields. The result's
+:attr:`~lairs.conllu.model.ConlluSentence.lossy` then names the fields that
+were reconstructed: ``comments``, ``misc``, ``feats``, ``empty_nodes``,
+``multiword_tokens``, and ``deps``, as they apply, plus ``carriers`` when a
+sentence declares residual carriers that are missing.
+
+Seams for other producers
+-------------------------
+The naming of records, uuids, and references (:class:`RecordNaming`), the
+ontology references and FEATS normalisation (:class:`OntologyResolver`), the
+``createdAt`` stamp, languages, source method, corpus reference, and split are
+all parameters of :class:`Projector`, with neutral defaults.
+"""
+
+from __future__ import annotations
+
+import functools
+import json
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+import didactic.api as dx
+
+from lairs.conllu.model import (
+    COLUMNS,
+    DEPREL,
+    DEPS,
+    EMPTY,
+    FEATS,
+    FORM,
+    HEAD,
+    ID,
+    LEMMA,
+    MISC,
+    UPOS,
+    XPOS,
+    ConlluSentence,
+    split_items,
+)
+from lairs.records._generated.alignment import Alignment
+from lairs.records._generated.annotation import AnnotationLayer
+from lairs.records._generated.corpus import Membership
+
+# didactic resolves field annotations at runtime, so Feature is a runtime import.
+from lairs.records._generated.defs import Feature  # noqa: TC001
+from lairs.records._generated.expression import Expression
+from lairs.records._generated.segmentation import Segmentation
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator, Sequence
+
+    from lairs._types import JsonValue
+
+__all__ = [
+    "ALIGNMENT_NSID",
+    "ANNOTATION_NSID",
+    "CARRIER_PREFIX",
+    "CARRIER_SCHEME",
+    "CARRIER_SUBKIND",
+    "EXPRESSION_NSID",
+    "MEMBERSHIP_NSID",
+    "SEGMENTATION_NSID",
+    "FeatResolution",
+    "JsonObject",
+    "LayersRecord",
+    "LocalNaming",
+    "NoOntology",
+    "OntologyResolver",
+    "ProjectedRecord",
+    "Projector",
+    "RecordNaming",
+    "sentence_from_json",
+    "sentence_from_records",
+]
+
+type JsonObject = dict[str, JsonValue]
+"""One record value (or nested object) as JSON."""
+
+type LayersRecord = Expression | Segmentation | Alignment | AnnotationLayer | Membership
+"""A Layers record the projection produces or reads."""
+
+# the collection nsids of the records a sentence projects to.
+EXPRESSION_NSID = "pub.layers.expression.expression"
+SEGMENTATION_NSID = "pub.layers.segmentation.segmentation"
+ANNOTATION_NSID = "pub.layers.annotation.annotationLayer"
+ALIGNMENT_NSID = "pub.layers.alignment.alignment"
+MEMBERSHIP_NSID = "pub.layers.corpus.membership"
+
+# the carrier scheme: the key prefix, the version, and the carrier subkind.
+CARRIER_PREFIX = "conllu:"
+CARRIER_SCHEME = "1"
+CARRIER_SUBKIND = "conllu"
+
+# the carrier feature keys.
+_K_SCHEME = "conllu:scheme"
+_K_ORDER = "conllu:order"
+_K_ROWS = "conllu:rows"
+_K_MORE = "conllu:more"
+_K_DROP = "conllu:drop"
+
+# the carrier key of each column after the id, by column position.
+_COLUMN_KEYS = {
+    FORM: "conllu:form",
+    LEMMA: "conllu:lemma",
+    UPOS: "conllu:upos",
+    XPOS: "conllu:xpos",
+    FEATS: "conllu:feats",
+    HEAD: "conllu:head",
+    DEPREL: "conllu:deprel",
+    DEPS: "conllu:deps",
+    MISC: "conllu:misc",
+}
+_KEY_COLUMNS = {key: column for column, key in _COLUMN_KEYS.items()}
+
+# the maximum utf-8 length of a Feature.value.
+_MAX_VALUE_BYTES = 4096
+
+# the published feature keys of dependency and enhanced annotations.
+_UD_RELATION = "ud_relation"
+_UD_SUBTYPE = "ud_subtype"
+_UD_EMPTY_NODE = "ud_empty_node"
+_UD_FEATS_ORIGINAL = "ud_feats_original"
+_UD_COMMENT_LINES = "ud_comment_lines"
+_UD_COMMENT = "ud_comment"
+_UD_MISC = "ud_misc"
+_UD_FEATS = "ud_feats"
+# the suffix of the entries that continue an over-long value.
+_CONTINUATION = "+"
+_IS_ENHANCED = "isEnhanced"
+_FEATS_LINK_PREFIX = "feats:"
+_SPACE_AFTER = "SpaceAfter"
+
+# the published layer vocabulary.
+_FORMALISM = "universal-dependencies"
+_TAG_KIND = "token-tag"
+_RELATION = "relation"
+_SUBKIND_POS = "pos"
+_SUBKIND_XPOS = "xpos"
+_SUBKIND_LEMMA = "lemma"
+_SUBKIND_MORPH = "morph"
+_SUBKIND_MISC = "misc"
+_SUBKIND_DEPENDENCY = "dependency"
+_SUBKIND_ENHANCED = "enhanced-dependency"
+_MULTIWORD_LABEL = "multiword-token"
+_ONE_TO_ONE_LABEL = "one-to-one"
+
+# the comment keys the published expression consumes structurally.
+_STRUCTURAL_KEYS = frozenset(
+    {"newdoc id", "newdoc", "newpar id", "newpar", "sent_id", "text"}
+)
+
+# the head index of the dependency root.
+_ROOT = -1
+
+# the lossy field names a reconstructed sentence may report.
+LOSSY_COMMENTS = "comments"
+LOSSY_MISC = "misc"
+LOSSY_FEATS = "feats"
+LOSSY_EMPTY_NODES = "empty_nodes"
+LOSSY_MULTIWORD = "multiword_tokens"
+LOSSY_DEPS = "deps"
+LOSSY_CARRIERS = "carriers"
+
+# the default createdAt stamp of projected records.
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+# length-preserving canonicalisation of quotes, dashes, and spaces, used to
+# locate a form the declared text spells with different punctuation.
+_NORMALIZE_TABLE = str.maketrans(
+    {
+        chr(code): canonical
+        for code, canonical in (
+            (0x2018, "'"),
+            (0x2019, "'"),
+            (0x201A, "'"),
+            (0x201B, "'"),
+            (0x201C, '"'),
+            (0x201D, '"'),
+            (0x201E, '"'),
+            (0x2013, "-"),
+            (0x2014, "-"),
+            (0x2010, "-"),
+            (0x2011, "-"),
+            (0x00A0, " "),
+            (0x2009, " "),
+            (0x202F, " "),
+        )
+    }
+)
+
+
+# -----------------------------------------------------------------------------
+# seams
+# -----------------------------------------------------------------------------
+
+
+class FeatResolution(dx.Model):
+    """How one FEATS ``Feature=Value`` pair is published.
+
+    Attributes
+    ----------
+    feature : str
+        The feature the annotation label names (after any normalisation).
+    value : str
+        The value the annotation label names (after any normalisation).
+    type_ref : str or None
+        The ``ontologyTypeRef`` of the annotation, if any.
+    literal : str or None
+        The literal ``value`` of the annotation (an open-class feature's value),
+        if any.
+    extra : tuple of Feature
+        Extra annotation features, such as ``ud_feats_original`` when the pair
+        was normalised.
+    """
+
+    feature: str = dx.field(description="feature named by the label")
+    value: str = dx.field(description="value named by the label")
+    type_ref: str | None = dx.field(default=None, description="ontologyTypeRef")
+    literal: str | None = dx.field(default=None, description="literal value")
+    extra: tuple[dx.Embed[Feature], ...] = dx.field(
+        default=(),
+        description="extra annotation features",
+    )
+
+
+@runtime_checkable
+class OntologyResolver(Protocol):
+    """Resolves UD labels to ontology references.
+
+    The Layers UD importer references UPOS tags, dependency relations, and
+    FEATS pairs into published ontologies, normalising known misspellings and
+    minting language-specific values. A resolver supplies those references to
+    :class:`Projector`; it may keep its own state (for example the minted
+    typeDefs it must also publish). :class:`NoOntology` is the neutral default.
+    """
+
+    def ontology(self, kind: str) -> str | None:
+        """Return the ``ontologyRef`` of the ``pos``, ``deprel``, or ``feats`` layer."""
+        ...
+
+    def pos_type(self, upos: str) -> str | None:
+        """Return the ``ontologyTypeRef`` of a UPOS tag."""
+        ...
+
+    def deprel_type(self, deprel: str) -> str | None:
+        """Return the ``ontologyTypeRef`` of a (possibly subtyped) relation."""
+        ...
+
+    def feat(self, feature: str, value: str) -> FeatResolution:
+        """Return how one ``Feature=Value`` pair is published.
+
+        ``feature`` is the full FEATS key, layer included (``Number[psor]``).
+        A resolver that normalises the pair must return the source pair in an
+        ``ud_feats_original`` entry of ``extra``.
+        """
+        ...
+
+
+class NoOntology:
+    """The neutral resolver: no ontology references and no normalisation."""
+
+    def ontology(self, kind: str) -> str | None:  # noqa: ARG002
+        """Return ``None``: the layer references no ontology."""
+        return None
+
+    def pos_type(self, upos: str) -> str | None:  # noqa: ARG002
+        """Return ``None``: the tag references no typeDef."""
+        return None
+
+    def deprel_type(self, deprel: str) -> str | None:  # noqa: ARG002
+        """Return ``None``: the relation references no typeDef."""
+        return None
+
+    def feat(self, feature: str, value: str) -> FeatResolution:
+        """Return the pair unchanged, with no references."""
+        return _plain_feat(feature, value)
+
+
+@functools.lru_cache(maxsize=1 << 14)
+def _plain_feat(feature: str, value: str) -> FeatResolution:
+    """Return the interned unresolved resolution of a pair."""
+    return FeatResolution(feature=feature, value=value)
+
+
+@runtime_checkable
+class RecordNaming(Protocol):
+    """Names projected records, tokenizations, and references.
+
+    ``role`` is one of ``expr``, ``seg``, ``seg-enhanced``, ``align``,
+    ``upos``, ``xpos``, ``lemma``, ``morph``, ``misc``, ``deps``, ``edeps``,
+    ``conllu``, and ``mem`` for records (the token-tag roles also occur with an
+    ``-enhanced`` suffix for the layers over empty nodes), and ``surface``,
+    ``words``, and ``enhanced`` for tokenization uuids. These are the suffixes
+    the Layers UD importer uses, so its scheme is
+    ``f"{stem}/{sent_id}/{role}"`` with references ``f"at://local/{local_id}"``.
+    """
+
+    def local_id(self, role: str, sentence_id: str, ordinal: int) -> str:
+        """Return the local id (record key) of one of a sentence's records."""
+        ...
+
+    def uuid(self, role: str, sentence_id: str, ordinal: int) -> str:
+        """Return the uuid of one of a sentence's tokenizations."""
+        ...
+
+    def unit_local_id(self, kind: str, unit_id: str, index: int) -> str:
+        """Return the local id of a ``document`` or ``paragraph`` expression.
+
+        ``index`` is the ordinal of the sentence that opens the unit.
+        """
+        ...
+
+    def reference(self, nsid: str, local_id: str) -> str:
+        """Return the AT-URI other records use to reference a record."""
+        ...
+
+
+class LocalNaming:
+    """The default naming: record keys and AT-URIs under ``at://local``.
+
+    Records are keyed ``<stem>-<ordinal>-<role>`` (valid record keys whatever
+    the sentence ids contain), tokenizations ``<stem>/<ordinal>/<role>``, and
+    references are ``at://local/<collection>/<key>``.
+
+    Parameters
+    ----------
+    stem : str, optional
+        The prefix of every key.
+    """
+
+    def __init__(self, stem: str = "conllu") -> None:
+        self.stem = stem
+
+    def local_id(self, role: str, sentence_id: str, ordinal: int) -> str:  # noqa: ARG002
+        """Return ``<stem>-<ordinal>-<role>``."""
+        return f"{self.stem}-{ordinal}-{role}"
+
+    def uuid(self, role: str, sentence_id: str, ordinal: int) -> str:  # noqa: ARG002
+        """Return ``<stem>/<ordinal>/<role>``."""
+        return f"{self.stem}/{ordinal}/{role}"
+
+    def unit_local_id(self, kind: str, unit_id: str, index: int) -> str:  # noqa: ARG002
+        """Return ``<stem>-<kind>-<index>``."""
+        return f"{self.stem}-{kind}-{index}"
+
+    def reference(self, nsid: str, local_id: str) -> str:
+        """Return ``at://local/<nsid>/<local_id>``."""
+        return f"at://local/{nsid}/{local_id}"
+
+
+class ProjectedRecord(dx.Model):
+    """One record the forward projection produced.
+
+    Attributes
+    ----------
+    role : str
+        What the record is for the sentence (``expr``, ``seg``, ``upos``, and
+        so on; ``document`` and ``paragraph`` for structure expressions).
+    nsid : str
+        The record's collection NSID.
+    local_id : str
+        The record's local id under the naming scheme.
+    uri : str
+        The AT-URI other records reference it by.
+    value_json : str
+        The record value as JSON.
+    """
+
+    role: str = dx.field(description="what the record is for the sentence")
+    nsid: str = dx.field(description="collection NSID")
+    local_id: str = dx.field(description="local id under the naming scheme")
+    uri: str = dx.field(description="AT-URI other records reference it by")
+    value_json: str = dx.field(description="record value as JSON")
+
+    def value(self) -> JsonObject:
+        """Return the record value as a JSON object."""
+        value = json.loads(self.value_json)
+        if not isinstance(value, dict):
+            message = "projected record value is not a JSON object"
+            raise TypeError(message)
+        return value
+
+    def to_model(self) -> LayersRecord:
+        """Validate the value into its generated record model.
+
+        Returns
+        -------
+        LayersRecord
+            The typed record.
+
+        Raises
+        ------
+        didactic.api.ValidationError
+            When the value does not validate (it always should).
+        ValueError
+            When the collection is not one the projection produces.
+        """
+        model = _MODELS.get(self.nsid)
+        if model is None:
+            message = f"no record model for collection {self.nsid!r}"
+            raise ValueError(message)
+        return model.model_validate_json(self.value_json)
+
+
+_MODELS: dict[
+    str,
+    type[Expression | Segmentation | Alignment | AnnotationLayer | Membership],
+] = {
+    EXPRESSION_NSID: Expression,
+    SEGMENTATION_NSID: Segmentation,
+    ALIGNMENT_NSID: Alignment,
+    ANNOTATION_NSID: AnnotationLayer,
+    MEMBERSHIP_NSID: Membership,
+}
+
+
+# -----------------------------------------------------------------------------
+# column helpers shared by both directions
+# -----------------------------------------------------------------------------
+
+
+def _pairs(column: str) -> dict[str, str | None]:
+    """Read a FEATS or MISC column as published: a last-wins key map.
+
+    A bare item maps to ``""``; an item whose value is empty or ``_`` maps to
+    ``None`` (and is not published); an item whose key is empty or ``_`` is
+    skipped. This is how the importer's parser reads these columns, except
+    that a value keeps any further ``=`` it contains.
+    """
+    pairs: dict[str, str | None] = {}
+    for item in split_items(column):
+        key, sep, value = item.partition("=")
+        if key in {"", EMPTY}:
+            continue
+        if not sep:
+            pairs[key] = ""
+        else:
+            pairs[key] = None if value in {"", EMPTY} else value
+    return pairs
+
+
+def _published_misc(column: str) -> list[tuple[str, str]]:
+    """Return the MISC pairs the published shape carries, sorted, minus SpaceAfter."""
+    return sorted(
+        (key, value)
+        for key, value in _pairs(column).items()
+        if key != _SPACE_AFTER and value is not None
+    )
+
+
+def _space_after(column: str) -> bool:
+    """Return whether a MISC column leaves a space after its token."""
+    return _pairs(column).get(_SPACE_AFTER) != "No"
+
+
+def _split_deprel(deprel: str) -> tuple[str, str | None]:
+    """Split a relation into its universal part and subtype."""
+    universal, sep, subtype = deprel.partition(":")
+    return universal, subtype if sep else None
+
+
+def _render_pairs(pairs: Iterable[tuple[str, str]]) -> str:
+    """Render key/value pairs as a MISC column (``""`` values as bare items)."""
+    items = [key if value == "" else f"{key}={value}" for key, value in pairs]
+    return "|".join(items) or EMPTY
+
+
+def _row_key(row_id: str) -> tuple[int, int, int]:
+    """Return the canonical sort key of a row id.
+
+    A range sorts just before its first word and an empty node ``n.m`` just
+    after word ``n``.
+    """
+    if "-" in row_id:
+        start, _, _end = row_id.partition("-")
+        return int(start), 0, 0
+    if "." in row_id:
+        major, _, minor = row_id.partition(".")
+        return int(major), 2, int(minor)
+    return int(row_id), 1, 0
+
+
+def _chunks(value: str) -> list[str]:
+    """Split a carrier value into pieces of at most 4096 utf-8 bytes."""
+    if len(value) * 4 <= _MAX_VALUE_BYTES or (
+        len(value.encode("utf-8")) <= _MAX_VALUE_BYTES
+    ):
+        return [value]
+    pieces: list[str] = []
+    piece: list[str] = []
+    size = 0
+    for char in value:
+        width = len(char.encode("utf-8"))
+        if size + width > _MAX_VALUE_BYTES:
+            pieces.append("".join(piece))
+            piece = []
+            size = 0
+        piece.append(char)
+        size += width
+    pieces.append("".join(piece))
+    return pieces
+
+
+def _chunked(key: str, value: str) -> list[tuple[str, str]]:
+    """Return ``(key, value)`` entries for a value, continued when over-long.
+
+    A value over the 4096-byte limit is split at character boundaries into an
+    entry ``key`` followed by entries ``key+``, which a reader joins in order.
+    """
+    pieces = _chunks(value)
+    entries = [(key, pieces[0])]
+    entries.extend((f"{key}{_CONTINUATION}", piece) for piece in pieces[1:])
+    return entries
+
+
+def _chunked_all(pairs: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Return the entries of several pairs, each continued when over-long."""
+    return [entry for key, value in pairs for entry in _chunked(key, value)]
+
+
+def _continued(entries: Sequence[tuple[str, str]], key: str) -> list[str]:
+    """Return the values of ``key`` in order, each joined with its continuations."""
+    values: list[str] = []
+    more = f"{key}{_CONTINUATION}"
+    for name, value in entries:
+        if name == key:
+            values.append(value)
+        elif name == more and values:
+            values[-1] += value
+    return values
+
+
+def _carrier_entries(key: str, value: str) -> list[JsonValue]:
+    """Return the feature entries of one carrier value, split when long."""
+    pieces = _chunks(value)
+    entries: list[JsonValue] = [{"key": key, "value": pieces[0]}]
+    entries.extend({"key": _K_MORE, "value": piece} for piece in pieces[1:])
+    return entries
+
+
+def _canonical(value: str) -> str:
+    """Canonicalise quotes, dashes, and spaces, one character for one."""
+    return value.translate(_NORMALIZE_TABLE)
+
+
+def _surface_spans(forms: Sequence[str], text: str) -> list[tuple[int, int] | None]:
+    """Locate each surface form in the text and return its utf-8 byte span.
+
+    Forms are searched from a moving cursor, retrying on canonicalised quotes,
+    dashes, and spaces; a form that cannot be located gets no span.
+    """
+    spans: list[tuple[int, int] | None] = []
+    canonical_text = _canonical(text)
+    byte_cursor = 0
+    char_cursor = 0
+    for form in forms:
+        located = text.find(form, char_cursor)
+        if located == -1:
+            located = canonical_text.find(_canonical(form), char_cursor)
+        if located == -1:
+            spans.append(None)
+            continue
+        byte_cursor += len(text[char_cursor:located].encode("utf-8"))
+        start = byte_cursor
+        end = start + len(text[located : located + len(form)].encode("utf-8"))
+        spans.append((start, end))
+        byte_cursor = end
+        char_cursor = located + len(form)
+    return spans
+
+
+def _comment_metadata(comment_lines: Sequence[str]) -> dict[str, str | None]:
+    """Read comment lines as the importer does: a last-wins key/value map.
+
+    ``# newdoc`` and ``# newpar`` keep a ``None`` value; other comments need a
+    non-empty key and value.
+    """
+    metadata: dict[str, str | None] = {}
+    for line in comment_lines:
+        key, sep, value = line.strip()[1:].partition("=")
+        key = key.strip()
+        stripped = value.strip() if sep else None
+        if key in {"newdoc", "newpar"} or (key and stripped):
+            metadata[key] = stripped
+    return metadata
+
+
+def _unit_id(metadata: dict[str, str | None], marker: str) -> str | None:
+    """Return the id of a ``# newdoc`` or ``# newpar`` marker, if present."""
+    keyed = metadata.get(f"{marker} id")
+    if keyed:
+        return keyed
+    if marker in metadata:
+        sent_id = metadata.get("sent_id")
+        return f"{marker}:{sent_id or 'anon'}"
+    return None
+
+
+# -----------------------------------------------------------------------------
+# forward
+# -----------------------------------------------------------------------------
+
+
+class _Units:
+    """The document and paragraph context of a run of sentences."""
+
+    def __init__(self) -> None:
+        self.document: str | None = None
+        self.paragraph: str | None = None
+        self.seen: dict[tuple[str, str], str] = {}
+
+
+class Projector:
+    """Projects CoNLL-U sentences to Layers records.
+
+    Parameters
+    ----------
+    naming : RecordNaming or None, optional
+        Names records, uuids, and references; :class:`LocalNaming` by default.
+    ontology : OntologyResolver or None, optional
+        Supplies ontology references; :class:`NoOntology` by default.
+    created_at : datetime.datetime, optional
+        The ``createdAt`` of every record (the Unix epoch by default, so a
+        projection is deterministic).
+    languages : collections.abc.Iterable of str, optional
+        The BCP-47 tags stamped on expressions.
+    source_method : str or None, optional
+        The ``sourceMethod`` of every layer (``converted`` by default).
+    corpus_ref : str or None, optional
+        When set, every sentence also gets a ``Membership`` in this corpus.
+    split : str or None, optional
+        The ``split`` of those memberships.
+    tool : str, optional
+        The ``metadata.tool`` of the multiword-token alignment.
+    carriers : bool, optional
+        Whether to add residual carriers for input the record shape cannot
+        hold (true by default). Valid UD never needs them.
+    """
+
+    def __init__(  # noqa: PLR0913  (each projection seam is one keyword)
+        self,
+        *,
+        naming: RecordNaming | None = None,
+        ontology: OntologyResolver | None = None,
+        created_at: datetime = _EPOCH,
+        languages: Iterable[str] = (),
+        source_method: str | None = "converted",
+        corpus_ref: str | None = None,
+        split: str | None = None,
+        tool: str = "lairs conllu-ud",
+        carriers: bool = True,
+    ) -> None:
+        self.naming: RecordNaming = naming if naming is not None else LocalNaming()
+        self.ontology: OntologyResolver = (
+            ontology if ontology is not None else NoOntology()
+        )
+        self.created_at = created_at.isoformat()
+        self.languages = tuple(languages)
+        self.source_method = source_method
+        self.corpus_ref = corpus_ref
+        self.split = split
+        self.tool = tool
+        self.carriers = carriers
+        self._units = _Units()
+
+    def project(
+        self,
+        sentences: Iterable[ConlluSentence],
+        *,
+        start: int = 0,
+    ) -> Iterator[ProjectedRecord]:
+        """Project a run of sentences, tracking documents and paragraphs.
+
+        Ordinals count from ``start`` in iteration order. A document or
+        paragraph expression is emitted the first time a sentence opens it.
+
+        Parameters
+        ----------
+        sentences : collections.abc.Iterable of ConlluSentence
+            The sentences of one document or treebank file, in order.
+        start : int, optional
+            The ordinal of the first sentence.
+
+        Yields
+        ------
+        ProjectedRecord
+            The records, sentence by sentence.
+        """
+        for ordinal, sentence in enumerate(sentences, start=start):
+            yield from self.project_sentence(sentence, ordinal)
+
+    def project_sentence(
+        self,
+        sentence: ConlluSentence,
+        ordinal: int,
+    ) -> list[ProjectedRecord]:
+        """Project one sentence, in the document context of the earlier ones.
+
+        Parameters
+        ----------
+        sentence : ConlluSentence
+            The sentence.
+        ordinal : int
+            Its 0-based position in the corpus.
+
+        Returns
+        -------
+        list of ProjectedRecord
+            Any newly opened document or paragraph expression, then the
+            sentence's expression, segmentations, alignment, layers, and
+            membership.
+        """
+        out: list[ProjectedRecord] = []
+        metadata = _comment_metadata(sentence.comment_lines)
+        parent = self._open_units(metadata, out, ordinal)
+        out.extend(self._sentence_records(sentence, ordinal, metadata, parent))
+        return out
+
+    def _open_units(
+        self,
+        metadata: dict[str, str | None],
+        out: list[ProjectedRecord],
+        ordinal: int,
+    ) -> str | None:
+        """Open any new document or paragraph and return the sentence's parent."""
+        units = self._units
+        doc_id = _unit_id(metadata, "newdoc")
+        if doc_id is not None:
+            units.document = self._unit("document", doc_id, None, out, ordinal)
+            units.paragraph = None
+        par_id = _unit_id(metadata, "newpar")
+        if par_id is not None:
+            units.paragraph = self._unit(
+                "paragraph", par_id, units.document, out, ordinal
+            )
+        return units.paragraph or units.document
+
+    def _unit(
+        self,
+        kind: str,
+        unit_id: str,
+        parent: str | None,
+        out: list[ProjectedRecord],
+        ordinal: int,
+    ) -> str:
+        """Return the reference of a structure expression, emitting it once."""
+        seen = self._units.seen
+        known = seen.get((kind, unit_id))
+        if known is not None:
+            return known
+        local_id = self.naming.unit_local_id(kind, unit_id, ordinal)
+        uri = self.naming.reference(EXPRESSION_NSID, local_id)
+        seen[kind, unit_id] = uri
+        value: JsonObject = {"id": unit_id, "kind": kind}
+        if self.languages:
+            value["languages"] = list(self.languages)
+        if parent is not None:
+            value["parentRef"] = parent
+        value["createdAt"] = self.created_at
+        out.append(_record(kind, EXPRESSION_NSID, local_id, uri, value))
+        return uri
+
+    def _sentence_records(
+        self,
+        sentence: ConlluSentence,
+        ordinal: int,
+        metadata: dict[str, str | None],
+        parent: str | None,
+    ) -> list[ProjectedRecord]:
+        """Build one sentence's records, with residual carriers when needed."""
+        shape = _Shape(self, sentence, ordinal, metadata, parent)
+        records = shape.published()
+        if not self.carriers:
+            return records
+        predicted = _predict(shape.json_records())
+        carrier_rows = _row_carriers(predicted.columns, shape.rows)
+        order = [row[ID] for row in shape.rows]
+        entries: list[JsonValue] = []
+        if order != [row_id for row_id in predicted.order if row_id in set(order)]:
+            entries.extend(_carrier_entries(_K_ORDER, " ".join(order)))
+        if carrier_rows:
+            entries.append({"key": _K_ROWS, "value": str(len(carrier_rows))})
+            records.append(shape.carrier_layer(carrier_rows))
+        if not entries:
+            return records
+        expression = records[0].value()
+        features = expression.get("features")
+        published = features.get("entries") if isinstance(features, dict) else None
+        merged: list[JsonValue] = list(published) if isinstance(published, list) else []
+        merged.append({"key": _K_SCHEME, "value": CARRIER_SCHEME})
+        merged.extend(entries)
+        expression["features"] = {"entries": merged}
+        records[0] = records[0].with_(
+            value_json=json.dumps(expression, ensure_ascii=False)
+        )
+        return records
+
+
+def _record(
+    role: str,
+    nsid: str,
+    local_id: str,
+    uri: str,
+    value: JsonObject,
+) -> ProjectedRecord:
+    """Build a projected record from its JSON value."""
+    return ProjectedRecord(
+        role=role,
+        nsid=nsid,
+        local_id=local_id,
+        uri=uri,
+        value_json=json.dumps(value, ensure_ascii=False),
+    )
+
+
+def _anchor(index: int, uuid: str) -> JsonObject:
+    """Return the token anchor of an annotation."""
+    return {"tokenRef": {"tokenIndex": index, "tokenizationId": {"value": uuid}}}
+
+
+def _feature_map(entries: Sequence[tuple[str, str]]) -> JsonObject | None:
+    """Return a feature map of key/value pairs, or ``None`` when empty."""
+    if not entries:
+        return None
+    return {"entries": [{"key": key, "value": value} for key, value in entries]}
+
+
+def _drop_none(value: JsonObject) -> JsonObject:
+    """Return ``value`` without its ``None`` entries."""
+    return {key: item for key, item in value.items() if item is not None}
+
+
+class _Shape:
+    """The published shape of one sentence, built once and read by both halves."""
+
+    def __init__(
+        self,
+        projector: Projector,
+        sentence: ConlluSentence,
+        ordinal: int,
+        metadata: dict[str, str | None],
+        parent: str | None,
+    ) -> None:
+        self.p = projector
+        self.ordinal = ordinal
+        self.metadata = metadata
+        self.parent = parent
+        self.comment_lines = sentence.comment_lines
+        self.rows = [tuple(line.split("\t")) for line in sentence.row_lines]
+        self.words = [row for row in self.rows if row[ID].isdigit()]
+        self.empties = [row for row in self.rows if "." in row[ID]]
+        self.ranges = {
+            int(row[ID].partition("-")[0]): row for row in self.rows if "-" in row[ID]
+        }
+        sent_id = metadata.get("sent_id")
+        self.sid = sent_id or f"s{ordinal}"
+        naming = projector.naming
+        self.uuid_surface = naming.uuid("surface", self.sid, ordinal)
+        self.uuid_words = naming.uuid("words", self.sid, ordinal)
+        self.uuid_enhanced = naming.uuid("enhanced", self.sid, ordinal)
+        self.expr_local = naming.local_id("expr", self.sid, ordinal)
+        self.expr_ref = naming.reference(EXPRESSION_NSID, self.expr_local)
+        self._units()
+        declared = metadata.get("text")
+        self.text = declared or self._joined()
+        spans = _surface_spans([unit[0] for unit in self.units], self.text)
+        self.unit_spans = spans
+        self.word_spans: dict[int, tuple[int, int] | None] = {}
+        for (_form, word_ids, _misc, _feats), span in zip(
+            self.units, spans, strict=True
+        ):
+            for word_id in word_ids:
+                self.word_spans[word_id] = span
+        self._json: list[tuple[str, JsonObject]] = []
+
+    def _units(self) -> None:
+        """Compute the surface units: (form, word ids, misc, feats) in order."""
+        words = {int(row[ID]): row for row in self.words}
+        self.units: list[tuple[str, tuple[int, ...], str, str]] = []
+        if not words:
+            return
+        cursor = min(words)
+        last = max(words)
+        while cursor <= last:
+            if cursor not in words:
+                cursor += 1
+                continue
+            mwt = self.ranges.get(cursor)
+            if mwt is not None:
+                end = int(mwt[ID].partition("-")[2])
+                covered = tuple(i for i in range(cursor, end + 1) if i in words)
+                self.units.append((mwt[FORM], covered, mwt[MISC], mwt[FEATS]))
+                cursor = end + 1
+            else:
+                row = words[cursor]
+                self.units.append((row[FORM], (cursor,), row[MISC], EMPTY))
+                cursor += 1
+
+    def _joined(self) -> str:
+        """Join the surface forms honouring ``SpaceAfter``."""
+        parts: list[str] = []
+        for index, (form, _ids, misc, _feats) in enumerate(self.units):
+            parts.append(form)
+            if _space_after(misc) and index < len(self.units) - 1:
+                parts.append(" ")
+        return "".join(parts)
+
+    def _local(self, role: str) -> str:
+        """Return the local id of one of the sentence's records."""
+        return self.p.naming.local_id(role, self.sid, self.ordinal)
+
+    def _emit(self, role: str, nsid: str, value: JsonObject) -> ProjectedRecord:
+        """Record one JSON value and wrap it as a projected record."""
+        self._json.append((role, value))
+        local_id = self._local(role)
+        uri = self.p.naming.reference(nsid, local_id)
+        return _record(role, nsid, local_id, uri, value)
+
+    def json_records(self) -> list[tuple[str, JsonObject]]:
+        """Return the (role, value) pairs of the published records."""
+        return self._json
+
+    def published(self) -> list[ProjectedRecord]:
+        """Build the published-shape records of the sentence."""
+        p = self.p
+        out = [self._emit("expr", EXPRESSION_NSID, self._expression())]
+        out.append(
+            self._emit(
+                "seg",
+                SEGMENTATION_NSID,
+                {
+                    "expression": self.expr_ref,
+                    "createdAt": p.created_at,
+                    "tokenizations": [self._surface(), self._word_tokenization()],
+                },
+            )
+        )
+        alignment = self._alignment()
+        if alignment is not None:
+            out.append(self._emit("align", ALIGNMENT_NSID, alignment))
+        emitted: dict[str, str] = {}
+        for role, layer in (
+            ("upos", self._tag_layer(_SUBKIND_POS, UPOS)),
+            ("xpos", self._tag_layer(_SUBKIND_XPOS, XPOS)),
+            ("lemma", self._tag_layer(_SUBKIND_LEMMA, LEMMA)),
+            ("morph", self._morph_layer()),
+            ("misc", self._misc_layer()),
+            ("deps", self._dependency_layer()),
+        ):
+            if layer is not None:
+                record = self._emit(role, ANNOTATION_NSID, layer)
+                emitted[role] = record.uri
+                out.append(record)
+        enhanced = self._enhanced_layer()
+        if enhanced is not None or self.empties:
+            out.append(
+                self._emit(
+                    "seg-enhanced",
+                    SEGMENTATION_NSID,
+                    {
+                        "expression": self.expr_ref,
+                        "createdAt": p.created_at,
+                        "tokenizations": [self._enhanced_tokenization()],
+                    },
+                )
+            )
+        if enhanced is not None:
+            out.append(self._emit("edeps", ANNOTATION_NSID, enhanced))
+        out.extend(self._empty_node_layers(emitted))
+        if p.corpus_ref is not None:
+            membership = _drop_none(
+                {
+                    "corpusRef": p.corpus_ref,
+                    "expressionRef": self.expr_ref,
+                    "ordinal": self.ordinal,
+                    "split": p.split,
+                    "createdAt": p.created_at,
+                }
+            )
+            out.append(self._emit("mem", MEMBERSHIP_NSID, membership))
+        return out
+
+    def _empty_node_layers(self, emitted: dict[str, str]) -> list[ProjectedRecord]:
+        """Return the token-tag layers over the empty nodes.
+
+        Each names the words layer of the same subkind, when the sentence has
+        one, in ``parentLayerRef``.
+        """
+        out: list[ProjectedRecord] = []
+        if not self.empties:
+            return out
+        for role, layer in (
+            ("upos", self._tag_layer(_SUBKIND_POS, UPOS, empty=True)),
+            ("xpos", self._tag_layer(_SUBKIND_XPOS, XPOS, empty=True)),
+            ("lemma", self._tag_layer(_SUBKIND_LEMMA, LEMMA, empty=True)),
+            ("morph", self._morph_layer(empty=True)),
+            ("misc", self._misc_layer(empty=True)),
+        ):
+            if layer is None:
+                continue
+            parent = emitted.get(role)
+            if parent is not None:
+                layer["parentLayerRef"] = parent
+            out.append(self._emit(f"{role}-enhanced", ANNOTATION_NSID, layer))
+        return out
+
+    def _expression(self) -> JsonObject:
+        """Return the sentence expression."""
+        features = [(_UD_COMMENT_LINES, str(len(self.comment_lines)))]
+        for line in self.comment_lines:
+            features.extend(_chunked(_UD_COMMENT, line))
+        # the queryable view: the key = value comments, key-sorted, last wins.
+        features.extend(
+            _chunked_all(
+                sorted(
+                    (key, value)
+                    for key, value in self.metadata.items()
+                    if key not in _STRUCTURAL_KEYS and value
+                )
+            )
+        )
+        return _drop_none(
+            {
+                "id": self.sid,
+                "kind": "sentence",
+                "text": self.text,
+                "languages": list(self.p.languages) or None,
+                "parentRef": self.parent,
+                "features": _feature_map(features),
+                "createdAt": self.p.created_at,
+            }
+        )
+
+    def _tokens(
+        self,
+        forms: Iterable[tuple[str, tuple[int, int] | None]],
+    ) -> list[JsonValue]:
+        """Return tokens for (text, span) pairs, indexed in order."""
+        tokens: list[JsonValue] = []
+        for index, (form, span) in enumerate(forms):
+            token: JsonObject = {"tokenIndex": index, "text": form}
+            if span is not None:
+                token["textSpan"] = {"byteStart": span[0], "byteEnd": span[1]}
+            tokens.append(token)
+        return tokens
+
+    def _surface(self) -> JsonObject:
+        """Return the surface tokenization."""
+        forms = [
+            (unit[0], span)
+            for unit, span in zip(self.units, self.unit_spans, strict=True)
+        ]
+        return {
+            "kind": "custom",
+            "uuid": {"value": self.uuid_surface},
+            "tokens": self._tokens(forms),
+        }
+
+    def _word_forms(self) -> list[tuple[str, tuple[int, int] | None]]:
+        """Return the (form, span) of each word."""
+        return [(row[FORM], self.word_spans.get(int(row[ID]))) for row in self.words]
+
+    def _word_tokenization(self) -> JsonObject:
+        """Return the syntactic-word tokenization."""
+        return {
+            "kind": "custom",
+            "uuid": {"value": self.uuid_words},
+            "tokens": self._tokens(self._word_forms()),
+        }
+
+    def _enhanced_tokenization(self) -> JsonObject:
+        """Return the enhanced tokenization: the words, then the empty nodes."""
+        forms = self._word_forms()
+        forms.extend(
+            ("" if row[FORM] == EMPTY else row[FORM], None) for row in self.empties
+        )
+        return {
+            "kind": "custom",
+            "uuid": {"value": self.uuid_enhanced},
+            "tokens": self._tokens(forms),
+        }
+
+    def _alignment(self) -> JsonObject | None:
+        """Return the multiword-token alignment, when the sentence has one."""
+        if not any(len(unit[1]) > 1 for unit in self.units):
+            return None
+        index_of = {int(row[ID]): index for index, row in enumerate(self.words)}
+        links: list[JsonValue] = []
+        for surface_index, (_form, word_ids, misc, feats) in enumerate(self.units):
+            entries: list[tuple[str, str]] = []
+            if len(word_ids) > 1:
+                # the queryable view, then the verbatim range-line columns.
+                entries.extend(_chunked_all(_published_misc(misc)))
+                entries.extend(
+                    _chunked_all(
+                        (f"{_FEATS_LINK_PREFIX}{key}", value)
+                        for key, value in sorted(
+                            (key, value)
+                            for key, value in _pairs(feats).items()
+                            if value is not None
+                        )
+                    )
+                )
+                if feats != EMPTY:
+                    entries.extend(_chunked(_UD_FEATS, feats))
+                if misc != EMPTY:
+                    entries.extend(_chunked(_UD_MISC, misc))
+            links.append(
+                _drop_none(
+                    {
+                        "sourceIndices": [surface_index],
+                        "targetIndices": [
+                            index_of[w] for w in word_ids if w in index_of
+                        ],
+                        "label": _MULTIWORD_LABEL
+                        if len(word_ids) > 1
+                        else _ONE_TO_ONE_LABEL,
+                        "features": _feature_map(entries),
+                    }
+                )
+            )
+        return {
+            "createdAt": self.p.created_at,
+            "expression": self.expr_ref,
+            "kind": "tokenization-to-tokenization",
+            "subkind": "word-to-word",
+            "source": {"localId": {"value": self.uuid_surface}},
+            "target": {"localId": {"value": self.uuid_words}},
+            "links": links,
+            "metadata": {"tool": self.p.tool},
+        }
+
+    def _layer(  # noqa: PLR0913  (the layer fields the published shape sets)
+        self,
+        kind: str,
+        subkind: str,
+        label_set: str,
+        annotations: list[JsonValue],
+        *,
+        ontology: str | None = None,
+        uuid: str | None = None,
+        parent: str | None = None,
+    ) -> JsonObject:
+        """Return an annotation layer over the sentence."""
+        return _drop_none(
+            {
+                "annotations": annotations,
+                "createdAt": self.p.created_at,
+                "expression": self.expr_ref,
+                "kind": kind,
+                "subkind": subkind,
+                "formalism": _FORMALISM,
+                "sourceMethod": self.p.source_method,
+                "labelSet": label_set,
+                "ontologyRef": ontology,
+                "parentLayerRef": parent,
+                "tokenizationId": {"value": uuid or self.uuid_words},
+            }
+        )
+
+    def _targets(self, *, empty: bool) -> list[tuple[int, str, tuple[str, ...]]]:
+        """Return (token index, tokenization uuid, row) for words or empty nodes."""
+        if not empty:
+            return [(i, self.uuid_words, row) for i, row in enumerate(self.words)]
+        base = len(self.words)
+        return [
+            (base + offset, self.uuid_enhanced, row)
+            for offset, row in enumerate(self.empties)
+        ]
+
+    def _annotation(
+        self,
+        uuid: str,
+        index: int,
+        tokenization: str,
+        row: tuple[str, ...],
+        entries: Sequence[tuple[str, str]] = (),
+    ) -> JsonObject:
+        """Return the common fields of a token annotation on a row."""
+        features = list(entries)
+        if "." in row[ID]:
+            features.append((_UD_EMPTY_NODE, row[ID]))
+        return _drop_none(
+            {
+                "uuid": {"value": uuid},
+                "anchor": _anchor(index, tokenization),
+                "tokenIndex": index,
+                "features": _feature_map(features),
+            }
+        )
+
+    def _tag_layer(
+        self,
+        subkind: str,
+        column: int,
+        *,
+        empty: bool = False,
+    ) -> JsonObject | None:
+        """Return a UPOS, XPOS, or lemma token-tag layer, or ``None`` when empty.
+
+        With ``empty`` the layer is over the enhanced tokenization and holds
+        the empty nodes' annotations only.
+        """
+        annotations: list[JsonValue] = []
+        prefix = "upos" if subkind == _SUBKIND_POS else subkind
+        for index, tokenization, row in self._targets(empty=empty):
+            value = row[column]
+            if value == EMPTY:
+                continue
+            annotation = self._annotation(f"{prefix}-{index}", index, tokenization, row)
+            annotation["label"] = value
+            if subkind == _SUBKIND_LEMMA:
+                annotation["value"] = value
+            elif subkind == _SUBKIND_POS:
+                type_ref = self.p.ontology.pos_type(value)
+                if type_ref is not None:
+                    annotation["ontologyTypeRef"] = type_ref
+            annotations.append(annotation)
+        uuid = self.uuid_enhanced if empty else None
+        if subkind == _SUBKIND_POS:
+            # the words always get a UPOS layer; the empty nodes only when tagged.
+            if empty and not annotations:
+                return None
+            return self._layer(
+                _TAG_KIND,
+                subkind,
+                "universal-pos",
+                annotations,
+                ontology=self.p.ontology.ontology("pos"),
+                uuid=uuid,
+            )
+        if not annotations:
+            return None
+        label_set = "language-specific-pos" if subkind == _SUBKIND_XPOS else "lemma"
+        return self._layer(_TAG_KIND, subkind, label_set, annotations, uuid=uuid)
+
+    def _morph_layer(self, *, empty: bool = False) -> JsonObject | None:
+        """Return the FEATS layer: one annotation per ``Feature=Value``.
+
+        The label keeps the full FEATS key, layer included, and a multi-valued
+        feature gives one annotation per value, in column order.
+        """
+        annotations: list[JsonValue] = []
+        for index, tokenization, row in self._targets(empty=empty):
+            for item in split_items(row[FEATS]):
+                name, sep, raw = item.partition("=")
+                if not sep:
+                    continue
+                for value in raw.split(","):
+                    resolved = self.p.ontology.feat(name, value)
+                    extra = [(entry.key, entry.value) for entry in resolved.extra]
+                    annotation = self._annotation(
+                        f"morph-{len(annotations)}", index, tokenization, row, extra
+                    )
+                    annotation["label"] = f"{resolved.feature}={resolved.value}"
+                    if resolved.literal is not None:
+                        annotation["value"] = resolved.literal
+                    if resolved.type_ref is not None:
+                        annotation["ontologyTypeRef"] = resolved.type_ref
+                    annotations.append(annotation)
+        if not annotations:
+            return None
+        return self._layer(
+            _TAG_KIND,
+            _SUBKIND_MORPH,
+            "universal-features",
+            annotations,
+            ontology=self.p.ontology.ontology("feats"),
+            uuid=self.uuid_enhanced if empty else None,
+        )
+
+    def _misc_layer(self, *, empty: bool = False) -> JsonObject | None:
+        """Return the verbatim MISC layer: one annotation per row's column.
+
+        A word with no MISC has no annotation. Every empty node has one, with
+        ``_`` for no MISC, so its ``ud_empty_node`` entry always names the node.
+        """
+        annotations: list[JsonValue] = []
+        for index, tokenization, row in self._targets(empty=empty):
+            if row[MISC] == EMPTY and not empty:
+                continue
+            pieces = _chunks(row[MISC])
+            more = [(f"{_UD_MISC}{_CONTINUATION}", piece) for piece in pieces[1:]]
+            annotation = self._annotation(
+                f"misc-{index}", index, tokenization, row, more
+            )
+            annotation["value"] = pieces[0]
+            annotations.append(annotation)
+        if not annotations:
+            return None
+        return self._layer(
+            _TAG_KIND,
+            _SUBKIND_MISC,
+            "ud-misc",
+            annotations,
+            uuid=self.uuid_enhanced if empty else None,
+        )
+
+    def _dependency_layer(self) -> JsonObject:
+        """Return the basic dependency layer (HEAD and DEPREL)."""
+        annotations: list[JsonValue] = []
+        for index, row in enumerate(self.words):
+            if row[HEAD] == EMPTY or row[DEPREL] == EMPTY:
+                continue
+            head = int(row[HEAD])
+            deprel = row[DEPREL]
+            universal, subtype = _split_deprel(deprel)
+            entries = [(_UD_RELATION, universal)]
+            if subtype is not None:
+                entries.append((_UD_SUBTYPE, subtype))
+            entries.extend(_chunked_all(_published_misc(row[MISC])))
+            annotations.append(
+                _drop_none(
+                    {
+                        "uuid": {"value": f"dep-{index}"},
+                        "anchor": _anchor(index, self.uuid_words),
+                        "tokenIndex": index,
+                        "headIndex": _ROOT if head == 0 else head - 1,
+                        "targetIndex": index,
+                        "label": deprel,
+                        "ontologyTypeRef": self.p.ontology.deprel_type(deprel),
+                        "features": _feature_map(entries),
+                    }
+                )
+            )
+        return self._layer(
+            _RELATION,
+            _SUBKIND_DEPENDENCY,
+            "universal-dependencies",
+            annotations,
+            ontology=self.p.ontology.ontology("deprel"),
+        )
+
+    def _enhanced_layer(self) -> JsonObject | None:
+        """Return the enhanced dependency layer (DEPS), or ``None`` without arcs."""
+        index_of: dict[str, int] = {row[ID]: i for i, row in enumerate(self.words)}
+        for offset, row in enumerate(self.empties):
+            index_of[row[ID]] = len(self.words) + offset
+        annotations: list[JsonValue] = []
+        for row in (*self.words, *self.empties):
+            target = index_of.get(row[ID])
+            if target is None:
+                continue
+            for item in split_items(row[DEPS]):
+                head_text, _, relation = item.partition(":")
+                head = _ROOT if head_text == "0" else index_of.get(head_text)
+                if head is None:
+                    continue
+                universal, subtype = _split_deprel(relation)
+                entries = [(_IS_ENHANCED, "true"), (_UD_RELATION, universal)]
+                if subtype is not None:
+                    entries.append((_UD_SUBTYPE, subtype))
+                if "." in row[ID]:
+                    entries.append((_UD_EMPTY_NODE, row[ID]))
+                annotations.append(
+                    _drop_none(
+                        {
+                            "uuid": {"value": f"edep-{len(annotations)}"},
+                            "anchor": _anchor(target, self.uuid_enhanced),
+                            "tokenIndex": target,
+                            "headIndex": head,
+                            "targetIndex": target,
+                            "label": relation,
+                            "ontologyTypeRef": self.p.ontology.deprel_type(relation),
+                            "features": _feature_map(entries),
+                        }
+                    )
+                )
+        if not annotations:
+            return None
+        deps_ref = self.p.naming.reference(ANNOTATION_NSID, self._local("deps"))
+        return self._layer(
+            _RELATION,
+            _SUBKIND_ENHANCED,
+            "enhanced-universal-dependencies",
+            annotations,
+            ontology=self.p.ontology.ontology("deprel"),
+            uuid=self.uuid_enhanced,
+            parent=deps_ref,
+        )
+
+    def carrier_layer(self, rows: list[tuple[str, list[JsonValue]]]) -> ProjectedRecord:
+        """Return the carrier layer for the rows the published shape misses."""
+        word_index = {row[ID]: index for index, row in enumerate(self.words)}
+        annotations: list[JsonValue] = []
+        for row_id, entries in rows:
+            annotation: JsonObject = {
+                "uuid": {"value": f"conllu-{len(annotations)}"},
+                "label": row_id,
+            }
+            index = word_index.get(row_id)
+            if index is not None:
+                annotation["anchor"] = _anchor(index, self.uuid_words)
+                annotation["tokenIndex"] = index
+            annotation["features"] = {"entries": entries}
+            annotations.append(annotation)
+        layer = self._layer(_TAG_KIND, CARRIER_SUBKIND, "conllu-columns", annotations)
+        return self._emit("conllu", ANNOTATION_NSID, layer)
+
+
+def _row_carriers(
+    predicted: dict[str, tuple[str, ...]],
+    rows: Sequence[tuple[str, ...]],
+) -> list[tuple[str, list[JsonValue]]]:
+    """Return the carrier entries of every row the prediction gets wrong."""
+    carriers: list[tuple[str, list[JsonValue]]] = []
+    seen: set[str] = set()
+    for row in rows:
+        row_id = row[ID]
+        if row_id in seen:
+            message = f"duplicate row id {row_id!r}"
+            raise ValueError(message)
+        seen.add(row_id)
+        guess = predicted.get(row_id)
+        entries: list[JsonValue] = []
+        for column in range(FORM, COLUMNS):
+            if guess is None or guess[column] != row[column]:
+                entries.extend(_carrier_entries(_COLUMN_KEYS[column], row[column]))
+        if entries:
+            carriers.append((row_id, entries))
+    carriers.extend(
+        (row_id, [{"key": _K_DROP, "value": "true"}])
+        for row_id in predicted
+        if row_id not in seen
+    )
+    return carriers
+
+
+# -----------------------------------------------------------------------------
+# inverse
+# -----------------------------------------------------------------------------
+
+
+def _obj(value: JsonValue | None) -> JsonObject | None:
+    """Return ``value`` when it is a JSON object."""
+    return value if isinstance(value, dict) else None
+
+
+def _list(value: JsonValue | None) -> list[JsonValue]:
+    """Return ``value`` when it is a JSON array, else an empty list."""
+    return value if isinstance(value, list) else []
+
+
+def _str(value: JsonValue | None) -> str | None:
+    """Return ``value`` when it is a string."""
+    return value if isinstance(value, str) else None
+
+
+def _int(value: JsonValue | None) -> int | None:
+    """Return ``value`` when it is an integer (not a boolean)."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _uuid_of(value: JsonValue | None) -> str | None:
+    """Return the ``value`` of a uuid object."""
+    obj = _obj(value)
+    return _str(obj.get("value")) if obj is not None else None
+
+
+def _entries(value: JsonValue | None) -> list[tuple[str, str]]:
+    """Return the (key, value) entries of a feature map."""
+    obj = _obj(value)
+    if obj is None:
+        return []
+    pairs: list[tuple[str, str]] = []
+    for entry in _list(obj.get("entries")):
+        item = _obj(entry)
+        if item is None:
+            continue
+        key = _str(item.get("key"))
+        val = _str(item.get("value"))
+        if key is not None and val is not None:
+            pairs.append((key, val))
+    return pairs
+
+
+def _carrier_values(entries: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Return the carrier entries of a feature list, continuations joined."""
+    out: list[tuple[str, str]] = []
+    for key, value in entries:
+        if key == _K_MORE and out:
+            last_key, last_value = out[-1]
+            out[-1] = (last_key, last_value + value)
+        elif key.startswith(CARRIER_PREFIX):
+            out.append((key, value))
+    return out
+
+
+def _annotations(layer: JsonObject | None) -> list[JsonObject]:
+    """Return the annotation objects of a layer."""
+    if layer is None:
+        return []
+    return [a for a in _list(layer.get("annotations")) if isinstance(a, dict)]
+
+
+def _index(annotation: JsonObject) -> int | None:
+    """Return the token index an annotation targets."""
+    index = _int(annotation.get("tokenIndex"))
+    if index is not None:
+        return index
+    anchor = _obj(annotation.get("anchor"))
+    ref = _obj(anchor.get("tokenRef")) if anchor is not None else None
+    return _int(ref.get("tokenIndex")) if ref is not None else None
+
+
+class _Prediction:
+    """A sentence reconstructed from the published shape alone."""
+
+    def __init__(self) -> None:
+        self.columns: dict[str, tuple[str, ...]] = {}
+        self.order: list[str] = []
+        self.lossy: set[str] = set()
+
+
+def _tokens_of(tokenization: JsonObject | None) -> list[JsonObject]:
+    """Return the tokens of a tokenization, ordered by index."""
+    if tokenization is None:
+        return []
+    tokens = [t for t in _list(tokenization.get("tokens")) if isinstance(t, dict)]
+    return sorted(tokens, key=lambda t: _int(t.get("tokenIndex")) or 0)
+
+
+def _span(token: JsonObject) -> tuple[int, int] | None:
+    """Return a token's byte span."""
+    span = _obj(token.get("textSpan"))
+    if span is None:
+        return None
+    start = _int(span.get("byteStart"))
+    end = _int(span.get("byteEnd"))
+    return None if start is None or end is None else (start, end)
+
+
+class _Records:
+    """One sentence's records, sorted by role."""
+
+    def __init__(
+        self,
+        segmentations: Sequence[JsonObject],
+        layers: Sequence[JsonObject],
+        alignments: Sequence[JsonObject],
+    ) -> None:
+        self.tokenizations: dict[str, JsonObject] = {}
+        self.order: list[list[str]] = []
+        for segmentation in segmentations:
+            uuids: list[str] = []
+            for tokenization in _list(segmentation.get("tokenizations")):
+                obj = _obj(tokenization)
+                uuid = _uuid_of(obj.get("uuid")) if obj is not None else None
+                if obj is not None and uuid is not None:
+                    self.tokenizations[uuid] = obj
+                    uuids.append(uuid)
+            self.order.append(uuids)
+        self.all_layers = list(layers)
+        self.layers: dict[str, JsonObject] = {}
+        for layer in layers:
+            subkind = _str(layer.get("subkind"))
+            if subkind is not None and subkind not in self.layers:
+                self.layers[subkind] = layer
+        self.alignment: JsonObject | None = None
+        for alignment in alignments:
+            if _str(alignment.get("subkind")) == "word-to-word":
+                self.alignment = alignment
+                break
+        self.words_uuid = self._words_uuid()
+        self.surface_uuid = self._surface_uuid()
+        enhanced = self.layers.get(_SUBKIND_ENHANCED)
+        self.enhanced_uuid = (
+            _uuid_of(enhanced.get("tokenizationId")) if enhanced is not None else None
+        )
+
+    def _words_uuid(self) -> str | None:
+        """Identify the syntactic-word tokenization."""
+        for subkind in (
+            _SUBKIND_DEPENDENCY,
+            _SUBKIND_POS,
+            _SUBKIND_LEMMA,
+            _SUBKIND_XPOS,
+            _SUBKIND_MORPH,
+            CARRIER_SUBKIND,
+        ):
+            layer = self.layers.get(subkind)
+            uuid = _uuid_of(layer.get("tokenizationId")) if layer is not None else None
+            if uuid is not None and uuid in self.tokenizations:
+                return uuid
+        if self.alignment is not None:
+            target = _obj(self.alignment.get("target"))
+            uuid = _uuid_of(target.get("localId")) if target is not None else None
+            if uuid is not None:
+                return uuid
+        for uuids in self.order:
+            if uuids:
+                return uuids[-1]
+        return None
+
+    def _surface_uuid(self) -> str | None:
+        """Identify the surface tokenization."""
+        if self.alignment is not None:
+            source = _obj(self.alignment.get("source"))
+            uuid = _uuid_of(source.get("localId")) if source is not None else None
+            if uuid is not None:
+                return uuid
+        for uuids in self.order:
+            if self.words_uuid in uuids:
+                others = [u for u in uuids if u != self.words_uuid]
+                return others[0] if others else self.words_uuid
+        return self.words_uuid
+
+
+def _morph_columns(layer: JsonObject | None) -> dict[int, str]:
+    """Regroup morph annotations into a FEATS column per word."""
+    items: dict[int, list[tuple[str, str]]] = {}
+    for annotation in _annotations(layer):
+        index = _index(annotation)
+        label = _str(annotation.get("label"))
+        if index is None or label is None:
+            continue
+        original = dict(_entries(annotation.get("features"))).get(_UD_FEATS_ORIGINAL)
+        feature, _, value = (original or label).partition("=")
+        group = items.setdefault(index, [])
+        if group and group[-1][0] == feature:
+            group[-1] = (feature, f"{group[-1][1]},{value}")
+        else:
+            group.append((feature, value))
+    return {
+        index: "|".join(f"{name}={value}" for name, value in pairs)
+        for index, pairs in items.items()
+    }
+
+
+def _labels(layer: JsonObject | None, *, prefer_value: bool = False) -> dict[int, str]:
+    """Return the label (or value) of each annotated word."""
+    labels: dict[int, str] = {}
+    for annotation in _annotations(layer):
+        index = _index(annotation)
+        label = _str(annotation.get("value")) if prefer_value else None
+        label = label or _str(annotation.get("label"))
+        if index is not None and label is not None:
+            labels[index] = label
+    return labels
+
+
+def _predict(json_records: Sequence[tuple[str, JsonObject]]) -> _Prediction:
+    """Read a sentence's rows back from its own records (forward side)."""
+    segmentations = [v for role, v in json_records if role in {"seg", "seg-enhanced"}]
+    alignments = [v for role, v in json_records if role == "align"]
+    layers = [
+        v
+        for role, v in json_records
+        if role not in {"expr", "seg", "seg-enhanced", "align", "mem"}
+    ]
+    return _contract_rows(_Records(segmentations, layers, alignments))
+
+
+def _token_of(
+    layer: JsonObject, annotation: JsonObject
+) -> tuple[str | None, int | None]:
+    """Return the (tokenization uuid, token index) an annotation is anchored to."""
+    anchor = _obj(annotation.get("anchor"))
+    ref = _obj(anchor.get("tokenRef")) if anchor is not None else None
+    uuid = _uuid_of(ref.get("tokenizationId")) if ref is not None else None
+    index = _int(ref.get("tokenIndex")) if ref is not None else None
+    if uuid is None:
+        uuid = _uuid_of(layer.get("tokenizationId"))
+    if index is None:
+        index = _int(annotation.get("tokenIndex"))
+    return uuid, index
+
+
+class _Contract:
+    """One sentence read by the Layers UD reader contract.
+
+    The tokenization roles come from the records, never from uuid spelling:
+    the words are the tokenization of the ``dependency`` layer, the surface
+    tokenization is the other one in the same segmentation, and the enhanced
+    tokenization is the single tokenization of the sentence's other
+    segmentation (the words, then the empty nodes in file order).
+    """
+
+    def __init__(self, records: _Records) -> None:
+        self.records = records
+        self.words_uuid = records.words_uuid
+        self.enhanced_uuid: str | None = None
+        self.surface_uuid: str | None = None
+        for uuids in records.order:
+            if self.words_uuid in uuids:
+                others = [u for u in uuids if u != self.words_uuid]
+                self.surface_uuid = others[0] if others else None
+            elif len(uuids) == 1 and self.enhanced_uuid is None:
+                self.enhanced_uuid = uuids[0]
+        tokenizations = records.tokenizations
+        self.words = _tokens_of(tokenizations.get(self.words_uuid or ""))
+        self.surface = _tokens_of(tokenizations.get(self.surface_uuid or ""))
+        self.enhanced = _tokens_of(tokenizations.get(self.enhanced_uuid or ""))
+        self.count = len(self.words)
+        self.lossy: set[str] = set()
+        # every row is keyed by its token index in the enhanced numbering:
+        # words 0..count-1, then the empty nodes.
+        self.rows: dict[int, list[str]] = {
+            index: [str(index + 1), _str(token.get("text")) or EMPTY]
+            + [EMPTY] * (COLUMNS - 2)
+            for index, token in enumerate(self.words)
+        }
+        self.node_ids = self._node_ids()
+        for index in range(self.count, len(self.enhanced)):
+            node_id = self.node_ids.get(index)
+            if node_id is None:
+                self.lossy.add(LOSSY_EMPTY_NODES)
+                continue
+            form = _str(self.enhanced[index].get("text")) or EMPTY
+            self.rows[index] = [node_id, form] + [EMPTY] * (COLUMNS - 2)
+        self.ranges: dict[int, list[str]] = {}
+
+    def _layers(self, subkind: str) -> Iterator[tuple[JsonObject, JsonObject]]:
+        """Yield (layer, annotation) for every annotation of a subkind."""
+        for layer in self.records.all_layers:
+            if _str(layer.get("subkind")) == subkind:
+                for annotation in _annotations(layer):
+                    yield layer, annotation
+
+    def _node_ids(self) -> dict[int, str]:
+        """Return the CoNLL-U id of each empty node, by enhanced token index."""
+        ids: dict[int, str] = {}
+        for layer in self.records.all_layers:
+            for annotation in _annotations(layer):
+                uuid, index = _token_of(layer, annotation)
+                if uuid != self.enhanced_uuid or index is None or index < self.count:
+                    continue
+                node_id = dict(_entries(annotation.get("features"))).get(_UD_EMPTY_NODE)
+                if node_id is not None:
+                    ids[index] = node_id
+        return ids
+
+    def _row(self, layer: JsonObject, annotation: JsonObject) -> list[str] | None:
+        """Return the row an annotation is anchored to, if any."""
+        uuid, index = _token_of(layer, annotation)
+        if index is None:
+            return None
+        if uuid == self.enhanced_uuid and uuid is not None and index >= self.count:
+            return self.rows.get(index)
+        if uuid in {self.words_uuid, self.enhanced_uuid} and 0 <= index < self.count:
+            return self.rows[index]
+        return None
+
+    def _node(self, index: int) -> str | None:
+        """Return the CoNLL-U id of an enhanced-graph node index."""
+        if index == _ROOT:
+            return "0"
+        if 0 <= index < self.count:
+            return str(index + 1)
+        return self.node_ids.get(index)
+
+    def read(self) -> _Prediction:
+        """Fill every column and return the rows in CoNLL-U order."""
+        self._tags()
+        self._dependencies()
+        self._multiword()
+        prediction = _Prediction()
+        prediction.lossy = self.lossy
+        for row in self._ordered():
+            prediction.columns[row[ID]] = tuple(row)
+            prediction.order.append(row[ID])
+        return prediction
+
+    def _tags(self) -> None:
+        """Fill LEMMA, UPOS, XPOS, FEATS, and MISC."""
+        for subkind, column in ((_SUBKIND_POS, UPOS), (_SUBKIND_XPOS, XPOS)):
+            for layer, annotation in self._layers(subkind):
+                row = self._row(layer, annotation)
+                label = _str(annotation.get("label"))
+                if row is not None and label is not None:
+                    row[column] = label
+        for layer, annotation in self._layers(_SUBKIND_LEMMA):
+            row = self._row(layer, annotation)
+            lemma = _str(annotation.get("value")) or _str(annotation.get("label"))
+            if row is not None and lemma is not None:
+                row[LEMMA] = lemma
+        feats: dict[str, dict[str, list[str]]] = {}
+        for layer, annotation in self._layers(_SUBKIND_MORPH):
+            row = self._row(layer, annotation)
+            if row is None:
+                continue
+            # a normalised pair keeps the treebank's own pair in
+            # ud_feats_original, which takes precedence over the label.
+            original = dict(_entries(annotation.get("features"))).get(
+                _UD_FEATS_ORIGINAL
+            )
+            pair = original or _str(annotation.get("label")) or ""
+            key, _, value = pair.partition("=")
+            groups = feats.setdefault(row[ID], {})
+            groups.setdefault(key, []).append(value)
+            row[FEATS] = "|".join(f"{k}={','.join(v)}" for k, v in groups.items())
+        for layer, annotation in self._layers(_SUBKIND_MISC):
+            row = self._row(layer, annotation)
+            value = _str(annotation.get("value"))
+            if row is not None and value is not None:
+                entries = [(_UD_MISC, ""), *_entries(annotation.get("features"))]
+                row[MISC] = value + _continued(entries, _UD_MISC)[0]
+
+    def _dependencies(self) -> None:
+        """Fill HEAD, DEPREL, and DEPS."""
+        for layer, annotation in self._layers(_SUBKIND_DEPENDENCY):
+            row = self._row(layer, annotation)
+            head = _int(annotation.get("headIndex"))
+            if row is None or head is None:
+                continue
+            row[HEAD] = "0" if head == _ROOT else str(head + 1)
+            row[DEPREL] = _str(annotation.get("label")) or EMPTY
+        deps: dict[str, list[str]] = {}
+        for layer, annotation in self._layers(_SUBKIND_ENHANCED):
+            row = self._row(layer, annotation)
+            head = _int(annotation.get("headIndex"))
+            label = _str(annotation.get("label"))
+            node = self._node(head) if head is not None else None
+            if row is None or node is None or label is None:
+                self.lossy.add(LOSSY_DEPS)
+                continue
+            items = deps.setdefault(row[ID], [])
+            items.append(f"{node}:{label}")
+            row[DEPS] = "|".join(items)
+
+    def _multiword(self) -> None:
+        """Build the multiword-token range rows from the alignment."""
+        alignment = self.records.alignment
+        if alignment is None:
+            return
+        for link_value in _list(alignment.get("links")):
+            link = _obj(link_value)
+            if link is None or _str(link.get("label")) != _MULTIWORD_LABEL:
+                continue
+            sources = [
+                i for i in _list(link.get("sourceIndices")) if isinstance(i, int)
+            ]
+            targets = [
+                i for i in _list(link.get("targetIndices")) if isinstance(i, int)
+            ]
+            if not sources or not targets:
+                continue
+            first, last = min(targets) + 1, max(targets) + 1
+            token = self.surface[sources[0]] if sources[0] < len(self.surface) else None
+            form = (_str(token.get("text")) if token is not None else None) or EMPTY
+            entries = _entries(link.get("features"))
+            feats = _continued(entries, _UD_FEATS)
+            misc = _continued(entries, _UD_MISC)
+            row = [f"{first}-{last}", form] + [EMPTY] * (COLUMNS - 2)
+            row[FEATS] = feats[0] if feats else EMPTY
+            row[MISC] = misc[0] if misc else EMPTY
+            self.ranges[first] = row
+
+    def _ordered(self) -> list[list[str]]:
+        """Interleave words, range lines, and empty nodes.
+
+        A range ``a-b`` precedes word ``a``. An empty node ``n.m`` follows word
+        ``n`` (``0.m`` precedes word 1); nodes after one word keep their
+        enhanced-tokenization order, which is file order.
+        """
+        after: dict[int, list[list[str]]] = {}
+        for index in sorted(i for i in self.rows if i >= self.count):
+            row = self.rows[index]
+            major = row[ID].partition(".")[0]
+            position = int(major) if major.isdigit() else self.count
+            after.setdefault(position, []).append(row)
+        rows = list(after.get(0, []))
+        for number in range(1, self.count + 1):
+            mwt = self.ranges.get(number)
+            if mwt is not None:
+                rows.append(mwt)
+            rows.append(self.rows[number - 1])
+            rows.extend(after.get(number, []))
+        return rows
+
+
+def _contract_rows(records: _Records) -> _Prediction:
+    """Rebuild every row by the Layers UD reader contract."""
+    return _Contract(records).read()
+
+
+def _rows_from(records: _Records) -> _Prediction:  # noqa: C901, PLR0912, PLR0915
+    """Reconstruct every row's columns from the published shape."""
+    prediction = _Prediction()
+    words = _tokens_of(records.tokenizations.get(records.words_uuid or ""))
+    count = len(words)
+    layers = records.layers
+    lemmas = _labels(layers.get(_SUBKIND_LEMMA), prefer_value=True)
+    upos = _labels(layers.get(_SUBKIND_POS))
+    xpos = _labels(layers.get(_SUBKIND_XPOS))
+    feats = _morph_columns(layers.get(_SUBKIND_MORPH))
+    if layers.get(_SUBKIND_MORPH) is not None:
+        prediction.lossy.add(LOSSY_FEATS)
+    heads: dict[int, tuple[str, str]] = {}
+    misc: dict[int, list[tuple[str, str]]] = {}
+    for annotation in _annotations(layers.get(_SUBKIND_DEPENDENCY)):
+        index = _index(annotation)
+        head = _int(annotation.get("headIndex"))
+        label = _str(annotation.get("label"))
+        if index is None or head is None or label is None:
+            continue
+        heads[index] = ("0" if head == _ROOT else str(head + 1), label)
+        misc[index] = [
+            (key, value)
+            for key, value in _entries(annotation.get("features"))
+            if key not in {_UD_RELATION, _UD_SUBTYPE}
+            and not key.startswith(CARRIER_PREFIX)
+        ]
+
+    # enhanced arcs: the enhanced index of each empty node, and each node's arcs.
+    enhanced_tokens = _tokens_of(records.tokenizations.get(records.enhanced_uuid or ""))
+    empty_ids: dict[int, str] = {}
+    arcs: list[tuple[int, int, str]] = []
+    for annotation in _annotations(layers.get(_SUBKIND_ENHANCED)):
+        target = _int(annotation.get("targetIndex"))
+        target = _index(annotation) if target is None else target
+        head = _int(annotation.get("headIndex"))
+        label = _str(annotation.get("label"))
+        if target is None or head is None or label is None:
+            continue
+        empty = dict(_entries(annotation.get("features"))).get(_UD_EMPTY_NODE)
+        if empty is not None:
+            empty_ids[target] = empty
+        arcs.append((target, head, label))
+    deps: dict[str, list[str]] = {}
+    for target, head, label in arcs:
+        target_id = str(target + 1) if target < count else empty_ids.get(target)
+        if head == _ROOT:
+            head_id: str | None = "0"
+        elif head < count:
+            head_id = str(head + 1)
+        else:
+            head_id = empty_ids.get(head)
+        if target_id is None or head_id is None:
+            prediction.lossy.add(LOSSY_DEPS)
+            continue
+        deps.setdefault(target_id, []).append(f"{head_id}:{label}")
+
+    # surface units: ranges and SpaceAfter.
+    surface = _tokens_of(records.tokenizations.get(records.surface_uuid or ""))
+    units = _surface_units(records, surface, words)
+    space_no: set[str] = set()
+    for position, unit in enumerate(units):
+        row_id, span = unit[0], unit[1]
+        if span is None or position + 1 >= len(units):
+            continue
+        following = units[position + 1][1]
+        if following is not None and following[0] == span[1]:
+            space_no.add(row_id)
+    columns = prediction.columns
+    for unit in units:
+        row_id, form, link_entries = unit[0], unit[2], unit[3]
+        if "-" not in row_id:
+            continue
+        prediction.lossy.add(LOSSY_MULTIWORD)
+        pairs = [
+            (k, v) for k, v in link_entries if not k.startswith(_FEATS_LINK_PREFIX)
+        ]
+        if row_id in space_no:
+            pairs.append((_SPACE_AFTER, "No"))
+        range_feats = "|".join(
+            f"{k.removeprefix(_FEATS_LINK_PREFIX)}={v}"
+            for k, v in link_entries
+            if k.startswith(_FEATS_LINK_PREFIX)
+        )
+        columns[row_id] = (
+            row_id, form, EMPTY, EMPTY, EMPTY, range_feats or EMPTY,
+            EMPTY, EMPTY, EMPTY, _render_pairs(sorted(pairs, key=lambda p: p[0])),
+        )  # fmt: skip
+    for index, token in enumerate(words):
+        row_id = str(index + 1)
+        form = _str(token.get("text")) or EMPTY
+        head, deprel = heads.get(index, (EMPTY, EMPTY))
+        pairs = list(misc.get(index, []))
+        if row_id in space_no:
+            pairs.append((_SPACE_AFTER, "No"))
+        lemma = lemmas.get(index, EMPTY)
+        arcs_text = "|".join(deps.get(row_id, [])) or EMPTY
+        columns[row_id] = (
+            row_id, form, lemma, upos.get(index, EMPTY), xpos.get(index, EMPTY),
+            feats.get(index, EMPTY), head, deprel, arcs_text,
+            _render_pairs(sorted(pairs, key=lambda p: p[0])),
+        )  # fmt: skip
+    for index in range(count, len(enhanced_tokens)):
+        row_id = empty_ids.get(index)
+        if row_id is None:
+            prediction.lossy.add(LOSSY_EMPTY_NODES)
+            continue
+        prediction.lossy.add(LOSSY_EMPTY_NODES)
+        form = _str(enhanced_tokens[index].get("text")) or EMPTY
+        columns[row_id] = (
+            row_id, form, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY,
+            "|".join(deps.get(row_id, [])) or EMPTY, EMPTY,
+        )  # fmt: skip
+    prediction.lossy.add(LOSSY_MISC)
+    return prediction
+
+
+def _surface_units(
+    records: _Records,
+    surface: Sequence[JsonObject],
+    words: Sequence[JsonObject],
+) -> list[tuple[str, tuple[int, int] | None, str, list[tuple[str, str]]]]:
+    """Return the surface units as (row id, span, form, link entries).
+
+    The row id is a word id for a single word and a range id for a multiword
+    token. The units come from the alignment when present, and otherwise from
+    runs of consecutive words sharing one byte span.
+    """
+    units: list[tuple[str, tuple[int, int] | None, str, list[tuple[str, str]]]] = []
+    if records.alignment is not None:
+        for link_value in _list(records.alignment.get("links")):
+            link = _obj(link_value)
+            if link is None:
+                continue
+            sources = [
+                i for i in _list(link.get("sourceIndices")) if isinstance(i, int)
+            ]
+            targets = [
+                i for i in _list(link.get("targetIndices")) if isinstance(i, int)
+            ]
+            if not sources or not targets:
+                continue
+            token = surface[sources[0]] if sources[0] < len(surface) else None
+            span = _span(token) if token is not None else None
+            form = (_str(token.get("text")) if token is not None else None) or EMPTY
+            entries = _entries(link.get("features"))
+            if len(targets) > 1:
+                row_id = f"{min(targets) + 1}-{max(targets) + 1}"
+            else:
+                row_id = str(targets[0] + 1)
+            units.append((row_id, span, form, entries))
+        return units
+    surface_by_span = {_span(token): token for token in surface}
+    index = 0
+    while index < len(words):
+        span = _span(words[index])
+        end = index
+        while (
+            span is not None and end + 1 < len(words) and _span(words[end + 1]) == span
+        ):
+            end += 1
+        if end > index:
+            token = surface_by_span.get(span)
+            form = (_str(token.get("text")) if token is not None else None) or EMPTY
+            units.append((f"{index + 1}-{end + 1}", span, form, []))
+        else:
+            units.append((str(index + 1), span, "", []))
+        index = end + 1
+    return units
+
+
+def _comments_lossy(
+    expression: JsonObject,
+    opened: Sequence[JsonObject],
+) -> list[str]:
+    """Reconstruct comment lines from the published expression fields."""
+    lines: list[str] = []
+    for unit in opened:
+        kind = _str(unit.get("kind"))
+        unit_id = _str(unit.get("id")) or ""
+        marker = "newdoc" if kind == "document" else "newpar"
+        if unit_id.startswith(f"{marker}:"):
+            lines.append(f"# {marker}")
+        else:
+            lines.append(f"# {marker} id = {unit_id}")
+    sent_id = _str(expression.get("id"))
+    if sent_id is not None:
+        lines.append(f"# sent_id = {sent_id}")
+    lines.extend(
+        f"# {key} = {value}"
+        for key, value in _entries(expression.get("features"))
+        if not key.startswith(CARRIER_PREFIX)
+    )
+    text = _str(expression.get("text"))
+    if text is not None:
+        lines.append(f"# text = {text}")
+    return lines
+
+
+def sentence_from_json(
+    expression: JsonObject,
+    segmentations: Sequence[JsonObject] = (),
+    layers: Sequence[JsonObject] = (),
+    alignments: Sequence[JsonObject] = (),
+    *,
+    opened: Sequence[JsonObject] = (),
+) -> ConlluSentence:
+    """Rebuild one CoNLL-U sentence from its records' JSON values.
+
+    Parameters
+    ----------
+    expression : JsonObject
+        The sentence expression.
+    segmentations : collections.abc.Sequence of JsonObject, optional
+        The segmentations referencing it.
+    layers : collections.abc.Sequence of JsonObject, optional
+        The annotation layers referencing it.
+    alignments : collections.abc.Sequence of JsonObject, optional
+        The alignments referencing it.
+    opened : collections.abc.Sequence of JsonObject, optional
+        The document and paragraph expressions this sentence opens, outermost
+        first. Used only to restore ``# newdoc`` and ``# newpar`` comments when
+        the verbatim comment block is absent.
+
+    Returns
+    -------
+    ConlluSentence
+        The sentence; :attr:`~lairs.conllu.model.ConlluSentence.lossy` names
+        any field that was reconstructed rather than restored exactly.
+
+    Raises
+    ------
+    ValueError
+        When the records hold no token rows to rebuild.
+    """
+    records = _Records(segmentations, layers, alignments)
+    features = _entries(expression.get("features"))
+    declared = [value for key, value in features if key == _UD_COMMENT_LINES]
+    if declared:
+        prediction = _contract_rows(records)
+        ids = prediction.order
+        lossy = set(prediction.lossy)
+        comment_lines = _continued(features, _UD_COMMENT)
+        if declared != [str(len(comment_lines))]:
+            lossy.add(LOSSY_COMMENTS)
+    else:
+        prediction = _rows_from(records)
+        ids = sorted(prediction.columns, key=_row_key)
+        lossy = prediction.lossy | {LOSSY_COMMENTS}
+        comment_lines = _comments_lossy(expression, opened)
+    columns = prediction.columns
+    carriers = _carrier_values(features)
+    if any(key == _K_SCHEME for key, _ in carriers):
+        expected = 0
+        for key, value in carriers:
+            if key == _K_ROWS:
+                expected = int(value)
+            elif key == _K_ORDER:
+                ids = value.split(" ")
+        found = _apply_row_carriers(records.layers.get(CARRIER_SUBKIND), columns)
+        if found != expected:
+            lossy.add(LOSSY_CARRIERS)
+    rows = ["\t".join(columns[row_id]) for row_id in ids if row_id in columns]
+    if not rows:
+        name = _str(expression.get("id"))
+        message = f"the records of sentence {name!r} hold no token rows"
+        raise ValueError(message)
+    return ConlluSentence.build(comment_lines, rows, lossy=sorted(lossy))
+
+
+def _apply_row_carriers(
+    layer: JsonObject | None,
+    columns: dict[str, tuple[str, ...]],
+) -> int:
+    """Apply the carrier layer's row overrides and return how many it holds."""
+    found = 0
+    for annotation in _annotations(layer):
+        row_id = _str(annotation.get("label"))
+        if row_id is None:
+            continue
+        found += 1
+        values = _carrier_values(_entries(annotation.get("features")))
+        if any(key == _K_DROP for key, _ in values):
+            columns.pop(row_id, None)
+            continue
+        row = list(columns.get(row_id, (row_id, *([EMPTY] * (COLUMNS - 1)))))
+        for key, value in values:
+            column = _KEY_COLUMNS.get(key)
+            if column is not None:
+                row[column] = value
+        columns[row_id] = tuple(row)
+    return found
+
+
+def _model_json(model: LayersRecord) -> JsonObject:
+    """Return a record model's value as JSON."""
+    value = json.loads(model.model_dump_json())
+    if not isinstance(value, dict):
+        message = "record model did not dump to a JSON object"
+        raise TypeError(message)
+    return value
+
+
+def sentence_from_records(
+    expression: Expression,
+    segmentations: Iterable[Segmentation] = (),
+    layers: Iterable[AnnotationLayer] = (),
+    alignments: Iterable[Alignment] = (),
+    *,
+    opened: Iterable[Expression] = (),
+) -> ConlluSentence:
+    """Rebuild one CoNLL-U sentence from its record models.
+
+    A convenience over :func:`sentence_from_json` that dumps each model to
+    JSON first; prefer the JSON form on hot paths.
+
+    Parameters
+    ----------
+    expression : Expression
+        The sentence expression.
+    segmentations : collections.abc.Iterable of Segmentation, optional
+        The segmentations referencing it.
+    layers : collections.abc.Iterable of AnnotationLayer, optional
+        The annotation layers referencing it.
+    alignments : collections.abc.Iterable of Alignment, optional
+        The alignments referencing it.
+    opened : collections.abc.Iterable of Expression, optional
+        The document and paragraph expressions the sentence opens.
+
+    Returns
+    -------
+    ConlluSentence
+        The sentence.
+    """
+    return sentence_from_json(
+        _model_json(expression),
+        [_model_json(s) for s in segmentations],
+        [_model_json(layer) for layer in layers],
+        [_model_json(a) for a in alignments],
+        opened=[_model_json(unit) for unit in opened],
+    )

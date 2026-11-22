@@ -36,8 +36,9 @@ from typing import TYPE_CHECKING
 import didactic.api as dx
 import httpx
 
-from lairs.atproto.pds import RecordNotFoundError, decode
+from lairs.atproto.pds import RecordEnvelope, RecordNotFoundError, decode
 from lairs.data.dataset import Dataset
+from lairs.records._generated import alignment as alignment_records
 from lairs.records._generated import annotation as annotation_records
 from lairs.records._generated import corpus as corpus_records
 from lairs.records._generated import expression as expression_records
@@ -51,7 +52,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from lairs._types import JsonValue
-    from lairs.atproto.pds import PdsClient, RecordEnvelope
+    from lairs.atproto.pds import PdsClient
 
 __all__ = [
     "Corpus",
@@ -66,6 +67,7 @@ _EXPRESSION_NSID = "pub.layers.expression.expression"
 _ANNOTATION_LAYER_NSID = "pub.layers.annotation.annotationLayer"
 _SEGMENTATION_NSID = "pub.layers.segmentation.segmentation"
 _MEDIA_NSID = "pub.layers.media.media"
+_ALIGNMENT_NSID = "pub.layers.alignment.alignment"
 _CORPUS_NSID = "pub.layers.corpus.corpus"
 _MEMBERSHIP_NSID = "pub.layers.corpus.membership"
 
@@ -75,6 +77,7 @@ _NSID_MODELS: dict[str, type[dx.Model]] = {
     _ANNOTATION_LAYER_NSID: annotation_records.AnnotationLayer,
     _SEGMENTATION_NSID: segmentation_records.Segmentation,
     _MEDIA_NSID: media_records.Media,
+    _ALIGNMENT_NSID: alignment_records.Alignment,
     _CORPUS_NSID: corpus_records.Corpus,
     _MEMBERSHIP_NSID: corpus_records.Membership,
 }
@@ -83,7 +86,10 @@ _NSID_MODELS: dict[str, type[dx.Model]] = {
 _SOURCE_PDS = "pds"
 _SOURCE_APPVIEW = "appview"
 _SOURCE_AUTO = "auto"
-_VALID_SOURCES = frozenset({_SOURCE_PDS, _SOURCE_APPVIEW, _SOURCE_AUTO})
+_SOURCE_REPO = "repo"
+_VALID_SOURCES = frozenset(
+    {_SOURCE_PDS, _SOURCE_APPVIEW, _SOURCE_AUTO, _SOURCE_REPO},
+)
 
 
 class ExpressionWithAnnotations(dx.Model):
@@ -874,6 +880,48 @@ def _load_from_pds(
     return Corpus(pool, uri=uri)
 
 
+def _load_from_repo(uri: str, path: Path, revision: str | None) -> Corpus:
+    """Load a corpus graph from a local Repository snapshot, offline.
+
+    Every record of a known Layers type committed at the revision is decoded
+    into the pool. No network access is made, so a dataset pulled with
+    ``lairs pull-dataset`` loads on a machine with no route to its PDS.
+
+    Parameters
+    ----------
+    uri : str
+        The corpus AT-URI the returned corpus is scoped to.
+    path : pathlib.Path
+        The local Repository directory.
+    revision : str or None
+        The revision (commit id, tag, or branch) to read; the head when
+        ``None``.
+
+    Returns
+    -------
+    Corpus
+        The loaded corpus graph, scoped to this corpus's members.
+
+    Raises
+    ------
+    ValueError
+        When the repository has no commits to read.
+    """
+    repo = Repository.open(path)
+    target = revision if revision is not None else repo.head()
+    if target is None:
+        msg = f"the repository at {path} has no committed snapshot to load"
+        raise ValueError(msg)
+    pool = ModelPool()
+    for record_uri, value in repo.content_at(target).items():
+        if _nsid_of(record_uri) not in _NSID_MODELS:
+            continue
+        decoded = _decode_envelope(RecordEnvelope(uri=record_uri, cid="", value=value))
+        if decoded is not None:
+            pool.add(record_uri, decoded[1])
+    return Corpus(pool, uri=uri)
+
+
 def load_corpus(  # noqa: PLR0913  (the loader threads several optional knobs)
     uri: str,
     *,
@@ -899,16 +947,27 @@ def load_corpus(  # noqa: PLR0913  (the loader threads several optional knobs)
     PDS; ``appview`` and ``auto`` are not implemented without an appview client
     yet and currently require the ``pds`` source with an injected client.
 
+    The ``repo`` source reads a local Repository snapshot instead, with no
+    network access: ``cache_dir`` names the repository directory (for instance
+    one written by ``lairs pull-dataset``) and ``revision`` the commit, tag, or
+    branch to read, defaulting to the head. Every record is validated into its
+    model on load, which costs milliseconds per record, so for a large treebank
+    prefer a reader that works on the raw snapshot, such as
+    ``lairs.conllu.sentences`` over ``Repository.content_at``.
+
     Parameters
     ----------
     uri : str
         The corpus AT-URI (its authority is enumerated).
     source : str, optional
-        The source to load from (``"pds"``, ``"appview"``, or ``"auto"``).
+        The source to load from (``"pds"``, ``"appview"``, ``"auto"``, or
+        ``"repo"``).
     cache_dir : str or None, optional
-        A local cache directory (reserved; not yet used).
+        The local Repository directory to read for the ``repo`` source. Unused
+        by the other sources.
     revision : str or None, optional
-        A revision (Repository tag) to resolve (reserved; not yet used).
+        The Repository revision (commit id, tag, or branch) to read for the
+        ``repo`` source; the head when omitted. Unused by the other sources.
     pds_client : lairs.atproto.pds.PdsClient or None, optional
         An injected PDS client. Required for the ``pds`` source; supplying it
         avoids network setup in tests.
@@ -925,7 +984,8 @@ def load_corpus(  # noqa: PLR0913  (the loader threads several optional knobs)
     Raises
     ------
     ValueError
-        When ``source`` is not a recognised source value.
+        When ``source`` is not a recognised source value, or the ``repo``
+        source is requested without a ``cache_dir`` or on an empty repository.
     NotImplementedError
         When the appview source is requested without an appview client, or the
         PDS source is requested without an injected client.
@@ -934,7 +994,11 @@ def load_corpus(  # noqa: PLR0913  (the loader threads several optional knobs)
         valid = sorted(_VALID_SOURCES)
         msg = f"unknown corpus source {source!r}; expected one of {valid}"
         raise ValueError(msg)
-    _ = (cache_dir, revision)
+    if source == _SOURCE_REPO:
+        if cache_dir is None:
+            msg = "the repo source needs cache_dir, the local Repository directory"
+            raise ValueError(msg)
+        return _load_from_repo(uri, Path(cache_dir), revision)
     if source in {_SOURCE_PDS, _SOURCE_AUTO} and pds_client is not None:
         return _load_from_pds(uri, pds_client, follow_refs=follow_refs)
     if source == _SOURCE_APPVIEW:
