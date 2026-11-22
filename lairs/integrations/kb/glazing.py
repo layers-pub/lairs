@@ -3,7 +3,7 @@
 Grounds lemmas, senses, frames, and rolesets against FrameNet, PropBank,
 VerbNet, and WordNet through the glazing library's unified, type-safe
 interface, with SemLink-style cross-reference resolution. Requires the
-``lairs[lexical]`` extra (``glazing>=0.2``) at runtime; glazing is imported
+``lairs[lexical]`` extra (``glazing>=0.3.0``) at runtime; glazing is imported
 lazily inside the connector, never at module import, so importing this module
 never pulls in the optional dependency.
 

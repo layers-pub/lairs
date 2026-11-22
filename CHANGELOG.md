@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **WordNet search through Glazing.** The `lexical` extra now requires
+  `glazing>=0.3.0`, which fixes the string-offset formatting error raised by
+  `GlazingKB.search` when WordNet data are loaded. Synset identifiers preserve
+  leading zeros and include the part of speech, with adjective satellites
+  using the canonical adjective key. Run `glazing init` after upgrading from
+  0.2.3 to rebuild converted data with adjective satellites included.
+
 ## [0.10.0] - 2026-11-22
 
 ### Added
