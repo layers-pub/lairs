@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Wikidata endpoint redirects.** `WikidataKB.resolve`, `search`, and
+  `neighbors` now follow HTTP redirects, including the EntityData endpoint's
+  temporary redirect to entity JSON. Injected clients retain their settings
+  and ownership, and their redirect limit bounds each request.
+
 ## [0.10.0] - 2026-11-22
 
 ### Added

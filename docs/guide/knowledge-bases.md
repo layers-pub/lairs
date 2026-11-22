@@ -56,6 +56,9 @@ kb.close()                               # or use it as a context manager
 API. Type constraints are not expressible in the action API and are ignored by
 `search`. Use `ReconciliationKB` against the Wikidata reconciliation endpoint for
 type-filtered search. A non-success HTTP response raises `httpx.HTTPStatusError`.
+Requests follow HTTP redirects within the client's redirect limit, including
+EntityData redirects to entity JSON. This also applies to injected clients
+without changing their settings or transferring ownership to the connector.
 
 The `lairs[wikidata]` extra (`qwikidata`, `SPARQLWrapper`) is declared for
 callers who prefer those clients, but the connector itself talks to the public
