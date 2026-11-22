@@ -1,8 +1,8 @@
 """Ergonomic anchor, layer, and record builders over the generated models.
 
 These builders are behaviour over the generated models, not replacements for
-them; authoring is validated against the lexicons by construction. The builders
-add three conveniences over raw model construction.
+them. The models check types and structure; the builders add selected argument
+checks and three conveniences over raw model construction.
 
 Anchor builders (:func:`span`, :func:`token_ref`, :func:`temporal`,
 :func:`bbox`, :func:`spatio_temporal`) construct the correct anchor sub-model
@@ -18,11 +18,12 @@ Cross-reference helpers (:class:`PendingId`, :func:`reference`) resolve a
 reference target from a published model, a pending local identifier, or an
 AT-URI string, so authoring works whether or not the target is published yet.
 
-All builders validate construction-time arguments against the ``dx.field``
-metadata carried by the generated models (``knownValues``, numeric ranges,
-required-ness), raising a clear :class:`BuildError` rather than deferring to a
-post-hoc PDS rejection. didactic does not enforce these lexicon constraints at
-construction time, so the builders enforce them here.
+Builders check selected numeric ranges from the generated models' ``dx.field``
+metadata, reject empty strings in their open-vocabulary arguments, and check
+anchor relationships such as span ordering. Violations raise :class:`BuildError`.
+The generated models do not enforce identifier syntax, lengths, or numeric
+bounds, and these builders do not provide full Lexicon validation. Validate the
+wire record separately when full Lexicon validity is required.
 """
 
 from __future__ import annotations

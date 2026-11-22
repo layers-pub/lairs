@@ -2,7 +2,7 @@
 
 `lairs` is a Python client for reading and writing data in the Layers
 format. It downloads `pub.layers.*` records from ATProto Personal Data
-Servers, validates them against models generated from the Layers
+Servers, checks their types and structure with models generated from the Layers
 lexicons, and holds them in memory or in a content-addressed store. A
 dataset API provides access to the records and to the audio, video, and
 time-series signals they describe. For writes, lairs constructs records,
@@ -55,8 +55,12 @@ The documentation follows the [Diátaxis](https://diataxis.fr/) structure:
 lairs reads from any PDS and writes only to the authenticated user's own
 repository through the standard `com.atproto.repo.*` client APIs. It is
 not an appview: it neither maintains a cross-user index nor consumes the
-firehose on behalf of others. Records are validated against the generated
-lexicon models in both directions.
+firehose on behalf of others. Generated models check field types, required
+fields, union structure, and `datetime` fields on the typed read and write
+paths. Identifier syntax, lengths, and numeric bounds need separate checks;
+builders enforce selected constraints for their arguments. See
+[validation scope](concepts/generated-models.md#validation-scope) for the
+limits of these checks and a strict Lexicon validator.
 
 ## Project status
 
