@@ -15,6 +15,7 @@ models](../concepts/generated-models.md) explains the rationale.
 
 The pipeline uses two CLI commands:
 
+<!-- lairs-test: skip reason="angle-bracket placeholders are templates, not complete shell programs" -->
 ```bash
 uv run lairs vendor --from <layers-checkout>/lexicons/pub/layers   # copy lexicons in
 uv run lairs gen                                                   # generate models

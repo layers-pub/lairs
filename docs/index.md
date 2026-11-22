@@ -16,6 +16,7 @@ record models are generated from the vendored lexicons and committed to
 the repository. Updating to a new Layers version requires re-vendoring
 the lexicons, regenerating the models, and running the drift check.
 
+<!-- lairs-test: run fixture=pds-read -->
 ```python
 import lairs
 from lairs.atproto import PdsClient

@@ -32,6 +32,7 @@ Work from a clean checkout of `main`.
 2. **Bump the version** in `pyproject.toml`, then sync so the installed metadata
    matches:
 
+<!-- lairs-test: check reason="environment setup; checked without installing or cloning" -->
    ```bash
    uv sync
    python -c "import lairs; print(lairs.__version__)"   # must print the new version
@@ -45,6 +46,7 @@ Work from a clean checkout of `main`.
 4. **Verify locally (recommended).** The workflow re-runs these checks, but local
    verification catches failures before CI:
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
    ```bash
    uv run ruff format --check lairs tests
    uv run ruff check lairs tests
@@ -58,6 +60,7 @@ Work from a clean checkout of `main`.
 
 Commit the version and changelog change to `main`, then tag and push:
 
+<!-- lairs-test: check reason="maintainer workflow; checked without changing Git history or publishing" -->
 ```bash
 git commit -am "chore(release): vX.Y.Z"
 git push origin main          # the docs workflow redeploys the site
@@ -75,6 +78,7 @@ tab.
 Confirm the published package installs cleanly in a fresh environment and reports
 the right version:
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
 ```bash
 uv run --no-project --with "lairs==X.Y.Z" python -c "import lairs; print(lairs.__version__)"
 ```

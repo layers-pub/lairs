@@ -17,6 +17,7 @@ didactic's class-indexed `ModelPool`. Add records under their URIs, look
 them up, and resolve the AT-URI strings records carry as
 cross-references back to instances:
 
+<!-- lairs-test: run fixture=store -->
 ```python
 from lairs.store.pool import ModelPool
 
@@ -37,6 +38,7 @@ missing target. The pool walks the full JSON dump of each record to find
 references, so AT-URIs nested inside embedded objects, tuples, and union members
 are all discovered:
 
+<!-- lairs-test: run fixture=store -->
 ```python
 target = pool.resolve(some_at_uri)   # model, or None if not loaded
 outbound = pool.refs_of(layer_uri)   # AT-URIs this record points at
@@ -47,6 +49,7 @@ that point at a target, and `backref_uris` returns their AT-URIs. A
 target that is itself absent from the pool still resolves its inbound
 links, so links to a not-yet-loaded record are discoverable:
 
+<!-- lairs-test: run fixture=store -->
 ```python
 referrers = pool.backrefs(expression_uri)      # list of models
 referrer_uris = pool.backref_uris(expression_uri)
@@ -57,6 +60,7 @@ referrer_uris = pool.backref_uris(expression_uri)
 `Repository` wraps didactic's panproto-backed, content-addressed,
 git-like VCS. Initialize a new repository or open an existing one:
 
+<!-- lairs-test: run fixture=store -->
 ```python
 from pathlib import Path
 
@@ -71,6 +75,7 @@ indexed by AT-URI, stages it as committed data keyed by that AT-URI, and stages
 the record type's Model schema alongside it. `commit` captures the snapshot and
 returns the revision id:
 
+<!-- lairs-test: run fixture=store -->
 ```python
 repo.save(expression_uri, expression)
 repo.save(layer_uri, layer)
@@ -85,6 +90,7 @@ Read records back by AT-URI with `load` (validated against a Model class)
 or `load_raw` (the stored JSON), each returning `None` for an unknown
 URI:
 
+<!-- lairs-test: run fixture=store -->
 ```python
 restored = repo.load(expression_uri, Expression)  # model, or None
 raw = repo.load_raw(expression_uri)                # JsonValue, or None
@@ -103,6 +109,7 @@ staged and a loop of `save` calls is quadratic. That suits edits of a few
 records, not a treebank. For many records use `save_many`, or `save_many_raw`
 for records as a PDS serves them:
 
+<!-- lairs-test: run fixture=store -->
 ```python
 staged = repo.save_many(
     (envelope.uri, decode(envelope, model)) for envelope in envelopes
@@ -177,6 +184,7 @@ reproducible named dataset version. Tag creation is on didactic's public
 Repository surface, so the wrapper calls `create_tag` on the underlying
 didactic handle directly:
 
+<!-- lairs-test: run fixture=store -->
 ```python
 repo.tag("v1", revision=revision)   # defaults to head when revision omitted
 print(repo.tags())                  # [(name, target_revision), ...]
@@ -195,6 +203,7 @@ set directly. `diff` resolves both refs (so an unknown ref fails
 loudly) and returns a `RecordDiff` of the `added`, `removed`, and
 `changed` AT-URIs:
 
+<!-- lairs-test: run fixture=store -->
 ```python
 record_diff = repo.diff("v1", "HEAD")
 print(record_diff.added, record_diff.removed, record_diff.changed)
@@ -211,6 +220,7 @@ canonical data. `materialize` reads the repository's records, groups them by
 collection NSID, and writes one Parquet file per NSID into an output directory,
 returning the written paths:
 
+<!-- lairs-test: run fixture=store -->
 ```python
 from lairs.store.arrow import materialize
 
@@ -238,6 +248,7 @@ per `(layer_uri, annotation_index)`, flattening each annotation's anchor.
 Pass any of these as the `views` mapping to `materialize` to write
 pre-built normalized tables instead of the per-NSID default:
 
+<!-- lairs-test: run fixture=store -->
 ```python
 from lairs.store.arrow import annotations_table, expressions_table, materialize
 
@@ -254,6 +265,7 @@ materialize(repo, Path("views"), views=views)
 content identifier. The CID is the file name, so identical content under
 the same CID is deduplicated and `put` is idempotent:
 
+<!-- lairs-test: run fixture=store -->
 ```python
 from lairs.store.blobcache import BlobCache
 

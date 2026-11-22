@@ -14,6 +14,7 @@ finally as newly authored equivalents.
 
 Install lairs:
 
+<!-- lairs-test: check reason="environment setup; checked without installing or cloning" -->
 ```bash
 pip install lairs
 ```

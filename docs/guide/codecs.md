@@ -10,6 +10,7 @@ A codec is a bidirectional converter bound to the `Codec` protocol in
 relations to lairs anchors and annotation kinds. Resolve a codec by name through
 the registry:
 
+<!-- lairs-test: run fixture=codec -->
 ```python
 import lairs
 
@@ -28,6 +29,7 @@ holding a batch of `FragmentRecord` entries. Each `FragmentRecord` carries its
 fragment is independent of any one generated namespace module and round-trips
 losslessly.
 
+<!-- lairs-test: run fixture=codec -->
 ```python
 from lairs.integrations.codecs import CorpusFragment, FragmentRecord
 
@@ -52,6 +54,7 @@ the external representation.
 - `HEAD`/`DEPREL` become a relation (dependency) layer, each arc carrying a
   `headIndex` (`-1` at the root) and a `targetIndex`.
 
+<!-- lairs-test: run fixture=codec -->
 ```python
 codec = lairs.codec("conllu")()
 fragment = codec.decode(conllu_text)     # expression, segmentation, tag and dep layers
@@ -67,6 +70,7 @@ The parse used by the structural path is standard-library only. The dependency-
 free path is `ConlluIso`, an `Iso` between a parsed sentence and a fragment that
 operates over parsed structures and so needs no extra:
 
+<!-- lairs-test: run fixture=codec -->
 ```python
 from lairs.integrations.codecs.conllu import ConlluIso
 
@@ -83,6 +87,7 @@ comment. It is built on [`lairs.conllu`](conllu.md), and its records are in
 treebank decoded locally and the same treebank read from the public PDS are
 interchangeable. For well-formed input the round trip is byte-exact:
 
+<!-- lairs-test: run fixture=codec -->
 ```python
 from lairs.integrations.codecs import UdConlluCodec
 
@@ -129,6 +134,7 @@ when the `lairs[brat]` extra is declared. The `.ann` lines it understands:
 The `.txt` and `.ann` halves are combined into one source string separated by a
 sentinel line, so one `decode`/`encode` pair round-trips both halves.
 
+<!-- lairs-test: run fixture=codec -->
 ```python
 codec = lairs.codec("brat")()
 source = txt + "\n===ANN===\n" + ann

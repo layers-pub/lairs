@@ -34,6 +34,7 @@ thin adapter:
   never read through the port, and it ignores the `put` return value, so
   passing the store's `BlobCache` works as the cache.
 
+<!-- lairs-test: run fixture=media-blob -->
 ```python
 from lairs.atproto.blobs import BlobClient
 from lairs.store.blobcache import BlobCache
@@ -76,6 +77,7 @@ the data an annotation points at. It accepts the `anchor` wrapper (or a
 variant model directly) and the target the anchor selects into, and
 dispatches on the anchor kind:
 
+<!-- lairs-test: run fixture=text-anchor -->
 ```python
 from lairs.media.anchors import resolve_anchor
 
@@ -105,6 +107,7 @@ whose interleaved samples live in an opaque field. Decoding uses
 `soundfile`, the `lairs[audio]` extra, imported lazily. A missing extra
 raises `ModuleNotFoundError`, and an empty handle raises `ValueError`:
 
+<!-- lairs-test: run fixture=audio requires=soundfile -->
 ```python
 from lairs.media.audio import decode_audio, slice_by_temporal
 
@@ -128,6 +131,7 @@ pixels live in an opaque field. Decoding uses `av`, the `lairs[video]`
 extra, imported lazily. A missing extra raises `ModuleNotFoundError`, and
 an empty handle or negative time raises `ValueError`:
 
+<!-- lairs-test: run fixture=video requires=av,numpy -->
 ```python
 from lairs.media.video import crop_to_bbox, frame_at_ms, interpolate_box
 
@@ -152,6 +156,7 @@ labels. Decoding uses `mne`, the `lairs[neural]` extra, imported lazily
 on paths). A missing extra raises `ModuleNotFoundError`, and an empty
 handle raises `ValueError`:
 
+<!-- lairs-test: run fixture=neural requires=mne,numpy -->
 ```python
 from lairs.media.neural import decode_signal, select_channels, window_by_temporal
 

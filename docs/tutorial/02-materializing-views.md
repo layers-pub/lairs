@@ -15,6 +15,7 @@ The examples use the `corpus` built in the
 Parquet file per view into a directory, returning the written paths in name
 order:
 
+<!-- lairs-test: run fixture=tutorial-corpus -->
 ```python
 from pathlib import Path
 
@@ -25,6 +26,7 @@ paths = corpus.materialize(Path("views"))
 
 Read a view back with pyarrow:
 
+<!-- lairs-test: run fixture=tutorial-corpus -->
 ```python
 import pyarrow.parquet as pq
 
@@ -39,6 +41,7 @@ one row per annotation, identified by the layer's AT-URI in `layer_uri` and the
 annotation's position in `annotation_index`. The annotation's scalar fields
 become their own columns:
 
+<!-- lairs-test: run fixture=tutorial-corpus -->
 ```python
 annotations.column("layer_uri").to_pylist()
 # ['at://.../pub.layers.annotation.annotationLayer/lay123',
@@ -53,6 +56,7 @@ annotations.column("tokenIndex").to_pylist()         # [0, 1]
 You do not have to go through Parquet. Any [`Dataset`](../guide/dataset-api.md)
 materializes straight to an in-memory Arrow table with `to_arrow()`:
 
+<!-- lairs-test: run fixture=tutorial-corpus -->
 ```python
 table = corpus.expressions.to_arrow()
 table.num_rows                  # 1
@@ -72,6 +76,7 @@ union in the table, the flattening expands every anchor into a fixed set of type
 columns, so a consumer filters and scans without re-dispatching the union per
 row. The column set is exposed as a constant:
 
+<!-- lairs-test: run fixture=tutorial-corpus -->
 ```python
 from lairs.store.arrow import ANCHOR_COLUMNS
 

@@ -17,8 +17,12 @@ parts.
 
 `lairs.conllu.sentences` takes a loaded `Corpus` or a raw mapping from AT-URI
 to record JSON, such as `Repository.content_at(revision)` returns for a pulled
-dataset:
+dataset.
 
+The example assumes a pulled repository at `ud-store` and its corpus AT-URI in
+`corpus_uri`.
+
+<!-- lairs-test: run fixture=conllu-store -->
 ```python
 from pathlib import Path
 
@@ -27,7 +31,6 @@ from lairs.store.repository import Repository
 
 repo = Repository.open(Path("ud-store"))
 records = repo.content_at(repo.head())
-corpus_uri = "at://did:plc:.../pub.layers.corpus.corpus/..."
 
 for sentence in lairs.conllu.sentences(records, corpus=corpus_uri, split="dev"):
     sentence.sent_id, sentence.text, sentence.comments
@@ -79,6 +82,7 @@ are shared across a treebank, so iterating a large corpus stays cheap.
 `parse` streams sentences from a string or any iterable of lines, so a large
 file is never held in memory:
 
+<!-- lairs-test: run fixture=conllu-store -->
 ```python
 from lairs.conllu import parse, serialize
 

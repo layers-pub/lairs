@@ -12,6 +12,7 @@ at the repository root provides the abbreviated instructions.
 `lairs` targets Python 3.14+ and uses [uv](https://docs.astral.sh/uv/) for
 environments and dependencies.
 
+<!-- lairs-test: check reason="environment setup; checked without installing or cloning" -->
 ```bash
 git clone https://github.com/layers-pub/lairs
 cd lairs
@@ -28,6 +29,7 @@ their tests skip cleanly until upstream publishes one.
 
 Run tools through `uv run`, or activate the environment and call them directly:
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
 ```bash
 source .venv/bin/activate
 ```
@@ -37,6 +39,7 @@ source .venv/bin/activate
 Continuous integration runs these checks on every push and pull request. Run
 them locally before pushing.
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
 ```bash
 uv run ruff format --check lairs tests           # formatting
 uv run ruff check lairs tests                    # lint, the ruff "ALL" ruleset
@@ -46,6 +49,7 @@ uv run pytest                                    # the default suite
 
 To apply the available automatic fixes:
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
 ```bash
 uv run ruff format lairs tests
 uv run ruff check --fix lairs tests
@@ -99,6 +103,7 @@ Follow these conventions when adding code:
 
 MkDocs and mkdocstrings build the documentation from numpy-style docstrings.
 
+<!-- lairs-test: check reason="interactive process; syntax checked without starting a server or TUI" -->
 ```bash
 uv run --group docs mkdocs serve            # live preview
 uv run --group docs mkdocs build --strict   # the gate: zero warnings
@@ -113,6 +118,7 @@ public symbol, confirm its docstring renders, and wire any new page into the
 The `pub.layers.*` models under `lairs/records/_generated/` are generated, not
 written. Regenerate them rather than editing them:
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
 ```bash
 uv run lairs gen           # regenerate from the vendored lexicons
 uv run lairs gen --check   # drift gate: fail if the committed models are stale

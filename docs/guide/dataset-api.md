@@ -12,6 +12,7 @@ the model type it yields across indexing and iteration. Rationale is in
 `load_corpus` reads a corpus by AT-URI and builds the joined graph by
 enumerating the Layers collections of the URI's authority.
 
+<!-- lairs-test: run fixture=corpus -->
 ```python
 from lairs.atproto.pds import PdsClient
 from lairs.data import load_corpus
@@ -35,6 +36,7 @@ parameters are reserved and not yet used. An unrecognized `source` raises
 
 A `Corpus` exposes typed `Dataset` views over the records it holds:
 
+<!-- lairs-test: run fixture=corpus -->
 ```python
 corpus.expressions                                   # Dataset[Expression]
 corpus.segmentations()                               # Dataset[Segmentation]
@@ -52,6 +54,7 @@ every layer. The records are returned in pool order.
 The join helpers walk the AT-URI cross-references and group related records per
 expression. Each returns a `Dataset` of a join-row model.
 
+<!-- lairs-test: run fixture=corpus -->
 ```python
 for row in corpus.with_annotations():
     print(row.uri, row.expression.text, len(row.annotation_layers))
@@ -76,6 +79,7 @@ A `Dataset` is lazy by default. An in-memory dataset (the form the corpus views
 produce) supports `len` and indexing. A streaming dataset pulls records lazily
 from a factory and has neither until drained.
 
+<!-- lairs-test: run fixture=corpus -->
 ```python
 ds = corpus.expressions
 
@@ -93,6 +97,7 @@ through a later iteration or materialization, preserving streaming behavior.
 `take(n)` and `materialize()` drain into a new in-memory dataset with random
 access.
 
+<!-- lairs-test: run fixture=corpus -->
 ```python
 tagged = ds.map(lambda e: e.with_(kind="sentence"))   # lazy, returns a Dataset
 some = ds.filter(lambda e: e.text != "").take(100)     # in-memory, at most 100
@@ -103,6 +108,7 @@ Materialize to columnar form with `to_arrow` (the flattened view, with any
 optional dependency, and `to_pandas` raises `ImportError` with an install hint
 when it is absent.
 
+<!-- lairs-test: run fixture=corpus requires=pandas -->
 ```python
 table = ds.to_arrow()                    # pyarrow.Table
 frame = ds.to_pandas()                   # requires the optional pandas dependency
@@ -111,6 +117,7 @@ frame = ds.to_pandas()                   # requires the optional pandas dependen
 Build a streaming dataset from an iterator factory when the source is a PDS
 cursor or a repository scan:
 
+<!-- lairs-test: run fixture=corpus -->
 ```python
 from lairs.data import Dataset
 from lairs.records._generated.expression import Expression
@@ -126,6 +133,7 @@ sample = stream.take(64)                 # materializes the first 64
 field specs, so it always matches the lexicons. Each field becomes a
 `FeatureSpec` with a name, a dtype token, and a nullability flag.
 
+<!-- lairs-test: run fixture=corpus -->
 ```python
 features = corpus.expressions.features
 features.names()                         # ("anchor", "createdAt", "eprintRefs", "features", ...)

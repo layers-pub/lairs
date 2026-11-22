@@ -13,6 +13,7 @@ The loader is `load_corpus`. It takes the AT-URI of a corpus record. The
 authority embedded in that URI is the repository whose collections are
 enumerated.
 
+<!-- lairs-test: check reason="live-load template; the runnable canned client is defined below" -->
 ```python
 import lairs
 
@@ -39,6 +40,7 @@ envelopes. The loader only calls one method on the client, `list_records(repo,
 collection)`, which yields `RecordEnvelope` values, so a small stand-in is
 enough:
 
+<!-- lairs-test: run fixture=tutorial-corpus -->
 ```python
 from lairs.atproto.pds import RecordEnvelope
 from lairs.data import load_corpus
@@ -112,6 +114,7 @@ not abort the load.
 `Expression` models. The dataset is in-memory here, so it has a length and
 supports indexing:
 
+<!-- lairs-test: run fixture=tutorial-corpus -->
 ```python
 expressions = corpus.expressions
 len(expressions)        # 1
@@ -120,6 +123,7 @@ first = expressions[0]
 
 Iterate it one record at a time, or in batches:
 
+<!-- lairs-test: run fixture=tutorial-corpus -->
 ```python
 for expression in expressions:
     print(expression.id, expression.kind)
@@ -130,6 +134,7 @@ for batch in expressions.iter(batch_size=32):
 
 The dataset also reports the schema it derives from the model:
 
+<!-- lairs-test: run fixture=tutorial-corpus -->
 ```python
 expressions.features.names()
 # ('anchor', 'createdAt', 'eprintRefs', 'features', 'id', 'kind', ...)
@@ -142,6 +147,7 @@ classes live under `lairs.records._generated.<namespace>`, and the namespace
 modules are also reachable as attributes of `lairs.records`. Both of these name
 the same class:
 
+<!-- lairs-test: run fixture=tutorial-corpus -->
 ```python
 from lairs.records._generated.expression import Expression
 from lairs.records import expression
@@ -152,6 +158,7 @@ Expression is expression.Expression        # True
 These models are generated from the Layers lexicons and must not be hand-edited.
 Their fields are read by attribute access:
 
+<!-- lairs-test: run fixture=tutorial-corpus -->
 ```python
 first = expressions[0]
 first.id            # 'doc-0001'
@@ -166,6 +173,7 @@ to its parent, plus reference fields that point at other records by AT-URI
 were absent in the record value take their declared default: an array field
 defaults to the empty tuple and an optional scalar defaults to `None`:
 
+<!-- lairs-test: run fixture=tutorial-corpus -->
 ```python
 first.mediaRef      # None
 first.parentRef     # None
@@ -174,6 +182,7 @@ first.anchor        # Anchor(..., textSpan=Span(byteStart=0, byteEnd=23, ...), .
 
 The `anchor` is itself a model. Its `textSpan` field carries the byte span:
 
+<!-- lairs-test: run fixture=tutorial-corpus -->
 ```python
 first.anchor.textSpan.byteStart     # 0
 first.anchor.textSpan.byteEnd       # 23
@@ -186,6 +195,7 @@ carries the AT-URI of the expression it annotates. `corpus.with_annotations()`
 groups the layers by that reference and attaches them to the matching
 expression. The result is a dataset of join rows, one per expression:
 
+<!-- lairs-test: run fixture=tutorial-corpus -->
 ```python
 joined = corpus.with_annotations()
 row = joined[0]
