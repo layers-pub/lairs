@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.4] - 2026-11-22
+
 ### Added
 
 - **Executable documentation gate.** The default pytest suite collects Python
@@ -530,7 +532,8 @@ didactic model.
   repositories, discovering datasets, building and searching the index, managing
   sessions, and launching the explorer.
 
-[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.10.3...HEAD
+[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.10.4...HEAD
+[0.10.4]: https://github.com/layers-pub/lairs/compare/v0.10.3...v0.10.4
 [0.10.3]: https://github.com/layers-pub/lairs/compare/v0.10.2...v0.10.3
 [0.10.2]: https://github.com/layers-pub/lairs/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/layers-pub/lairs/compare/v0.10.0...v0.10.1
