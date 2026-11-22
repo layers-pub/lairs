@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import didactic.api as dx
@@ -31,7 +32,6 @@ from lairs.records._generated.expression import Expression
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from conftest import PdsServer
 
@@ -688,6 +688,19 @@ def test_count_repo_car_empty_for_empty_repository(
     make_repo_car: Callable[..., bytes],
 ) -> None:
     assert count_repo_car(make_repo_car(_REPO_DID, [])) == {}
+
+
+def test_decode_fixed_public_repository_car() -> None:
+    # this archive is fixed wire data, independent of the installed encoder.
+    archive = Path(__file__).with_name("fixtures") / "ontology.car"
+    records = decode_repo_car(archive.read_bytes())
+    assert len(records) == 8
+    expected = {"pub.layers.ontology.ontology": 1, "pub.layers.ontology.typeDef": 7}
+    assert count_repo_car(archive.read_bytes()) == expected
+    streamed = list(iter_repo_car_records(archive))
+    assert {uri: cid for uri, cid, _value in streamed} == {
+        record.uri: record.cid for record in records
+    }
 
 
 def test_count_records_counts_via_getrepo(
