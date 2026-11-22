@@ -22,6 +22,7 @@ document URL), and a DID to its PDS service endpoint. Results are cached
 in memory for the life of the resolver, so repeated lookups during a pull
 do not re-hit the network.
 
+<!-- lairs-test: run fixture=pds-read -->
 ```python
 from lairs.atproto.identity import IdentityResolver
 
@@ -54,6 +55,7 @@ per-query lifetime with the resolver's `dns_timeout`.
 `com.atproto.repo.listRecords`. Construct it with the PDS endpoint and
 use it as a context manager so the private HTTP client is closed:
 
+<!-- lairs-test: run fixture=pds-read -->
 ```python
 from lairs.atproto.pds import PdsClient
 
@@ -72,6 +74,7 @@ advances past the previous one, and iteration stops when the PDS stops
 returning a cursor. The default page size is 100. Override it with
 `limit`, and resume from a saved `cursor`:
 
+<!-- lairs-test: run fixture=pds-read -->
 ```python
 with PdsClient(resolution.pds_endpoint) as client:
     for envelope in client.list_records(
@@ -95,6 +98,7 @@ returns a `RepoDescription` carrying the repo's `collections`, `handle`,
 Use it to inspect the collections a repo holds before deciding what to
 fetch:
 
+<!-- lairs-test: run fixture=pds-read -->
 ```python
 with PdsClient(resolution.pds_endpoint) as client:
     description = client.describe_repo(resolution.did)
@@ -119,6 +123,7 @@ shape and decode against the generated models in the same way as values
 from the XRPC record endpoints. This recovers every record across all
 collections in one round trip:
 
+<!-- lairs-test: run fixture=pds-read -->
 ```python
 with PdsClient(resolution.pds_endpoint) as client:
     for envelope in client.get_repo(resolution.did):
@@ -134,6 +139,7 @@ Each response is the standard ATProto record envelope, modeled as
 JSON. `decode` validates one envelope's value against any `dx.Model`
 target and returns the typed instance:
 
+<!-- lairs-test: run fixture=pds-read -->
 ```python
 from lairs.atproto.pds import decode
 from lairs.records._generated.expression import Expression
@@ -149,6 +155,7 @@ collects per-record failures instead of failing fast: it returns a
 `RecordDecodeFailure` models carrying the offending `uri`, `cid`, and a
 human-readable `error`. One malformed record never aborts the batch.
 
+<!-- lairs-test: run fixture=pds-read -->
 ```python
 from lairs.atproto.pds import decode_all
 
@@ -173,6 +180,7 @@ bytes. `get_blob` streams the response in chunks and returns a
 `BlobBytes` holder carrying the `did`, `cid`, the raw `data` (in an
 opaque field), and the `mime_type` reported by the PDS:
 
+<!-- lairs-test: run fixture=pds-read -->
 ```python
 from lairs.atproto.blobs import BlobClient
 
@@ -198,6 +206,7 @@ methods (`pub.layers.*.get*` and `list*`). A bare NSID such as
 same `{uri, cid, value}` envelope, so they decode through the same
 generated models:
 
+<!-- lairs-test: run fixture=pds-read -->
 ```python
 from lairs.atproto.appview import AppviewClient
 
@@ -221,6 +230,7 @@ entry point: it takes the AT-URI of a corpus, enumerates its authority's
 Layers collections through `PdsClient.list_records`, and builds the
 joined graph.
 
+<!-- lairs-test: run fixture=pds-read -->
 ```python
 from lairs.atproto.pds import PdsClient
 from lairs.data import load_corpus

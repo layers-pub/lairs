@@ -17,6 +17,7 @@ returns:
 The value models live in `lairs.integrations.kb`. Resolve a connector by name
 through the registry:
 
+<!-- lairs-test: run fixture=knowledge-bases -->
 ```python
 import lairs
 
@@ -44,6 +45,7 @@ remain Wikidata, the reconciliation endpoint, and glazing.
 using `httpx`, a core dependency, so no extra is required for the common path. No
 API key or token is needed for the public endpoints.
 
+<!-- lairs-test: run fixture=knowledge-bases -->
 ```python
 kb = WikidataKB(lang="en")
 entity = kb.resolve("Q42")               # accepts a bare QID or an entity URI
@@ -72,6 +74,7 @@ adapter serves any conforming endpoint (Wikidata, VIAF, Getty, ORCID, and
 others). Transport is `httpx`, so no optional extra is required. An endpoint base
 URL is mandatory.
 
+<!-- lairs-test: run fixture=knowledge-bases -->
 ```python
 kb = ReconciliationKB("https://wikidata.reconci.link/en/api")
 candidates = kb.search("Ada Lovelace", types=["Q5"])
@@ -94,6 +97,7 @@ requires them. The connector does not manage credentials itself.
 PropBank, VerbNet, and WordNet through the glazing library, with SemLink-style
 cross-reference resolution.
 
+<!-- lairs-test: run fixture=knowledge-bases requires=glazing -->
 ```python
 kb = GlazingKB()                         # construction never imports glazing
 candidates = kb.search("give")           # refs prefixed by resource, e.g. "propbank:give.01"

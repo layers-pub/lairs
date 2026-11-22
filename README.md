@@ -52,6 +52,7 @@ for the checks performed and how to apply a strict Lexicon validator.
 
 `lairs` can be installed from pypi:
 
+<!-- lairs-test: check reason="environment setup; checked without installing or cloning" -->
 ```bash
 pip install lairs                 # core
 ```
@@ -60,6 +61,7 @@ The core install does not include integration dependencies. Each integration is 
 optional extra, discovered at runtime through entry points, so importing `lairs`
 never imports an integration's dependency.
 
+<!-- lairs-test: check reason="environment setup; checked without installing or cloning" -->
 ```bash
 pip install "lairs[hf]"           # HuggingFace datasets and Hub
 pip install "lairs[torch]"        # PyTorch exporter
@@ -69,6 +71,7 @@ pip install "lairs[conllu]"       # the CoNLL-U codec
 
 ## Usage
 
+<!-- lairs-test: run fixture=pds-read -->
 ```python
 import lairs
 from lairs.atproto import PdsClient
@@ -88,6 +91,7 @@ print(corpus.expressions[0].text)
 The `lairs` command vendors lexicons, regenerates models, and pulls,
 materialises, publishes, and inspects corpora:
 
+<!-- lairs-test: skip reason="angle-bracket placeholders are templates, not complete shell programs" -->
 ```bash
 lairs gen --check          # fail if the committed models drift from the lexicons
 lairs pull did:plc:abc     # ingest an account's records into a local repository
@@ -100,6 +104,7 @@ lairs publish --repo ... --revision v0.1 --to did:plc:abc   # dry-run plan by de
 The documentation is available at [layers.pub/lairs/](https://layers.pub/lairs/). 
 It can be built locally with:
 
+<!-- lairs-test: check reason="interactive process; syntax checked without starting a server or TUI" -->
 ```bash
 uv run --group docs mkdocs serve
 ```
@@ -108,6 +113,7 @@ uv run --group docs mkdocs serve
 
 `lairs` uses `uv` along with `ruff`, `ty`, and `pytest` for development.
 
+<!-- lairs-test: check reason="environment setup; checked without installing or cloning" -->
 ```bash
 uv sync
 uv run ruff format --check lairs tests

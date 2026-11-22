@@ -19,6 +19,7 @@ There is also `tui`, which launches the interactive explorer.
 Run `lairs` with no subcommand to print help; the process then exits with code
 `2`. Each subcommand has its own `--help`.
 
+<!-- lairs-test: run fixture=cli-local -->
 ```bash
 lairs --help
 lairs publish --help
@@ -29,6 +30,7 @@ lairs publish --help
 Refresh the vendored `pub/layers` lexicon tree from a local Layers checkout and
 rewrite `MANIFEST.toml` provenance.
 
+<!-- lairs-test: check reason="source generation workflow; syntax checked without rewriting vendored files" -->
 ```bash
 lairs vendor --from /path/to/layers/lexicons/pub/layers \
   --layers-version 1.2.0 --layers-git-sha abc123 --vendored-at 2026-06-16
@@ -46,6 +48,7 @@ tree.
 
 Regenerate the committed record models from the vendored lexicons.
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
 ```bash
 lairs gen                                # write the modules
 lairs gen --check                        # the CI drift gate
@@ -61,6 +64,7 @@ hand-authored: edit the generator, not the output.
 Ingest an account's Layers records from a PDS into a local Repository for a
 git-like round trip.
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
 ```bash
 lairs pull did:plc:author --endpoint https://pds.example --into ./repo \
   --message "pull layers records"
@@ -76,6 +80,7 @@ pulled, no commit is made.
 Pull every account a corpus depends on into one local Repository, and write a
 pin that fixes exactly what was pulled.
 
+<!-- lairs-test: skip reason="angle-bracket placeholders are templates, not complete shell programs" -->
 ```bash
 lairs pull-dataset at://corpus.pud.tur.ud.repo.layers.pub/pub.layers.corpus.corpus/<rkey> \
   --into ./turkish-pud --with-annotations --tag ud-2.14
@@ -127,6 +132,7 @@ Two files are written next to the records:
 
 Check a pulled dataset against its pin.
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
 ```bash
 lairs verify-pin ./turkish-pud
 lairs verify-pin ./turkish-pud --pin ./analysis/lairs-pin.json --remote
@@ -149,6 +155,7 @@ otherwise.
 
 Load a corpus from a PDS and write its normalized Arrow/Parquet views.
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
 ```bash
 lairs materialize at://did:plc:author/pub.layers.corpus.corpus/abc \
   --endpoint https://pds.example --out ./views
@@ -164,6 +171,7 @@ Diff a local Repository revision against a PDS and emit the minimal `applyWrites
 plan. **Publishing is a dry run by default.** The plan is printed and nothing is
 written unless `--yes` is passed.
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
 ```bash
 # dry run (default): show the plan, write nothing
 lairs publish --repo ./repo --revision v1 --to did:plc:author \
@@ -192,6 +200,7 @@ and deletes, and a non-empty dry run reminds the caller to pass `--yes
 
 Load a corpus from a PDS and print a per-record-type count summary.
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
 ```bash
 lairs inspect at://did:plc:author/pub.layers.corpus.corpus/abc \
   --endpoint https://pds.example
@@ -206,6 +215,7 @@ Load a judgment study (a `pub.layers.judgment.experimentDef` and its judgment
 sets) and print it the way a study is explored: its response scale, its items
 with their response distributions, and its participants.
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
 ```bash
 lairs judgments at://did:plc:author/pub.layers.judgment.experimentDef/abc \
   --endpoint https://pds.example --limit 20
@@ -244,6 +254,7 @@ decimal text. The JSON output uses `continuousMean`, `continuousMin`, and
 
 Resolve a handle or DID and list its datasets, one row per corpus.
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
 ```bash
 lairs datasets alice.example --language en --min-expressions 100
 ```
@@ -261,6 +272,7 @@ caps the number of rows and `--json` prints JSON instead of a table.
 Resolve a handle or DID and print its repository collection inventory,
 starring the dataset-shaped collections, without dumping records.
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
 ```bash
 lairs toc alice.example --counts
 ```
@@ -278,6 +290,7 @@ not transferred in full; it implies `--counts`, and a collection with more than
 Fan out over a seed of handles or DIDs and list the matching datasets,
 deduplicated by corpus.
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
 ```bash
 lairs search alice.example bob.example --domain news
 ```
@@ -292,6 +305,7 @@ behave as for `datasets`.
 Maintain a local, searchable dataset index in a panproto Repository, built from
 a crawl and kept fresh from the firehose. The group has four subcommands.
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
 ```bash
 lairs index build --into ./index
 lairs index build --into ./index --endpoint https://relay.example
@@ -335,6 +349,7 @@ index, a Browse tab over every record type in a local repository, and a Query
 tab that runs DuckDB SQL, KWIC concordance, and CQL token-pattern searches over
 materialized data.
 
+<!-- lairs-test: check reason="interactive process; syntax checked without starting a server or TUI" -->
 ```bash
 lairs tui --index ./index --repo ./repo --data ./views
 ```
@@ -350,6 +365,7 @@ missing the command exits non-zero with a message.
 Authenticate to a PDS and manage the saved session that the discovery and
 publish commands fall back to.
 
+<!-- lairs-test: check reason="command template needs caller data or services; syntax checked only" -->
 ```bash
 LAIRS_APP_PASSWORD=... lairs login alice.example
 lairs whoami

@@ -23,6 +23,7 @@ types and structure. Other lexicon constraints, such as identifier syntax and
 string lengths, need separate validation; see
 [validation scope](../concepts/generated-models.md#validation-scope).
 
+<!-- lairs-test: run fixture=core -->
 ```python
 from lairs.author import span, token_ref, temporal, bbox, keyframe, spatio_temporal
 from lairs.records._generated.defs import TemporalSpan
@@ -53,12 +54,15 @@ finalizes them into a single `AnnotationLayer`. The layer `kind`, `subkind`, and
 `formalism` are validated against the model's open vocabulary: an unknown but
 non-empty community value is accepted, an empty string is rejected.
 
+The example uses `expression_uri`, the AT-URI of the expression being annotated.
+
+<!-- lairs-test: run fixture=core -->
 ```python
 from datetime import UTC, datetime
 from lairs.author import LayerBuilder, new_uuid, span
 
 builder = LayerBuilder(
-    expression="at://did:plc:author/pub.layers.expression.expression/abc",
+    expression=expression_uri,
     kind="span",
     created_at=datetime.now(UTC),
     subkind="ner",
@@ -82,6 +86,7 @@ target has an AT-URI because the graph is published as one batch. Use
 `PendingId` for an unpublished target and `reference` to obtain a reference
 string from either a pending or published target:
 
+<!-- lairs-test: run fixture=core -->
 ```python
 from lairs.author import PendingId, reference
 
@@ -102,14 +107,24 @@ and `applyWrites`. Construct it with the PDS endpoint, the authenticated
 repository DID, and the injected authenticated client. Every write passes the
 owning DID, so the safety scope is explicit at the call site.
 
+Here `pds_endpoint` and `repo_did` identify your own repository, and `session` is
+an authenticated `httpx.Client`. The example assumes an `expression` model and
+WAV bytes in `audio_bytes`.
+
+<!-- lairs-test: run fixture=authoring-pds -->
 ```python
+import json
+
 from lairs.author import WriteClient
 
-with WriteClient("https://pds.example", "did:plc:author", client=session) as wc:
+value = json.loads(expression.model_dump_json())
+value["$type"] = "pub.layers.expression.expression"
+
+with WriteClient(pds_endpoint, repo_did, client=session) as wc:
     blob = wc.upload_blob(audio_bytes, "audio/wav")     # honors the 100MB cap
     result = wc.create_record(
         "pub.layers.expression.expression",
-        value=expression.model_dump(),
+        value=value,
         rkey=None,                                       # PDS assigns a TID
     )
     print(result.status, result.uri, result.cid)        # "created", ...
@@ -150,22 +165,26 @@ AT-URI and content identity. Import it from the module path. The package does no
 re-export `publish` as a top-level name because a same-named symbol would shadow
 the submodule.
 
+The following example uses a committed store at `example-repo`, tagged `v1`,
+and the same authenticated endpoint, repository DID, and client as above.
+
+<!-- lairs-test: run fixture=authoring-pds -->
 ```python
 from pathlib import Path
 
 from lairs.author.publish import publish
 from lairs.store.repository import Repository
 
-repo = Repository.open(Path("/path/to/repo"))
+repo = Repository.open(Path("example-repo"))
 
 # dry run: compute and return the plan without sending any writes.
-plan = publish(repo, "HEAD", to="did:plc:author", endpoint="https://pds.example",
+plan = publish(repo, "HEAD", to=repo_did, endpoint=pds_endpoint,
                dry_run=True)
 print(plan.creates, plan.updates, plan.deletes)
 print(plan.is_empty())
 
 # live publish: applies the plan's writes in dependency order, returns the plan.
-publish(repo, "v1", to="did:plc:author", endpoint="https://pds.example",
+publish(repo, "v1", to=repo_did, endpoint=pds_endpoint,
         client=session)
 ```
 
@@ -185,14 +204,15 @@ enumerated over the PDS read client, every value is decoded against its generate
 model and staged under its AT-URI, and a record that fails to validate is skipped
 rather than aborting the pull.
 
+<!-- lairs-test: run fixture=authoring-pds -->
 ```python
 from pathlib import Path
 
 from lairs.author.publish import pull
 from lairs.store.repository import Repository
 
-repo = Repository.init(Path("/path/to/repo"))
-pull("did:plc:author", endpoint="https://pds.example", into=repo)
+repo = Repository.init(Path("pulled-repo"))
+pull(repo_did, endpoint=pds_endpoint, into=repo)
 revision = repo.commit("pull layers records")
 ```
 

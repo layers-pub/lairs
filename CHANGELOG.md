@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Executable documentation gate.** The default pytest suite collects Python
+  and shell fences from README and the documentation. Every example declares
+  whether it runs, receives a syntax check, or is intentionally skipped, with
+  reasons required for the latter two policies. Runnable Python examples use
+  temporary data and fixed service responses; live write examples use fresh
+  accounts on the local test PDS. Missing optional modules skip only the affected
+  blocks, and new unclassified examples fail the suite.
+
+### Fixed
+
+- **Runnable example setup.** The PyTorch example imports `DataLoader`, tracking
+  opens an explicit disabled Weights & Biases run, and the single-write example
+  supplies JSON wire values with `$type`. Authoring examples accept the caller's
+  PDS endpoint, DID, and authenticated client, and local examples use disposable
+  fixture paths in the test gate.
+
 ## [0.10.3] - 2026-11-22
 
 ### Changed

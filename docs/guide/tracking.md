@@ -12,12 +12,18 @@ never pulls in `wandb` or `mlflow`.
 
 ## Logging a revision
 
+The examples assume a committed store at `example-repo` with a `v1` tag.
+
+<!-- lairs-test: run fixture=tracking requires=wandb -->
 ```python
+import wandb
+
 from lairs.integrations.tracking import log_revision
 from lairs.store.repository import Repository
 
-repo = Repository.open("/path/to/repo")
-artifact = log_revision(repo.inner, "v1", backend="wandb")
+repo = Repository.open("example-repo")
+with wandb.init(mode="disabled"):
+    artifact = log_revision(repo.inner, "v1", backend="wandb")
 print(artifact)                          # "lairs-revision:v1"
 ```
 
@@ -26,9 +32,10 @@ print(artifact)                          # "lairs-revision:v1"
 and is `"wandb"` or `"mlflow"`. The function assembles a `ProvenanceBundle` and
 returns the tracked artifact identifier as `"<name>:<revision>"`.
 
-- For **Weights & Biases**, the bundle is attached as the metadata of a
-  `wandb.Artifact` of type `dataset`, and it is logged to the active run when one
-  is open.
+- For **Weights & Biases**, an active run is required. The bundle is attached as
+  the metadata of a `wandb.Artifact` of type `dataset` and logged to that run.
+  The example uses a disabled run so it can execute without credentials or
+  remote logging; choose an online or offline run for your own experiment.
 - For **MLflow**, the bundle's fields are logged as run parameters and the
   revision is set as a tag.
 
@@ -59,10 +66,11 @@ dataset behind a run is: open the same Repository, resolve the logged revision,
 and materialize. Pairing the revision with the lexicon manifest hash also pins
 the schema, so the generated models match the records.
 
+<!-- lairs-test: run fixture=tracking -->
 ```python
 from lairs.store.repository import Repository
 
-repo = Repository.open("/path/to/repo")
+repo = Repository.open("example-repo")
 repo.resolve("v1")                       # the logged revision resolves to a commit
 ```
 

@@ -16,6 +16,7 @@ arguments against the lexicon constraints at construction time, raising
 
 For text, the byte-span builder takes UTF-8 byte offsets:
 
+<!-- lairs-test: run fixture=temporary-cwd -->
 ```python
 from lairs.author.builders import span
 
@@ -36,6 +37,7 @@ expression's AT-URI, the layer `kind`, and a creation timestamp. `add` appends
 an annotation, minting a UUID for each one that lacks it, and `build` finalizes
 the layer:
 
+<!-- lairs-test: run fixture=temporary-cwd -->
 ```python
 from datetime import datetime, timezone
 
@@ -69,6 +71,7 @@ The store is a [`Repository`](../guide/store.md): a content-addressed,
 git-like store where a corpus snapshot is a commit. Initialize one on disk, stage
 each record under its AT-URI with `save`, and commit:
 
+<!-- lairs-test: run fixture=temporary-cwd -->
 ```python
 import json
 from pathlib import Path
@@ -116,6 +119,7 @@ AT-URI and content. With `dry_run=True` it computes and returns that plan and
 sends nothing. With no `endpoint`, the PDS is treated as empty, so every record
 in the revision becomes a create:
 
+<!-- lairs-test: run fixture=temporary-cwd -->
 ```python
 from lairs.author.publish import publish
 
@@ -139,6 +143,7 @@ the writes would target. The plan separates `creates`, `updates`, and `deletes`,
 and orders the whole write set so a referenced record always commits before its
 referrer. Inspect that order with `ordered_writes`:
 
+<!-- lairs-test: run fixture=temporary-cwd -->
 ```python
 for op in plan.ordered_writes():
     print(op.action, op.collection, op.rkey)

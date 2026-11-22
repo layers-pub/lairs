@@ -13,6 +13,7 @@ the view, export specification, and returned object. Its method is
 Layers anchors into typed columns, leaving each exporter to project columns and
 hand the table to its target framework. Resolve an exporter by name:
 
+<!-- lairs-test: run fixture=exporters -->
 ```python
 import lairs
 
@@ -31,6 +32,7 @@ each dependency loads inside the operation that needs it.
 `HuggingFaceExporter` wraps the Arrow table near zero-copy into a
 `datasets.Dataset`.
 
+<!-- lairs-test: run fixture=exporters requires=datasets -->
 ```python
 from lairs.integrations.hf.datasets import ExportSpec, task_template_for
 
@@ -52,6 +54,7 @@ most specific canonical HuggingFace task shape for a Layers triple (for instance
 projects that template's columns and records its task name for downstream tooling
 and dataset-card provenance.
 
+<!-- lairs-test: run fixture=exporters requires=datasets -->
 ```python
 template = task_template_for("token-tag", subkind="pos")
 ds = exporter.export(table, spec=ExportSpec.for_template(template))
@@ -75,6 +78,7 @@ string column.
 with an auto-generated dataset card carrying provenance, and reads a mirror back.
 The Hub is a mirror target only. The PDS and the Repository stay canonical.
 
+<!-- lairs-test: run fixture=hub-recording requires=datasets,huggingface_hub -->
 ```python
 from lairs.integrations.hf.hub import provenance_bundle, push_to_hub, load_from_hub
 
@@ -107,7 +111,10 @@ when absent. Hub authentication is the caller's responsibility (the usual
 `Dataset`, an `IterableDataset` variant, and the tensor columns its `collate`
 helper stacks.
 
+<!-- lairs-test: run fixture=exporters requires=torch -->
 ```python
+from torch.utils.data import DataLoader
+
 from lairs.integrations.torch import TorchExportSpec
 
 exporter = lairs.exporter("torch")()
@@ -133,6 +140,7 @@ because both the map-style and iterable datasets it builds subclass
 `TfDataExporter.export` emits a dictionary-structured `tf.data.Dataset`, one
 tensor per retained column.
 
+<!-- lairs-test: run fixture=exporters requires=tensorflow -->
 ```python
 from lairs.integrations.tfdata import TfDataSpec, feature_specs_of
 
@@ -159,6 +167,7 @@ tensorflow comes from the `lairs[tf]` extra (Python `< 3.14`), and `export` rais
 one sample: a `__key__`, a `.json` member with the row's scalar fields, and, when
 a media column is set, a media member with the resolved bytes.
 
+<!-- lairs-test: run fixture=exporters -->
 ```python
 from lairs.integrations.webdataset import WebDatasetSpec
 

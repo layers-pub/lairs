@@ -5,6 +5,7 @@ corpus index, **Discover** finds and indexes datasets from configured sources,
 **Browse** presents type-specific views of records in a local repository, and
 **Query** runs queries over materialized data.
 
+<!-- lairs-test: check reason="interactive process; syntax checked without starting a server or TUI" -->
 ```bash
 lairs tui --index path/to/index --repo path/to/repo --data path/to/materialized
 ```
@@ -227,6 +228,7 @@ follows whatever the data was annotated with.
 
 ## Producing the inputs
 
+<!-- lairs-test: skip reason="angle-bracket placeholders are templates, not complete shell programs" -->
 ```bash
 # a discovery index of corpora for the Explore tab
 lairs index build --into index --endpoint wss://relay.example
@@ -242,6 +244,7 @@ lairs tui --index index --repo repo --data materialized
 
 The Browse tab needs only the repository, and feeds the Query tab from it too:
 
+<!-- lairs-test: skip reason="angle-bracket placeholders are templates, not complete shell programs" -->
 ```bash
 lairs pull <did> --endpoint https://pds.example --into repo
 lairs tui --repo repo
@@ -250,6 +253,7 @@ lairs tui --repo repo
 The query engine is also usable on its own, without the terminal UI, over any
 directory of Parquet views:
 
+<!-- lairs-test: run fixture=query-views -->
 ```python
 from pathlib import Path
 from lairs.tui import QueryEngine

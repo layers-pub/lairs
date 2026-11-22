@@ -250,5 +250,6 @@ useless-overload-body = "error"
 addopts = "--import-mode=importlib"
 testpaths = ["tests"]
 markers = [
+    "documentation: executes or checks annotated README and Markdown examples",
     "integration: marks tests as integration tests (deselected unless --run-integration is given)",
 ]
