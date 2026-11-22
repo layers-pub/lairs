@@ -28,9 +28,9 @@
 
 `lairs` is a Python client for reading and writing data in the
 [Layers](https://github.com/layers-pub) format. It downloads `pub.layers.*`
-records from ATProto Personal Data Servers, validates them against models
-generated from the Layers lexicons, holds them in memory or in a local
-content-addressed store, and exposes them through a `datasets`-like API with
+records from ATProto Personal Data Servers, checks their types and structure
+with models generated from the Layers lexicons, holds them in memory or in a
+local content-addressed store, and exposes them through a `datasets`-like API with
 tooling for the modalities Layers relates: audio, video, and time-series
 signals. On the write side it constructs records, uploads media blobs, and
 publishes records in bulk to the authenticated user's own repository, with the
@@ -40,6 +40,13 @@ local store doubling as schema-aware version control.
 built on [panproto](https://github.com/panproto/phrom). Structured values
 in `lairs` are `didactic` models built programmatically from the `pub.layers.*`
 ATProto lexicons.
+
+Generated models check field types, required fields, union structure, and
+`datetime` fields. Other lexicon constraints, including identifier syntax,
+lengths, and numeric ranges, are not enforced by the models. Builders check
+selected argument ranges and anchor relationships. See
+[validation scope](https://layers.pub/lairs/concepts/generated-models/#validation-scope)
+for the checks performed and how to apply a strict Lexicon validator.
 
 ## Installation
 

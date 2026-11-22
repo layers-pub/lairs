@@ -17,8 +17,11 @@ focus on the options that determine write behavior.
 
 An annotation attaches to source data through an
 [`Anchor`](../reference/index.md). The builders in `lairs.author` construct the correct
-anchor sub-model and validate every argument against the lexicon constraints at
-construction time, raising `BuildError` rather than deferring to a PDS rejection.
+anchor sub-model and check the selected numeric ranges and anchor relationships
+described below, raising `BuildError` for violations. Generated models also check
+types and structure. Other lexicon constraints, such as identifier syntax and
+string lengths, need separate validation; see
+[validation scope](../concepts/generated-models.md#validation-scope).
 
 ```python
 from lairs.author import span, token_ref, temporal, bbox, keyframe, spatio_temporal

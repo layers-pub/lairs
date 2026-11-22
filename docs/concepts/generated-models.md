@@ -66,6 +66,42 @@ then `ruff format` pass converges the output to a stable, lint-clean
 form. A fresh generation can thus be compared byte-for-byte against
 the committed modules.
 
+## Validation scope
+
+Generation preserves the model structure and some constraint metadata. It does
+not turn every lexicon constraint into a runtime check. The typed read path
+(`lairs.atproto.pds.decode`) validates through the same generated models used
+for direct model construction, with the following scope:
+
+| Constraint | Generated-model behavior |
+|---|---|
+| Field types, required fields, and declared union structure | Checked by the model. Generated integer converters reject booleans and non-integer values. |
+| `datetime` format | Parsed into a Python `datetime` field. |
+| Other string formats, including `at-uri`, `did`, `cid`, `uri`, and `at-identifier` | Recorded as field metadata; syntax is not checked. |
+| Integer `minimum` and `maximum` | Recorded as field metadata; bounds are not checked. |
+| String `minLength` and `maxLength` | Recorded as field metadata; lengths are not checked, including Lexicon's UTF-8 byte limits. |
+| String grapheme limits and array length limits | Not checked or retained in the generated field metadata. |
+| String `knownValues` | Recorded as metadata for an open vocabulary, without restricting values to that list. |
+
+Thus, an `Annotation` constructed directly can have `confidence=5000` even
+though the lexicon gives the field a maximum of 1000. A string field marked
+`format="at-uri"` can contain an invalid AT-URI. A successful model validation
+does not establish full Lexicon validity.
+
+The [authoring builders](../guide/authoring.md) add checks for the arguments they
+handle, including the 0-1000 confidence range, non-negative offsets and token
+indices, ordered spans, and positive bounding-box dimensions. Their
+open-vocabulary checks reject empty strings but accept other community values.
+These checks do not apply when constructing the generated models directly or
+decoding PDS records, and the builders do not check every lexicon constraint.
+
+When full validation is required, validate the wire record separately with a
+Lexicon validator, such as the official TypeScript
+[`@atproto/lexicon` library](https://github.com/bluesky-social/atproto/blob/main/packages/lexicon/README.md).
+Load the vendored lexicon documents and their referenced definitions into its
+`Lexicons` collection, then call `assertValidRecord(nsid, wireRecord)` with the
+record's `$type` included. lairs does not run this additional validation pass.
+
 ## Why not the lossy theory path
 
 panproto can also induce a categorical *theory* from a Schema, and

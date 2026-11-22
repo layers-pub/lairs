@@ -2,12 +2,15 @@
 
 lairs is a read-and-write client for the Layers format. It downloads
 `pub.layers.*` records from ATProto Personal Data Servers (PDSes),
-validates them against models generated from the Layers lexicons, holds
-them in memory or in a content-addressed store, and exposes them through
+checks their types and structure with models generated from the Layers lexicons,
+holds them in memory or in a content-addressed store, and exposes them through
 a dataset API and an anchor-aware media layer. On the write side it
 constructs records, uploads media blobs, and publishes records in bulk
 to the authenticated user's own repository. The same generated models
-and the same validation are used in both directions.
+are used in both directions. Their
+[validation scope](generated-models.md#validation-scope) covers field types,
+required fields, union structure, and `datetime` fields, with selected
+additional checks in the builders.
 
 ## The stack
 
@@ -86,9 +89,11 @@ the `Repository` for a versioned snapshot.
 
 The **write flow** runs from a builder out to a PDS and lives in
 `lairs.author`. Records are constructed as instances of the generated
-models through the package's builders, so authoring is validated against
-the lexicons by construction. They are committed to the local
-`Repository` first, where they can be tagged, diffed, and inspected as a
+models through the package's builders. The models check types and structure;
+builders also check selected numeric ranges, non-empty open-vocabulary values,
+and anchor relationships. Other lexicon constraints need separate validation.
+Records are committed to the local `Repository` first, where they can be
+tagged, diffed, and inspected as a
 named revision. `publish` maps a revision to the minimal set of PDS
 writes (`applyWrites`) that makes the PDS match it, ordering the writes
 by cross-reference dependency so a referenced record always exists before
