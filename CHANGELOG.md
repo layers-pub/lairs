@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.5] - 2026-11-25
+
 ### Fixed
 
 - **Repository compatibility with Panproto 0.78.** Require Panproto 0.78.0 and
@@ -541,7 +543,8 @@ didactic model.
   repositories, discovering datasets, building and searching the index, managing
   sessions, and launching the explorer.
 
-[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.10.4...HEAD
+[Unreleased]: https://github.com/layers-pub/lairs/compare/v0.10.5...HEAD
+[0.10.5]: https://github.com/layers-pub/lairs/compare/v0.10.4...v0.10.5
 [0.10.4]: https://github.com/layers-pub/lairs/compare/v0.10.3...v0.10.4
 [0.10.3]: https://github.com/layers-pub/lairs/compare/v0.10.2...v0.10.3
 [0.10.2]: https://github.com/layers-pub/lairs/compare/v0.10.1...v0.10.2
