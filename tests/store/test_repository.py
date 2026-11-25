@@ -300,10 +300,52 @@ def test_forget_removes_from_working_tree(tmp_path: Path) -> None:
     assert repo.load_raw(_EXPR_URI) is None
 
 
+def test_forget_preserves_the_working_tree_when_staging_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    repo.save(_EXPR_URI, _Expr(text="keep"))
+    base = repo.commit("base")
+
+    def fail_staging(*_args: object, **_kwargs: object) -> None:
+        msg = "could not stage the tombstone"
+        raise panproto.VcsError(msg)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(dx.Repository, "add_data", fail_staging)
+        with pytest.raises(panproto.VcsError, match="could not stage the tombstone"):
+            repo.forget(_EXPR_URI)
+
+    assert repo.staged_uris() == [_EXPR_URI]
+    assert repo.load_raw(_EXPR_URI) == {"text": "keep"}
+    assert repo.content_at(base) == {_EXPR_URI: {"text": "keep"}}
+    repo.forget(_EXPR_URI)
+    assert repo.content_at(repo.commit("remove")) == {}
+
+
 def test_forget_absent_uri_raises(tmp_path: Path) -> None:
     repo = Repository.init(tmp_path / "repo")
     with pytest.raises(KeyError, match="not in the working tree"):
         repo.forget(_EXPR_URI)
+
+
+def test_save_uses_head_schema_after_staging_a_tombstone(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    repo.save(_EXPR_URI, _Expr(text="remove"))
+    repo.commit("base")
+    schema_id = repo.log()[0]["schema_id"]
+
+    repo.forget(_EXPR_URI)
+    repo.save(_MEDIA_URI, _Expr(text="first write"))
+    repo.save(_MEDIA_URI, _Expr(text="second write"))
+    mixed = repo.commit("remove and save")
+    assert repo.content_at(mixed) == {_MEDIA_URI: {"text": "second write"}}
+
+    repo.save(_MEDIA_URI, _Expr(text="after commit"))
+    head = repo.commit("save again")
+    assert repo.content_at(head) == {_MEDIA_URI: {"text": "after commit"}}
+    assert repo.log()[0]["schema_id"] == schema_id
 
 
 def test_diff_reports_removed_after_forget(tmp_path: Path) -> None:

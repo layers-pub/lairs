@@ -32,8 +32,8 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "didactic>=0.15.0",
-    "panproto>=0.74.3",
+    "didactic>=0.18.3",
+    "panproto>=0.78.0",
     "httpx",
     # identity handle resolution races the DNS `_atproto` TXT method against the
     # HTTP well-known method, so DNS is part of the shipped resolver, not optional.
