@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Repository compatibility with Panproto 0.78.** Require Panproto 0.78.0 and
+  Didactic 0.18.3 for typed and packed record writes. Stage each deletion marker
+  with its own schema so commits and publish plans preserve removals. Existing
+  repository histories remain readable. Repositories written by Panproto 0.78
+  require Panproto 0.78 or later to read their new committed data.
+
 ## [0.10.4] - 2026-11-22
 
 ### Added

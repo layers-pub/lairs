@@ -106,6 +106,12 @@ _DEFAULT_AUTHOR = "lairs <lairs@layers.pub>"
 _TOMBSTONE_BYTES = b'{"$tombstone":true}'
 
 
+class _Tombstone(dx.Model):
+    """Schema for a deletion marker keyed by the removed record's URI."""
+
+    removed: bool = dx.field(alias="$tombstone")
+
+
 def _is_tombstone(value: JsonValue) -> bool:
     """Return whether ``value`` is the semantic record-removal marker."""
     return isinstance(value, dict) and value == {"$tombstone": True}
@@ -674,9 +680,8 @@ class Repository:
         a revision-to-revision :meth:`diff` reports it in ``removed``. A record
         staged through either layout is forgotten the same way.
 
-        Staging a tombstone requires a schema to bind to, so the repository must
-        already have at least one commit (the record's type schema was committed
-        when it was first saved).
+        The tombstone is staged under its own schema, so deletion works with
+        either a committed record or one staged for the next commit.
 
         Parameters
         ----------
@@ -692,12 +697,13 @@ class Repository:
         if location is None:
             msg = f"cannot forget a record not in the working tree: {uri}"
             raise KeyError(msg)
+        tombstone_path = self._records_dir() / f"{_safe_name(uri)}.tombstone.json"
+        tombstone_path.write_bytes(_TOMBSTONE_BYTES)
+        self._stage_schema(_Tombstone)
+        self.inner.add_data(str(tombstone_path), key=uri)
         if not location.startswith(_PACK_LOCATOR):
             (self._records_dir() / f"{location}.json").unlink(missing_ok=True)
         self._journal([(uri, None)])
-        tombstone_path = self._records_dir() / f"{_safe_name(uri)}.tombstone.json"
-        tombstone_path.write_bytes(_TOMBSTONE_BYTES)
-        self.inner.add_data(str(tombstone_path), key=uri)
 
     def staged_uris(self) -> list[str]:
         """Return the AT-URIs currently present in the working tree.
