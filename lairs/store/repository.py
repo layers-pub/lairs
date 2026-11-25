@@ -308,9 +308,9 @@ class Repository:
         # the working-tree index, with the file signature it was read at.
         self._index: dict[str, str] = {}
         self._index_signature: tuple[int, ...] | None = None
-        # the record class whose schema was staged (or committed) last through
-        # this handle; re-staging it is a no-op that costs a theory build.
-        self._active_schema: type[dx.Model] | None = None
+        # reuse the last model's binding to the current staged schema (None)
+        # or explicitly to the schema already committed at HEAD.
+        self._active_schema: tuple[type[dx.Model], str | None] | None = None
         # decoded working-tree packs, most recently used last.
         self._pack_cache: dict[str, list[str]] = {}
 
@@ -502,21 +502,25 @@ class Repository:
         journal_path.unlink()
         self._index_signature = self._signature()
 
-    def _stage_schema(self, model_cls: type[dx.Model]) -> None:
-        """Stage a record type's schema unless it is the one staged last."""
-        if self._active_schema is model_cls:
-            return
+    def _stage_schema(self, model_cls: type[dx.Model]) -> str | None:
+        """Stage the model's schema or return the ID of its unchanged HEAD schema."""
+        active = self._active_schema
+        if active is not None and active[0] is model_cls:
+            return active[1]
+        schema_id = None
         try:
             self.inner.add(model_cls)
         except panproto.VcsError as exc:
-            # re-staging a record type whose schema is already committed and
-            # unchanged is a no-op for the schema VCS. the staged record value is
-            # the real change the commit captures. didactic surfaces this as a
-            # VcsError with no dedicated subtype, so it is discriminated by its
-            # message; any other VcsError is a real failure and re-raised.
+            # Panproto compares the model to HEAD. A no-op retains any other
+            # staged schema, so the data must explicitly bind to HEAD's schema.
             if "no changes detected" not in str(exc).lower():
                 raise
-        self._active_schema = model_cls
+            head = self._native.log(limit=1)
+            schema_id = head[0].get("schema_id") if head else None
+            if not isinstance(schema_id, str):
+                raise
+        self._active_schema = (model_cls, schema_id)
+        return schema_id
 
     def save(self, uri: str, model: dx.Model) -> None:
         """Stage a record value and its schema for the next commit.
@@ -542,10 +546,10 @@ class Repository:
         record_path = self._records_dir() / f"{stem}.json"
         record_path.write_text(model.model_dump_json(), encoding="utf-8")
         self._journal([(uri, stem)])
-        self._stage_schema(type(model))
+        schema_id = self._stage_schema(type(model))
         # stage the value as committed data keyed by AT-URI, so a revision pins
         # the exact value and decoded_data_at reads it back under that key.
-        self.inner.add_data(str(record_path), key=uri)
+        self.inner.add_data(str(record_path), key=uri, schema_id=schema_id)
 
     def save_many(
         self,
@@ -661,8 +665,8 @@ class Repository:
         name = hashlib.sha256(envelope.encode("utf-8")).hexdigest()
         pack_path = self._packs_dir() / f"{name}.json"
         pack_path.write_text(envelope, encoding="utf-8")
-        self._stage_schema(PackEnvelope)
-        self.inner.add_data(str(pack_path), key=key)
+        schema_id = self._stage_schema(PackEnvelope)
+        self.inner.add_data(str(pack_path), key=key, schema_id=schema_id)
         self._journal(
             [
                 (uri, f"{_PACK_LOCATOR}{name}:{position}")
@@ -699,8 +703,8 @@ class Repository:
             raise KeyError(msg)
         tombstone_path = self._records_dir() / f"{_safe_name(uri)}.tombstone.json"
         tombstone_path.write_bytes(_TOMBSTONE_BYTES)
-        self._stage_schema(_Tombstone)
-        self.inner.add_data(str(tombstone_path), key=uri)
+        schema_id = self._stage_schema(_Tombstone)
+        self.inner.add_data(str(tombstone_path), key=uri, schema_id=schema_id)
         if not location.startswith(_PACK_LOCATOR):
             (self._records_dir() / f"{location}.json").unlink(missing_ok=True)
         self._journal([(uri, None)])
@@ -815,6 +819,8 @@ class Repository:
             The new revision identifier.
         """
         revision = self.inner.commit(message, author=author)
+        if self._active_schema is not None and self._active_schema[1] is not None:
+            self._active_schema = None
         self._compact_index()
         return revision
 

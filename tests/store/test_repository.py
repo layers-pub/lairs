@@ -330,6 +330,24 @@ def test_forget_absent_uri_raises(tmp_path: Path) -> None:
         repo.forget(_EXPR_URI)
 
 
+def test_save_uses_head_schema_after_staging_a_tombstone(tmp_path: Path) -> None:
+    repo = Repository.init(tmp_path / "repo")
+    repo.save(_EXPR_URI, _Expr(text="remove"))
+    repo.commit("base")
+    schema_id = repo.log()[0]["schema_id"]
+
+    repo.forget(_EXPR_URI)
+    repo.save(_MEDIA_URI, _Expr(text="first write"))
+    repo.save(_MEDIA_URI, _Expr(text="second write"))
+    mixed = repo.commit("remove and save")
+    assert repo.content_at(mixed) == {_MEDIA_URI: {"text": "second write"}}
+
+    repo.save(_MEDIA_URI, _Expr(text="after commit"))
+    head = repo.commit("save again")
+    assert repo.content_at(head) == {_MEDIA_URI: {"text": "after commit"}}
+    assert repo.log()[0]["schema_id"] == schema_id
+
+
 def test_diff_reports_removed_after_forget(tmp_path: Path) -> None:
     # a record present at base and forgotten before head appears in removed; the
     # tombstone committed by forget drops it from the head state.
